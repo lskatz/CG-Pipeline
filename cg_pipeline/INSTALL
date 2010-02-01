@@ -1,0 +1,40 @@
+PREREQUISITES/DEPENDENCIES
+
+This package and its dependencies require approximately XXX GB of free disk space.
+
+The following packages (and their dependencies) are required for the operation of cg_pipeline.
+
+BioPerl (>= 1.6)
+NCBI BLAST (ftp://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/)
+AMOS (http://amos.sourceforge.net/)
+Glimmer3 (http://www.cbcb.umd.edu/software/glimmer/)
+tRNAscan-SE (http://lowelab.ucsc.edu/tRNAscan-SE/)
+
+The following packages are required. However, their installation may present some difficulties, and some parts of the pipeline will still be able to function without them.
+
+InterProScan (http://www.ebi.ac.uk/Tools/InterProScan/)
+TMHMM (http://www.cbs.dtu.dk/services/TMHMM/)
+SignalP (http://www.cbs.dtu.dk/services/SignalP/)
+Newbler (Roche 454 offInstrumentApps) (required for 454 Pyrosequencing mode of the assembly stage only)
+
+[todo:redist folder]
+
+
+INSTALLATION
+
+To install the package, first unpack the archive and type "make" in the resulting directory. This will download and initialize the required databases. The complete process takes about a day.
+
+Next, type "make install" to install the package in your system. By default, the package will install in /opt/cg_pipeline. Because of the size of the databases, they will be moved rather than copied from the current directory, in the hope that the target directory is on the same filesystem.
+
+If you do not have administrator privileges on your system, or if you require a different installation directory, pass the environment variable DESTDIR when running "make install". For example:
+
+make install DESTDIR="${HOME}/cg_pipeline"
+
+Finally, to be able to run cg_pipeline from any directory, add the scripts subdirectory to the PATH variable in your shell, e.g.:
+
+PATH="${PATH}:/opt/cg_pipeline/scripts"
+
+
+USAGE
+
+See the README file for usage instructions.
