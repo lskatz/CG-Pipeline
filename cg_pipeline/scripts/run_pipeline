@@ -1,0 +1,54 @@
+#!/usr/bin/env perl
+
+# run_annotation: Perform standard annotation protocol operations
+# Author: Andrey Kislyuk (kislyuk@gatech.edu)
+
+package PipelineRunner;
+my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
+
+my $settings = {
+	appname => 'cgpipeline',
+};
+my $stats;
+
+use strict;
+use FindBin;
+use lib "$FindBin::RealBin/../lib";
+$ENV{PATH} = "$FindBin::RealBin:".$ENV{PATH};
+
+use Getopt::Long;
+use File::Temp ('tempdir');
+use File::Path;
+use File::Spec;
+use File::Copy;
+use File::Basename;
+use List::Util qw(min max sum shuffle);
+use Bio::SeqIO;
+use AKUtils;
+
+$0 = fileparse($0);
+local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
+sub logmsg {my $FH = $PipelineRunner::LOG || *STDOUT; print $FH "$0: ".(caller(1))[3].": @_\n";}
+
+exit(main());
+
+sub main() {
+	$settings = AKUtils::loadConfig($settings);
+	die("Usage: $0 input.sff [-R references.mfa] -strain_name=name") if @ARGV < 1;
+
+	my @cmd_options = ('ChangeDir=s', 'keep', 'strain_name=s', 'outdir=s', 'tempdir=s', 'reporting_email=s', 'References=s');
+	GetOptions($settings, @cmd_options) or die;
+	die("Option strain_name is required") unless $$settings{strain_name};
+	my $input_sff = join(" ", @ARGV);
+
+	$$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
+	logmsg "Temporary directory is $$settings{tempdir}";
+
+	my $invoke_string = "run_assembly $input_sff";
+	$invoke_string .= " -R $$settings{References}" if defined $$settings{References};
+	system($invoke_string); die if $?;
+	
+	system("run_prediction run_assembly.out.fasta -strain_name=$$settings{strain_name}"); die if $?;
+
+	system("run_annotation run_prediction.out.gb"); die if $?;
+}

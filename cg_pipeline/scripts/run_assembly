@@ -47,6 +47,7 @@ sub main() {
 	close FH;
 
 	my @ref_files = @{$$settings{Reference}} if defined $$settings{Reference};
+	logmsg "No reference files supplied. Reverting to assembly mode" unless @ref_files;
 
 	my @input_files = @ARGV;
 
@@ -58,15 +59,23 @@ sub main() {
 		die("Input or reference file $file not found") unless -f $file;
 	}
 
-	my $newbler_basename = runNewblerMapping(\@input_files, \@ref_files, $settings);
+	my $final_seqs;
+	if (@ref_files) {
+		my $newbler_basename = runNewblerMapping(\@input_files, \@ref_files, $settings);
 
-	my $fastaqualfiles = sff2fastaqual(\@input_files, $settings);
+		my $fastaqualfiles = sff2fastaqual(\@input_files, $settings);
 
-	my $amos_basename = runAMOSMapping($fastaqualfiles, \@ref_files, $settings);
+		my $amos_basename = runAMOSMapping($fastaqualfiles, \@ref_files, $settings);
 
-	my $combined_filename = combineNewblerAMOS($newbler_basename, $amos_basename, $settings);
+		my $combined_filename = combineNewblerAMOS($newbler_basename, $amos_basename, $settings);
 
-	my $final_seqs = AKUtils::readMfa($combined_filename);
+		$final_seqs = AKUtils::readMfa($combined_filename);
+	} else {
+		my $newbler_basename = runNewblerAssembly(\@input_files, $settings);
+
+		# TODO: reprocess repeat or long singleton reads
+		$final_seqs = AKUtils::readMfa("$newbler_basename/assembly/454AllContigs.fna");
+	}
 	
 	$$settings{min_out_contig_length} = 500;
 
@@ -77,6 +86,12 @@ sub main() {
 
 	#copy($combined_filename, $$settings{outfile}) or die("Error writing to output file $$settings{outfile}");
 	logmsg "Output is in $$settings{outfile}";
+
+	if ($$settings{keep}) {
+		my ($out_filename, $out_dirname) = fileparse($$settings{outfile});
+		logmsg "Saving assembly working directory $$settings{tempdir} to $out_dirname";
+		move($$settings{tempdir}, $out_dirname) or die "Error moving output directory $$settings{tempdir} to $out_dirname: $!";
+	}
 
 	return 0;
 }
@@ -102,8 +117,6 @@ sub runNewblerMapping($$$) {
 	my $run_name = "$$settings{tempdir}/P__runMapping";
 	logmsg "Executing Newbler mapping project $run_name";
 
-#return $run_name;
-
 	system("newMapping '$run_name'"); die if $?;
 	foreach my $ref_file (@$ref_files) {
 		system("setRef '$run_name' '$ref_file'"); die if $?;
@@ -118,8 +131,20 @@ sub runNewblerMapping($$$) {
 	return $run_name;
 }
 
-sub runNewblerAssembly() {
-	
+sub runNewblerAssembly($$) {
+	my ($input_files, $settings) = @_;
+	my $run_name = "$$settings{tempdir}/P__runAssembly";
+	logmsg "Executing Newbler assembly project $run_name";
+
+	system("newAssembly '$run_name'"); die if $?;
+	foreach my $sff_file (@$input_files) {
+		system("addRun '$run_name' '$sff_file'"); die if $?;
+	}
+#sed -i -e 's|\(<overlapMinMatchLength>\)40\(</overlapMinMatchLength>\)|\125\2|' \
+#               -e 's|\(<overlapMinMatchIdentity>\)90\(</overlapMinMatchIdentity>\)|\175\2|' \
+#               $runName/mapping/454MappingProject.xml
+	system("runProject '$run_name'"); die if $?;
+	return $run_name;
 }
 
 sub runAMOSMapping($$$) {

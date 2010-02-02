@@ -14,7 +14,7 @@ DESCRIPTION
 
 CONFIGURATION
 
-Key configuration parameters for cg_pipeline are stored in the file FIXME/cgpipelinerc. Users can override values in this file with the per-user configuration file ${HOME}/.cgpipelinerc. Descriptions of the parameters appear together with the parameters in the configuration file.
+Key configuration parameters for cg_pipeline are stored in the file cg_pipeline/conf/cgpipelinerc. Users can override values in this file with the per-user configuration file ${HOME}/.cgpipelinerc. Descriptions of the parameters appear together with the parameters in the configuration file.
 
 
 AUTHORS

@@ -109,12 +109,12 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 
 	# Obtain ab initio predictions
 	my $genemark_predictions;
-	if ($$settings{use_genemark}) {
-		$genemark_predictions = AKUtils::getGenemarkPredictions($$input_files[0], $input_seqs, $settings);
+	if ($$settings{prediction_use_genemark}) {
+		$genemark_predictions = AKUtils::getGenemarkPredictions($input_seqs, $settings);
 	}
-	my $glimmer_predictions = AKUtils::getGlimmer3Predictions($$input_files[0], $input_seqs, $settings);
+	my $glimmer_predictions = AKUtils::getGlimmer3Predictions($input_seqs, $settings);
 	my $blast_predictions = {};
-#	my $blast_predictions = AKUtils::getBLASTGenePredictions($input_seqs, $settings);
+	my $blast_predictions = AKUtils::getBLASTGenePredictions($input_seqs, $settings);
 
 	# Combine and index predictions by strand, stop
 	foreach my $pred_set ($genemark_predictions, $glimmer_predictions, $blast_predictions) {
@@ -126,7 +126,7 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 		}
 	}
 	
-	if ($$settings{use_genemark}) {
+	if ($$settings{prediction_use_genemark}) {
 		$$settings{min_predictors_to_call_orf} ||= 2;
 	} else {
 		$$settings{min_predictors_to_call_orf} ||= 1;
@@ -142,10 +142,8 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 				}
 				my %starts;
 
-#				my @s; print "$seq:$strand:$stop:\t";
 				foreach my $pred (@$contrib_predictions) {
 					$starts{$$pred{predictor}} = $$pred{start};
-#					push(@s, $$pred{start});
 				}
 				my $best_start;
 				if ($contrib_predictions->[0]->{strand} eq '+') {
@@ -164,10 +162,8 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 						# BLAST alignment extends upstream of the predicted start, so find the closest Met to the start predicted by BLAST.
 						# warn "BLAST alignment upstream of predicted start (-)\n";
 					}
-					
 #					$best_start = length($$input_seqs{$seq}) if $best_start > length($$input_seqs{$seq}) - 3; # FIXME: signal truncated predicts
 				}
-				#warn "Best start: $best_start [$starts{Glimmer3} $starts{BLAST}]\n";
 				my %prediction;
 				foreach my $contrib_pred (@$contrib_predictions) {
 					$prediction{$_} = $$contrib_pred{$_} for keys %$contrib_pred;
@@ -185,8 +181,7 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 				}
 				my $aa_seq = AKUtils::dna2aa($nt_seq);
 
-#				print "$best_start..$stop\t";
-#				print " $$_{predictor}" for @{$all_predictions{$seq}->{$strand}->{$stop}};
+#				print "$best_start..$stop\t"; print " $$_{predictor}" for @{$all_predictions{$seq}->{$strand}->{$stop}};
 #				print " [ @s ] [ L=".length($$input_seqs{$seq})." ]\n";
 #				warn("WARNING: L(pred)>2000") if abs($best_start-$stop)>2800;
 #				warn("WARNING: L(pred)<100") if abs($best_start-$stop)<100;
@@ -200,10 +195,14 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 		}
 	}
 
-	print "Minority reports:\n";
-	print "\t$$_{seqname}:$$_{start}..$$_{stop} ($$_{strand}) [L=".abs($$_{start}-$$_{stop})."] [P=$$_{predictor}]\n"
-		for sort {$$a{seqname} cmp $$b{seqname}} @minority_rep_orfs;
-#	print @minority_rep_orfs." minority reports\n";
+	if ($$settings{prediction_print_minority_reports}) {
+		open(MR, '>', "$$settings{outfile}.minority_reports.log")
+			or die("Unable to open file $$settings{outfile}.minority_reports.log for writing: $!");
+		# print MR "Minority reports:\n";
+		print MR "$$_{seqname}:$$_{start}..$$_{stop} ($$_{strand}) [L=".abs($$_{start}-$$_{stop})."] [P=$$_{predictor}]\n"
+			for sort {$$a{seqname} cmp $$b{seqname}} @minority_rep_orfs;
+		close MR;
+	}
 
 	my $trna_predictions = AKUtils::gettRNAscanSEPredictions($input_seqs, $settings);
 	foreach my $seqname (keys %$trna_predictions) {

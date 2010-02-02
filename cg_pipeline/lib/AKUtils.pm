@@ -1059,6 +1059,7 @@ sub intersectLength($$$$) {
 # Settings: optional: tse_exec: executable name for tRNAscanSE, tempdir: path to temporary directory
 sub gettRNAscanSEPredictions($;$) {
 	my ($seqs, $settings) = @_;
+	die("Internal error: no input supplied") if ref($seqs) ne 'HASH';
 	$$settings{tempdir} ||= AKUtils::mktempdir($settings);
 
 	# tRNAscanSE mangles sequence names, so save and restore them
@@ -1386,19 +1387,27 @@ sub loadSignalPPredictions($) {
 	return \%predictions;
 }
 
-sub getGlimmer3Predictions($;$$) {
-	my ($input_file_full, $seqs, $settings) = @_;
-	die("Internal error: no input supplied") unless $input_file_full;
-	$input_file_full = File::Spec->rel2abs($input_file_full);
-	my ($input_file, $input_dir) = fileparse($input_file_full);
+sub getGlimmer3Predictions($;$) {
+	my ($seqs, $settings) = @_;
+	die("Internal error: no input supplied") if ref($seqs) ne 'HASH';
 
-	logmsg "Preparing to run glimmer3 on $input_file_full...";
+	logmsg "Preparing to run glimmer3 on ".scalar(keys %$seqs)." sequences...";
 
 	$$settings{tempdir} ||= AKUtils::mktempdir($settings);
 
-	$seqs ||= readMfa($input_file_full);
+	# Save and restore sequence names
+	my $i; my (%renamed_seqs, %seqname_orig2working, %seqname_working2orig);
+	foreach my $seqname (keys %$seqs) {
+		$i++;
+		$seqname_orig2working{$seqname} = 'seq'.$i;
+		$seqname_working2orig{'seq'.$i} = $seqname;
+		$renamed_seqs{$seqname_orig2working{$seqname}} = $$seqs{$seqname};
+	}
 
-	my $longorfs_infile = $input_file_full;
+	my $glimmer_infile = "$$settings{tempdir}.glimmer3_in.fasta";
+	printSeqsToFile(\%renamed_seqs, $glimmer_infile);
+
+	my $longorfs_infile = $glimmer_infile;
 	if (scalar(keys %$seqs) > 1) {
 		$longorfs_infile = "$$settings{tempdir}/glimmer3_longorfs_in.fasta";
 		open(FH, '>', $longorfs_infile) or die "Could not open file $longorfs_infile for writing: ".$!;
@@ -1420,18 +1429,18 @@ sub getGlimmer3Predictions($;$$) {
 	$glimmer_opts .= " --max_olap $$settings{gl3_max_overlap}" if $$settings{gl3_max_overlap};
 	$glimmer_opts .= " --extend" unless $$settings{gl3_no_extended_predicts};
 
-	system("long-orfs $longorfs_opts --no_header --cutoff 1.15 '$longorfs_infile' '$input_file.longorfs' 2>'$$settings{tempdir}/glimmer3.log'");
+	system("long-orfs $longorfs_opts --no_header --cutoff 1.15 '$longorfs_infile' '$longorfs_infile.longorfs' 2>'$$settings{tempdir}/glimmer3.log'");
 	die("Error running long-orfs: $!") if $?;
-	system("extract -t '$longorfs_infile' '$input_file.longorfs' > '$$settings{tempdir}/$input_file.train'");
+	system("extract -t '$longorfs_infile' '$longorfs_infile.longorfs' > '$$settings{tempdir}/glimmer3.train'");
 	die("Error running extract: $!") if $?;
-	system("build-icm -r '$$settings{tempdir}/$input_file.icm' < '$$settings{tempdir}/$input_file.train'");
+	system("build-icm -r '$$settings{tempdir}/glimmer3.icm' < '$$settings{tempdir}/glimmer3.train'");
 	die("Error running build-icm: $!") if $?;
-	logmsg "Running glimmer3 on $input_file_full...";
-	system("glimmer3 $glimmer_opts '$input_file_full' '$$settings{tempdir}/$input_file.icm'"
-		. " '$$settings{tempdir}/$input_file.glimmer3' 2>>'$$settings{tempdir}/glimmer3.log'");
+	logmsg "Running glimmer3 on $glimmer_infile...";
+	system("glimmer3 $glimmer_opts '$glimmer_infile' '$$settings{tempdir}/glimmer3.icm'"
+		. " '$$settings{tempdir}/glimmer3' 2>>'$$settings{tempdir}/glimmer3.log'");
 	die("Error running glimmer3: $!") if $?;
 
-	return loadGlimmer3Predictions("$$settings{tempdir}/$input_file.glimmer3.predict", $seqs);
+	return loadGlimmer3Predictions("$$settings{tempdir}/glimmer3.predict", $seqs, \%seqname_working2orig);
 }
 
 =head1
@@ -1443,14 +1452,15 @@ To regularize this behavior, I add/subtract 3 to/from the glimmer3 coordinates, 
 and set the extended_lo or extended_hi flags in the prediction hash.
 With Glimmer, this also requires the $seqs hash, since we need to know the sequences' lengths.
 =cut
-sub loadGlimmer3Predictions($;$) {
-	my ($predfile, $seqs) = @_;
+sub loadGlimmer3Predictions($;$$) {
+	my ($predfile, $seqs, $seqname_remap) = @_;
 	open(PRED, '<', $predfile) or die("Could not open file $predfile for reading: ".$!);
 	my %predictions;
 	my $cur_seq = 'unknown';
 	while (<PRED>) {
 		if (/^\>\s*(.+?)\s*$/) {
 			$cur_seq = $1;
+			$cur_seq = $$seqname_remap{$cur_seq} if defined $seqname_remap;
 		} else {
 			my @line = split /\s+/;
 			my ($gene_id, $start, $end, $frame, $raw_score) = @line;
@@ -1534,12 +1544,10 @@ Settings:
 	gm_trainer_xopts - extra options to pass to gmsn.pl
 	gmhmm_model -  (If not specified, trains the model using GeneMarkS)
 =cut
-sub getGenemarkPredictions($;$$) {
-	my ($input_file_full, $seqs, $settings) = @_;
-	die("Internal error: no input supplied") unless $input_file_full;
+sub getGenemarkPredictions($;$) {
+	my ($seqs, $settings) = @_;
+	die("No input sequences supplied") if ref($seqs) ne 'HASH';
 	die("gmhmm_model and gene_pred_train_file should not both be set") if $$settings{gmhmm_model} and $$settings{gene_pred_train_file};
-	$input_file_full = File::Spec->rel2abs($input_file_full);
-	my ($input_file, $input_dir) = fileparse($input_file_full);
 
 	$$settings{tempdir} ||= AKUtils::mktempdir($settings);
 	$$settings{gm_trainer} ||= AKUtils::fullPathToExec('gmsn.pl') or die;
@@ -1548,7 +1556,16 @@ sub getGenemarkPredictions($;$$) {
 	$$settings{gms_alphabet} ||= 11;
 	$$settings{gm_allow_generic_heu_model} = 1 unless defined $$settings{gm_allow_generic_heu_model};
 
-	$seqs ||= readMfa($input_file_full);
+	# Save and restore sequence names
+	my $i; my (%renamed_seqs, %seqname_orig2working, %seqname_working2orig);
+	foreach my $seqname (keys %$seqs) {
+		$i++;
+		$seqname_orig2working{$seqname} = 'seq'.$i;
+		$seqname_working2orig{'seq'.$i} = $seqname;
+		$renamed_seqs{$seqname_orig2working{$seqname}} = $$seqs{$seqname};
+	}
+	my $gm_input_file = "$$settings{tempdir}/gmhmmp_in.fasta";
+	printSeqsToFile(\%renamed_seqs, $gm_input_file);
 
 	if (not defined $$settings{gmhmm_model}) {
 		if (defined $$settings{gene_pred_train_file}) {
@@ -1557,12 +1574,13 @@ sub getGenemarkPredictions($;$$) {
 			my $train_seqs = readMfa($$settings{gene_pred_train_file});
 			die("Training data file $$settings{gene_pred_train_file} is unsuitable, probably not enough long sequences")
 				unless checkGenePredTrainSet($train_seqs, $settings);
-			
+
 			$$settings{gmhmm_model} = trainGenemarkModel($$settings{gene_pred_train_file}, $settings);
 		} elsif (checkGenePredTrainSet($seqs, $settings)) { # query data appears usable
-			$$settings{gmhmm_model} = trainGenemarkModel($input_file_full, $settings);
+			$$settings{gmhmm_model} = trainGenemarkModel($gm_input_file, $settings);
 		} elsif ($$settings{gm_allow_generic_heu_model}) { # select precomputed model
 			# also do this if model generation failed
+			die("gmhmmp data directory not found in $$settings{gms_datadir}") unless -d $$settings{gms_datadir};
 			my $gc_rounded = sprintf('%.0f', AKUtils::computeGC($seqs) * 100);
 			$gc_rounded = 30 if $gc_rounded < 30;
 			$gc_rounded = 70 if $gc_rounded > 70;
@@ -1574,18 +1592,18 @@ sub getGenemarkPredictions($;$$) {
 			$$settings{gmhmm_model} = $$settings{tempdir}.'/heu_'.$$settings{gms_alphabet}.'_'.$gc_rounded.'.mod';
 			logmsg "Warning: insufficient data to train native model. Using heuristic model $$settings{gmhmm_model}";
 		} else {
-			die("Query data in $input_file_full insufficient for self-training"
+			die("Query data in $gm_input_file insufficient for self-training"
 				. "and no generic heuristic model fallback is allowed, unable to select gmhmm model");
 		}
 	}
 	$$settings{gmhmm_model} = File::Spec->rel2abs($$settings{gmhmm_model});
 	die("Model file $$settings{gmhmm_model} not found") unless -f $$settings{gmhmm_model};
 
-	logmsg "Running $$settings{gm_predictor} on $input_file_full using model $$settings{gmhmm_model}...";
+	logmsg "Running $$settings{gm_predictor} on $gm_input_file using model $$settings{gmhmm_model}...";
 
 	my $lst_file = "$$settings{tempdir}/gm_out.lst";
 	unlink $lst_file;
-	while (my ($seqname, $seq) = each(%$seqs)) {
+	while (my ($seqname, $seq) = each(%renamed_seqs)) {
 		my $temp_fna = "$$settings{tempdir}/temp.fna";
 		open(OUT, '>', $temp_fna) or die("Unable to open file $temp_fna for writing: $!");
 		print OUT ">$seqname\n$seq";
@@ -1605,7 +1623,7 @@ sub getGenemarkPredictions($;$$) {
 		unlink $temp_fna;
 		unlink "$temp_fna.lst";
 	}
-	return loadGMHMMPredictions($lst_file, $seqs);
+	return loadGMHMMPredictions($lst_file, $seqs, \%seqname_working2orig);
 }
 
 =head1
@@ -1613,14 +1631,15 @@ Load a gmhmmp output file. Return a hash:
 TODO
 TODO: frame info recovery
 =cut
-sub loadGMHMMPredictions($) {
-	my ($predfile) = @_;
+sub loadGMHMMPredictions($;$$) {
+	my ($predfile, $seqs, $seqname_remap) = @_;
 	open(PRED, '<', $predfile) or die("Could not open file $predfile for reading: ".$!);
 	my %predictions;
 	my $cur_seq = 'unknown';
 	while (<PRED>) {
 		if (/^\>\s*(.+?)\s*$/) {
 			$cur_seq = $1;
+			$cur_seq = $$seqname_remap{$cur_seq} if defined $seqname_remap;
 		} else {
 			my @line = split /\s+/;
 			shift(@line) if $line[0] eq '';
@@ -1655,7 +1674,7 @@ sub loadGMHMMPredictions($) {
 # DEPRECATED
 sub getGenePredictions($;$$$$) {
 	my ($input_file, $gm_trainer, $gm_predictor, $seqs, $model) = @_;
-	return getGenemarkPredictions($input_file, $seqs, {gm_trainer => $gm_trainer, gm_predictor => $gm_predictor, gmhmm_model => $model});
+	return getGenemarkPredictions($seqs, {gm_trainer => $gm_trainer, gm_predictor => $gm_predictor, gmhmm_model => $model});
 }
 
 sub printSeqsToFile($$;$) {
@@ -1989,9 +2008,11 @@ sub loadConfig($) {
 
 	$0 = fileparse($0) if $0 =~ /\//;
 	$$settings{appname} ||= $0;
+	$$settings{app_config_dir} ||= "$FindBin::RealBin/../conf";
 	$$settings{system_config_dir} ||= "/etc";
 	$$settings{user_config_dir} ||= $ENV{HOME};
 	$$settings{config_files} ||= ["$FindBin::RealBin/$$settings{appname}rc",
+		"$$settings{app_config_dir}/$$settings{appname}rc",
         "$$settings{system_config_dir}/$$settings{appname}rc",
 		"$$settings{user_config_dir}/.$$settings{appname}rc"];
 
@@ -2003,7 +2024,7 @@ sub loadConfig($) {
 		while (<IN>) {
 			$i++;
 			chomp;
-			next if /^\#/ or /^$/;
+			next if /^\s*\#/ or /^$/;
 			/^\s*([^\=]+?)\s*=\s*([^\=]+?)\s*$/
 				or die("Invalid configuration syntax on line $i of file $file. Expected variable=value syntax");
 			my ($key, $value) = ($1, $2);
@@ -2031,10 +2052,103 @@ sub computeGC($) {
 	return (($nuc_freqs{'G'}+$nuc_freqs{'C'})/$tot_len);
 }
 
-sub workerWrapper($) {
-	my ($invoke_string) = @_;
-	system($invoke_string);
-	print "$0: Command \"$invoke_string\" exited with status $?\n";
+sub workerPool($;$) {
+	my ($input_tasks, $settings) = @_;
+	my $debug = 0;
+	require IO::Select;
+
+	# TODO: pass library paths properly (test by unsetting PERL5LIB)
+	$$settings{worker_exec_name} ||= "perl -e'use AKUtils; exit(AKUtils::workerWrapper())'";
+	die("Error: Expected an array of tasks or a hash of named tasks") if ref($input_tasks) ne 'ARRAY' and ref($input_tasks) ne 'HASH';
+
+	my %tasks;
+	if (ref($input_tasks) eq 'ARRAY') {
+		my $i;
+		foreach my $task (@$input_tasks) {
+			$i++; $tasks{$i} = $task;
+		}
+	} else {
+		$tasks{$_} = $$input_tasks{$_} for keys %$input_tasks;
+	}
+
+	$$settings{num_threads} ||= min(AKUtils::getNumCPUs(), scalar(keys %tasks));
+	$$settings{define_thread_ids} = 1 unless defined $$settings{define_thread_ids};
+	$$settings{require_report_line} = 1 unless defined $$settings{define_thread_ids};
+
+	# Spawn the worker thread pool (not real multithreading - just processes with pipes)
+	my $th_set = new IO::Select();
+	my %worker_info;
+	foreach my $thread_id (0..$$settings{num_threads}-1) {
+		my $invoke_str = $$settings{worker_exec_name};
+		if ($$settings{define_thread_ids}) {
+			$$settings{thread_id_arg_name} ||= '-i';
+			$invoke_str .= " $$settings{thread_id_arg_name} $thread_id";
+		}
+		logmsg "Launching thread $thread_id via \"$invoke_str\"";
+		# open($th, '-|', $invoke_str); # $th is a read handle (worker output is piped to us)
+		# open($th, '|-', $invoke_str); # $th is a write handle (we pipe input to the worker)
+		use IPC::Open2;
+		my ($worker_out, $worker_in);
+		my $pid = open2($worker_out, $worker_in, $invoke_str);
+		$worker_info{$worker_out} = {pid => $pid, rh => $worker_out, wh => $worker_in, thread_id => $thread_id};
+		
+		$th_set->add($worker_out);
+	}
+
+	my @outstanding_tasks = sort keys %tasks;
+	my %reports;
+    DISPATCH: while (my @ready_rhs = $th_set->can_read) {
+		foreach my $worker_rh (@ready_rhs) {
+			warn "worker rh $worker_rh ready..." if $debug;
+			my $report = <$worker_rh>; chomp $report;
+			$reports{$worker_info{$worker_rh}->{current_task}} = $report if defined $worker_info{$worker_rh}->{current_task};
+			undef $worker_info{$worker_rh}->{current_task};
+			
+			# 1. accept output from worker
+			# 2. if tasks remain, dispatch task, otherwise terminate this worker
+			# 3. if no dispached tasks are outstanding, terminate all workers and return
+
+			if (my $next_task_id = shift @outstanding_tasks) {
+				my $next_task = $tasks{$next_task_id};
+				warn "dispatching task $next_task" if $debug;
+				print { $worker_info{$worker_rh}->{wh} } $next_task."\n";
+				$worker_info{$worker_rh}->{current_task} = $next_task_id;
+			} else {
+				$th_set->remove($worker_rh);
+			}
+		}
+	}
+
+	logmsg "done with tasks, cleaning up\n";
+	foreach my $h (keys %worker_info) {
+		$th_set->remove($h);
+		close $h;
+		close $worker_info{$h}->{wh};
+		waitpid($worker_info{$h}->{pid}, 0);
+		logmsg "cleaned up worker with pid $worker_info{$h}->{pid}";
+	}
+	return \%reports;
+}
+
+
+sub workerWrapper() {
+	require FileHandle;
+	STDIN->autoflush(1);
+	STDOUT->autoflush(1);
+
+	warn "$0 started with args @ARGV\n";
+	my $worker_id;
+	$worker_id = $ARGV[1] if $ARGV[0] eq '-i';
+	print "$0: worker ready\n";
+
+	while (<STDIN>) {
+		chomp;
+		my $invoke_string = $_;
+		system($invoke_string);
+		print "$0: Command \"$invoke_string\" exited with status $?\n";
+	}
+	# TODO: install signal handlers
+	return 0;
 }
 
 __END__
