@@ -1,54 +1,127 @@
-#!/usr/bin/env perl
-
-# run_annotation: Perform standard annotation protocol operations
-# Author: Andrey Kislyuk (kislyuk@gatech.edu)
-
-package PipelineRunner;
-my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
-
-my $settings = {
-	appname => 'cgpipeline',
-};
-my $stats;
-
-use strict;
-use FindBin;
-use lib "$FindBin::RealBin/../lib";
-$ENV{PATH} = "$FindBin::RealBin:".$ENV{PATH};
-
-use Getopt::Long;
-use File::Temp ('tempdir');
-use File::Path;
-use File::Spec;
-use File::Copy;
-use File::Basename;
-use List::Util qw(min max sum shuffle);
-use Bio::SeqIO;
-use AKUtils;
-
-$0 = fileparse($0);
-local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
-sub logmsg {my $FH = $PipelineRunner::LOG || *STDOUT; print $FH "$0: ".(caller(1))[3].": @_\n";}
-
-exit(main());
-
-sub main() {
-	$settings = AKUtils::loadConfig($settings);
-	die("Usage: $0 input.sff [-R references.mfa] -strain_name=name") if @ARGV < 1;
-
-	my @cmd_options = ('ChangeDir=s', 'keep', 'strain_name=s', 'outdir=s', 'tempdir=s', 'reporting_email=s', 'References=s');
-	GetOptions($settings, @cmd_options) or die;
-	die("Option strain_name is required") unless $$settings{strain_name};
-	my $input_sff = join(" ", @ARGV);
-
-	$$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
-	logmsg "Temporary directory is $$settings{tempdir}";
-
-	my $invoke_string = "run_assembly $input_sff";
-	$invoke_string .= " -R $$settings{References}" if defined $$settings{References};
-	system($invoke_string); die if $?;
+#!/bin/bash
+script=`basename $0`
+usage="\n\tusage: $script [build|project-name] [create|assemble|predict|annotate] target.sff reference.fasta\n
+examples:
+$script build Pyrosequence.sff reference.fna
+	Performs a complete genome build:
+	1. Creates a project directory named Pyrosequence.sff.Pipeline
+	2. Assembles the sff input against the reference (or assembles de novo if no reference file is provided). Output is Pyrosequence.sff.Pipeline/assembly.fasta
+	3. Runs prediction on assembly.fasta. Output is Pyrosequence.sff.Pipeline/prediction.gb
+	4. Runs annotation on Pyrosequence.sff.Pipeline/prediction.gb. Output data files are in Pyrosequence.sff.Pipeline/annotation/.
 	
-	system("run_prediction run_assembly.out.fasta -strain_name=$$settings{strain_name}"); die if $?;
-
-	system("run_annotation run_prediction.out.gb"); die if $?;
-}
+$script PROJECT_FOO create
+	Creates a directory named PROJECT_FOO and subdirectories where project files will be generated.
+	
+$script PROJECT_FOO assemble sff-file [reference]
+	Runs assembly of sff-file using a reference in nucleotide fasta file, if provided, de novo if not. All messages are stored in PROJECT_FOO/log/assembly.txt
+	
+$script PROJECT_FOO predict [alt-assembly-file]
+	Runs prediction against PROJECT_FOO/assembly.fasta, or an alternative file if provided. All messages are stored in PROJECT_FOO/log/prediction.txt. Output file is PROJECT_FOO/prediction.gb
+	
+$script PROJECT_FOO annotate [alt-prediction-file]
+	Runs prediction against PROJECT_FOO/prediction.gb, or an alternative file if provided. All messages are stored in PROJECT_FOO/log/annotation.log. Output files will appear in PROJECT_FOO/annotation/*.sql\n"
+home=`pwd`
+if [ $# -lt 2 ];then
+	printf "$usage";
+	exit 0
+fi
+project=$1
+command=$2
+target=$3
+reference=$4
+if [ ! -d $project ];then # maybe trying to create
+	if [ "$command" == "create" ]; then
+		mkdir -p "$project"/{annotation,log,build/assembly,build/prediction,build/annotation}
+		printf "Project files have been created for $project\n"
+		exit 0
+	elif [ "$project" == "build" ];then # run a full genome build automatically
+		command="build"
+		target=$2
+		reference=$3
+		project=`basename $target`.Pipeline
+	else
+		printf "Project $project does not exist.\n\t$usage\n"
+		exit 1
+	fi
+else
+	if [ "$command" == "create" ]; then
+		echo "Project $project already exists"
+	#	exit 1
+	fi 
+fi
+case $command in
+"build") # do everything
+	$script $project create
+	if [ $? -ne 0 ];then exit 1;fi
+	$script $project assemble $target $reference
+	if [ $? -ne 0 ];then exit 1;fi
+	$script $project predict
+	if [ $? -ne 0 ];then exit 1;fi
+	$script $project annotate
+	if [ $? -ne 0 ];then exit 1;fi
+	echo "Genome build complete."
+	;;
+"assemble")
+	if [ $# -gt 2 ];then
+		target=$3
+	else
+		printf "Input sff file not specified.\n$usage"
+		exit 1
+	fi
+	refarg=""
+	if [ -f "$target" ];then
+		if [ $# -gt 3 ];then # reference assembly
+			reference=$4
+			if [ -e "$reference" ];then 
+				refarg="-R $reference"
+			else
+				printf "File not found: $reference\n"
+				exit 1
+			fi
+		else
+			printf "No reference genome provided. Proceeding with de novo assembly...\n"
+		fi
+		echo ASSEMBLY START `date` | tee "$project/log/assembly.txt"	
+	#	time run_assembly --tempdir="$home/$project/build/assembly" --keep $refarg --output "$home/$project/assembly.fasta" "$target" 2>&1 |tee --append "$project/log/assembly.txt"
+		echo ASSEMBLY END `date` | tee --append "$project/log/assembly.txt"
+		exit 0
+	else
+		printf "File not found: $target\n"
+		exit 1
+	fi
+	;;
+"predict")
+	abl="$project/assembly.fasta"
+	if [ $# -gt 2 ];then # probably using an alternate fasta input
+		abl="$3"
+	fi
+	if [ -e "$abl" ]; then
+		echo PREDICTION START `date` | tee "$project/log/prediction.txt"	
+	#	time run_prediction "$abl" --tempdir="$home/$project/build/prediction" --keep -o "$home/$project/prediction.gb" --strain_name="$project"  2>&1|tee --append "$project/log/prediction.txt"
+		echo PREDICTION END `date` | tee --append "$project/log/prediction.txt"	
+		exit 0
+	else
+		printf "File not found: $abl\n" 	
+		exit 1
+	fi
+	;;
+"annotate")
+	pre="$project/prediction.gb"
+	if [ $# -gt 2 ];then # probably using an alternate genbank input
+		pre="$3"
+	fi
+	if [ -e "$pre" ]; then
+		echo ANNOTATION START `date` | tee "$project/log/annotation.txt"	
+		time run_annotation "$pre" --tempdir="$home/$project/build/annotation" --keep -outdir="$home/$project/annotation"  2>&1|tee --append "$project/log/annotation.txt"
+		echo ANNOTATION END `date` | tee --append "$project/log/annotation.txt"	
+		exit 0
+	else
+		printf "File not found: $pre\n" 	
+		exit 1
+	fi
+	;;
+*)
+	printf "Command $command not recognized.\n$usage"
+	exit 0
+	;;
+esac 
