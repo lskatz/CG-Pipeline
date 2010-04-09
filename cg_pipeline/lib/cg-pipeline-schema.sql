@@ -1,5 +1,5 @@
-DROP TABLE IF EXISTS `blast_results`;
-CREATE TABLE `blast_results` (
+DROP TABLE IF EXISTS `blast`;
+CREATE TABLE `blast` (
   `protein_id` varchar(50) NOT NULL,
   `uniprot_id` varchar(50) NOT NULL,
   `length` int(11) NOT NULL,
@@ -75,7 +75,7 @@ CREATE TABLE `uniprot_evidence` (
   KEY `evidence_id` (`evidence_id`)
 );
 DROP TABLE IF EXISTS `ipr_hits`;
-CREATE TABLE `interpro_hits` (
+CREATE TABLE `ipr_hits` (
   `protein_id` varchar(50) NOT NULL,
   `length` integer,
   `domain_id` varchar(50) NOT NULL default 'noIPR',
@@ -108,8 +108,8 @@ CREATE TABLE `ipr_classifications` (
   KEY  (`protein_id`),
   KEY  (`go_id`)
 );
-DROP TABLE IF EXISTS `ipr_child_references`;
-CREATE TABLE `ipr_child_references` (
+DROP TABLE IF EXISTS `ipr_childrefs`;
+CREATE TABLE `ipr_childrefs` (
   `protein_id` varchar(50) NOT NULL,
   `interpro_hit_id` varchar(50) NOT NULL,
   `interpro_child_reference` varchar(50) NOT NULL
