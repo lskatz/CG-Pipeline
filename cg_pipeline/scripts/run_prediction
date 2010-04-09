@@ -228,7 +228,8 @@ sub generateGenBankFile($$$) {
 		-sub_species => $$settings{strain_name},
 	);
 
-	$$settings{tag_prefix} ||= $$settings{strain_name}."_draft_";
+	$$settings{tag_prefix} ||= $$settings{strain_name}."_";
+	if (grep('_', split('',$$settings{tag_prefix}))>1){warn "Tag prefix \"$$settings{tag_prefix}\" is not compliant with NCBI policy\n";}
 	my $cds_tag_factory = CGPipeline::TagFactory->new({factory_type => "draft_orf_tagger",
 		strain_name => $$settings{strain_name},
 		tag_prefix => $$settings{tag_prefix}});
