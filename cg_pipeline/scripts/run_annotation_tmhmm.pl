@@ -35,7 +35,8 @@ while (my $seq = $inseq->next_seq) {
 	}
 
 	my $tmhmm_measures = ["Length: ", "Number of predicted TMHs: ", "Exp number of AAs in TMHs: ", "Exp number, first 60 AAs: ", "Total prob of N-in: "];
-	my @l;
+	my @l = ( $seq->id );
+	
 	for (@$tmhmm_measures) { push(@l, $$stats{$_}); }
 	print TMHMM_STATS_SQL join("|", @l)."\n";
 }
