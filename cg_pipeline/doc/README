@@ -11,6 +11,12 @@ run_annotation input.gb
 
 DESCRIPTION
 
+cg_pipeline is a computational genomics pipeline for bacterial genome sequencing projects. The pipeline provides infrastructure for automated, configurable, reproducible execution of genome assembly, feature prediction and functional annotation using algorithms from state of the art programs in each field. The package is described in detail in [1].
+
+Installation and updating instructions can be found in the INSTALL file.
+
+cg_pipeline is licensed under the terms of the GNU GPL license. See the LICENSE file for details.
+
 
 CONFIGURATION
 
@@ -26,3 +32,5 @@ Georgia Institute of Technology:
 Computational Genomics Group (http://compgenomics.biology.gatech.edu/)
 Evolutionary Systems Biology Group (http://esbg.biology.gatech.edu/)
 Neisseria Base (http://nbase.biology.gatech.edu/)
+
+[1] A computational genomics pipeline for microbial sequencing projects. Kislyuk et al. Submitted.

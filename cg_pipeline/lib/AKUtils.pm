@@ -1404,7 +1404,7 @@ sub getGlimmer3Predictions($;$) {
 		$renamed_seqs{$seqname_orig2working{$seqname}} = $$seqs{$seqname};
 	}
 
-	my $glimmer_infile = "$$settings{tempdir}.glimmer3_in.fasta";
+	my $glimmer_infile = "$$settings{tempdir}/glimmer3_in.fasta";
 	printSeqsToFile(\%renamed_seqs, $glimmer_infile);
 
 	my $longorfs_infile = $glimmer_infile;
@@ -1896,6 +1896,7 @@ sub runPBSjobs($$$) {
 	die("No PBS queue name specified") unless defined $$settings{pbs_queue};
 	die("Callback defined but is not a subroutine") if defined $callback and ref($callback) ne 'CODE';
 	$$settings{tempdir} ||= AKUtils::mktempdir($settings);
+	$$settings{keep_free_nodes} ||= 4;
 
 	my %active_jobs; my @job_log;
 	foreach my $i (0..$#$jobs) {
@@ -1909,6 +1910,18 @@ sub runPBSjobs($$$) {
 	my $pbs_client = PBS::Client->new();
 	foreach my $job (@$jobs) {
 		die("Bad job name \"$$job{name}\"") if $$job{name} !~ /^[\d\w\.]+$/;
+		
+		if ($$settings{keep_free_nodes}) {
+			while (1) {
+				my $free_nodes = `pbsnodes -l free|wc -l` + 0;
+				# TODO: differentiate between nodes/cpus
+				# TODO: sometimes this doesnt update fast enough
+				# - maybe take min($free_nodes, $initial_free_nodes - $jobs_submitted)
+				last if $free_nodes > $$settings{keep_free_nodes};
+				sleep 5;
+			}
+		}
+
 		my $job_h = PBS::Client::Job->new(name => $$job{name},
 			script => "runpbsjobs.sh",
 			queue => $$settings{pbs_queue}, cmd => $$job{command},
@@ -1936,6 +1949,7 @@ sub runPBSjobs($$$) {
 		my $job_id = $pbs_client->qsub($job_h);
 		die("Internal error: unexpected job id @$job_id") if @$job_id != 1;
 		$active_jobs{$$job{name}} = $$job_id[0].".".hostname();
+		logmsg "Submitted job $$job{name} (id $$job_id[0].".hostname().")";
 	}
 
 	if ($$settings{wait_on_pbs_jobs}) {
@@ -2130,7 +2144,6 @@ sub workerPool($;$) {
 	return \%reports;
 }
 
-
 sub workerWrapper() {
 	require FileHandle;
 	STDIN->autoflush(1);
@@ -2149,6 +2162,85 @@ sub workerWrapper() {
 	}
 	# TODO: install signal handlers
 	return 0;
+}
+
+# Given an uninterrupted bacterial ORF and a position of interest,
+# find the closest start codon to that position.
+# Input: position of interest, sequence of interest,
+# low coordinate of ORF (indexed starting at 1), high coordinate of ORF (at least one of the two is required),
+# (e.g. in a sequence consisting of NATGNNNTGA, orf_lo = 2, orf_hi = 10),
+# strand of ORF (+ or -) (required). Optional settings: { start_codons => 'codon1|codon2|codon3' }
+# Output: the opening/most upstream coordinate (lowest for positive strand, highest for negative)
+# of the start codon closest to the position of interest in the indicated frame/strand.
+# The coordinate is indexed starting at 1.
+sub snapToStart($$$$$;$) {
+	my ($posn, $seq, $orf_lo, $orf_hi, $strand, $settings) = @_;
+	if (defined $orf_lo and defined $orf_hi) {
+		die "Internal error: orf_hi < orf_lo" if $orf_hi < $orf_lo;
+		die "Internal error: invalid orf coordinates" if (($orf_hi - $orf_lo + 1) % 3 != 0);
+	}
+	die "Internal error: No strand argument supplied" unless $strand eq '+' or $strand eq '-';
+	die "Internal error: ORF coordinate exceeds sequence length" if defined $orf_lo and length($seq) < $orf_lo;
+	die "Internal error: ORF coordinate exceeds sequence length" if defined $orf_hi and length($seq) < $orf_hi;
+	die "Internal error: ORF coordinate less than 1" if defined $orf_hi and $orf_hi < 1;
+	die "Internal error: ORF coordinate less than 1" if defined $orf_lo and $orf_lo < 1;
+
+	$$settings{start_codons} ||= "ATG|GTG";
+	my $start_codons;
+	if ($strand eq '+') {
+		$start_codons = $$settings{start_codons};
+	} else {
+		$start_codons = reverse($$settings{start_codons}); $start_codons =~ tr/ATGC/TACG/;
+	}
+
+	my $frame; # NB: no 'R' suffix in this block
+	if (defined $orf_lo) {
+		$frame = ($orf_lo - 1) % 3;
+		# $frame .= 'R' if $strand eq '-';
+	} elsif (defined $orf_hi) {
+		$frame = $orf_hi % 3;
+		# $frame .= 'R' if $strand eq '-';
+	}
+	$orf_lo ||= $frame+1;
+	$orf_hi ||= length($seq); # FIXME - length($seq) % 3;
+	
+	my ($prev_start_lo, $next_start_lo);
+	for (my $next_codon_lo = $posn-1 - (($posn-$frame-1) % 3); $next_codon_lo < $orf_hi; $next_codon_lo += 3) {
+		next if $next_codon_lo < 0;
+		my $codon = substr($seq, $next_codon_lo, 3);
+		last if length($codon) < 3;
+		print "frame $frame @ pos=$next_codon_lo Next codon $codon\n";
+		if ($codon =~ /($start_codons)/) {
+			warn "found start @ $next_codon_lo\n";
+			$next_start_lo = $next_codon_lo; last;
+		}
+	}
+	for (my $prev_codon_lo = $posn-1 - (($posn-$frame-1) % 3) - 3; $prev_codon_lo > $orf_lo-1; $prev_codon_lo -= 3) {
+		my $codon = substr($seq, $prev_codon_lo, 3);
+		last if length($codon) < 3;
+		print "frame $frame @ pos=$prev_codon_lo Prev codon $codon\n";
+		if ($codon =~ /($start_codons)/) {
+			warn "found start @ $prev_codon_lo\n";
+			$prev_start_lo = $prev_codon_lo; last;
+		}
+	}
+	warn "start codons $start_codons; psl $prev_start_lo  nsl $next_start_lo\n";
+	my $best_start;
+	if (defined $prev_start_lo and defined $next_start_lo) {
+		if (($posn-1) - $prev_start_lo < $next_start_lo - ($posn-1)) {
+			$best_start = $prev_start_lo;
+		} else {
+			$best_start = $next_start_lo;
+		}
+	} else {
+		$best_start = $next_start_lo if defined $next_start_lo;
+		$best_start = $prev_start_lo if defined $prev_start_lo;
+	}
+
+	$best_start += 1 if defined $best_start; # convert from 0 to 1 based
+	$best_start += 2 if $strand eq '-' and defined $best_start;
+
+	return $best_start;
 }
 
 __END__
