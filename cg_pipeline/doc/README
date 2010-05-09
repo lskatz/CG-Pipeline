@@ -1,6 +1,6 @@
 SYNOPSIS
 
-run_cg_pipeline input.sff -strain_name=name
+run_pipeline [build|create|assemble|predict|annotate] [-p project] -i target.sff [-r reference.fasta] [-t tag_prefix]
 
 run_assembly input.sff [, input2.sff, ...] [-R references.mfa]
 
