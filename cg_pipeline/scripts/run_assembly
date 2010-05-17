@@ -37,7 +37,7 @@ sub main() {
 
 	die("Usage: $0 input.sff [, input2.sff, ...] [-R references.mfa] [-C workdir]") if @ARGV < 1;
 
-	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'output');
+	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'output=s');
 	GetOptions($settings, @cmd_options) or die;
 
 	$$settings{outfile} = $$settings{output};
@@ -45,6 +45,7 @@ sub main() {
 	$$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
 	open(FH, '>', $$settings{outfile}) or die("Error writing to output file $$settings{outfile}");
 	close FH;
+	logmsg "Output file is " . $$settings{outfile} . "\n";
 
 	my @ref_files = @{$$settings{Reference}} if defined $$settings{Reference};
 	logmsg "No reference files supplied. Reverting to assembly mode" unless @ref_files;
