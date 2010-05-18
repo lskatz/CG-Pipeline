@@ -48,7 +48,7 @@ sub main() {
 
 	die("Usage: $usage\n") if @ARGV < 1;
 
-	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'blast_db=s', 'outfile=s', 'strain_name=s', 'tag_prefix=s', 'classification=s');
+	my @cmd_options = ('tempdir=s','ChangeDir=s', 'Reference=s@', 'keep', 'blast_db=s', 'outfile=s', 'strain_name=s', 'tag_prefix=s', 'classification=s');
 	GetOptions($settings, @cmd_options) or die;
 	die("Argument strain_name is required. Usage: $usage\n") unless defined $$settings{strain_name};
 	die("Argument classification is required. Usage: $usage\n") unless defined $$settings{classification};
@@ -68,7 +68,7 @@ sub main() {
 		die("Input or reference file $file not found") unless -f $file;
 	}
 
-	$$settings{tempdir} = tempdir($$settings{tempdir} or File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
+	$$settings{tempdir} ||= tempdir($$settings{tempdir} or File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
 	logmsg "Temporary directory is $$settings{tempdir}";
 
 	my ($input_seqs, $ref_seqs) = loadInputs(\@input_files, \@ref_files);
@@ -113,7 +113,6 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 		$genemark_predictions = AKUtils::getGenemarkPredictions($input_seqs, $settings);
 	}
 	my $glimmer_predictions = AKUtils::getGlimmer3Predictions($input_seqs, $settings);
-	my $blast_predictions = {};
 	my $blast_predictions = AKUtils::getBLASTGenePredictions($input_seqs, $settings);
 
 	# Combine and index predictions by strand, stop
@@ -151,25 +150,18 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 					$best_start = max($starts{gmhmmp}, $starts{Glimmer3});
 
 					if (defined $starts{BLAST} and $starts{BLAST} < $best_start) {
-						my $snapped_start = AKUtils::snapToStart($starts{BLAST}, $$input_seqs{$seq}, undef, $stop, '+');
 						# BLAST alignment extends upstream of the predicted start, so find the closest Met to the start predicted by BLAST.
-						# warn "BLAST alignment upstream of predicted start (+): snapped to position $snapped_start\n";
-						$best_start = $snapped_start if defined $snapped_start
-							and defined $starts{gmhmmp} and $starts{gmhmmp} != $starts{Glimmer3};
+						# warn "BLAST alignment upstream of predicted start (+)\n";
 					}
 				} else {
 					$starts{gmhmmp} ||= 1e999; $starts{Glimmer3} ||= 1e999;
 					$best_start = min($starts{gmhmmp}, $starts{Glimmer3});
 #					die("Internal error") if $best_start == 1e999;
 					if (defined $starts{BLAST} and $starts{BLAST} > $best_start) {
-						my $snapped_start = AKUtils::snapToStart($starts{BLAST}, $$input_seqs{$seq}, $stop, undef, '-');
 						# BLAST alignment extends upstream of the predicted start, so find the closest Met to the start predicted by BLAST.
-						# warn "BLAST alignment upstream of predicted start (-): snapped to position $snapped_start\n";
-						$best_start = $snapped_start if defined $snapped_start
-							and defined $starts{gmhmmp} and $starts{gmhmmp} != $starts{Glimmer3};
+						# warn "BLAST alignment upstream of predicted start (-)\n";
 					}
 #					$best_start = length($$input_seqs{$seq}) if $best_start > length($$input_seqs{$seq}) - 3; # FIXME: signal truncated predicts
-
 				}
 				my %prediction;
 				foreach my $contrib_pred (@$contrib_predictions) {
@@ -235,11 +227,7 @@ sub generateGenBankFile($$$) {
 		-sub_species => $$settings{strain_name},
 	);
 
-	$$settings{tag_prefix} ||= $$settings{strain_name}."_";
-	if (grep('_', split('',$$settings{tag_prefix}))>1){
-		warn "Tag prefix \"$$settings{tag_prefix}\" is not compliant with NCBI policy\n";
-	}
-
+	$$settings{tag_prefix} ||= $$settings{strain_name}."_draft_";
 	my $cds_tag_factory = CGPipeline::TagFactory->new({factory_type => "draft_orf_tagger",
 		strain_name => $$settings{strain_name},
 		tag_prefix => $$settings{tag_prefix}});
