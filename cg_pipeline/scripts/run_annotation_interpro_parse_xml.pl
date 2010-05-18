@@ -4,6 +4,8 @@ my $settings = {};
 my $stats = {};
 
 use strict;
+use FindBin;
+use lib "$FindBin::RealBin/../lib";
 use AKUtils qw(logmsg);
 use Getopt::Long;
 use File::Temp ('tempdir');
