@@ -1,0 +1,152 @@
+#!/bin/bash
+script=`basename $0`
+usage="\tusage: $script [build|create|assemble|predict|annotate] [-p project] -i target.sff [-r reference.fasta] [-t tag_prefix]
+type \'$script -h\' for more information.\n"
+
+helpmsg="\n\tusage: $script [build|create|assemble|predict|annotate] [-p project] -i target.sff [-r reference.fasta] [-t tag_prefix]\n
+Commands:
+	build create assemble predict annotate (see above)
+
+Parameters:
+	-p Project Name
+	-i Input file
+	-r Reference file
+	-t Tag prefix
+examples:
+
+$script build -i MyStrain.sff -r reference.fna
+	Performs a complete genome build:
+	1. Creates a project directory named MyStrain_Pipeline
+	2. Assembles the sff input against the reference (or assembles de novo if no reference file is provided). Output is MyStrain_Pipeline/assembly.fasta.
+	3. Runs prediction on assembly.fasta. Output is MyStrain_Pipeline/prediction.gb. Locus tags will be generated as MyStrain_0001, MyStrain_0002, etc. unless the -t option is given with an alternative tag prefix.
+	4. Runs annotation on MyStrain_Pipeline/prediction.gb. Output data files are in MyStrain_Pipeline/annotation/.
+
+$script create -p MyStrain
+	Creates a directory named MyStrain containing subdirectories where project files will be generated.
+
+$script assemble -p MyStrain -i sff-file [ -r reference ]
+	Runs assembly in project MyStrain of sff-file using a reference in nucleotide fasta file if -r is specified, de novo if not. All messages are stored in MyStrain/log/assembly.txt
+			
+$script predict -p MyStrain [-i assembly-file]
+	Runs prediction in project MyStrain against MyStrain/assembly.fasta, or an alternative file if specified. All messages are stored in MyStrain/log/prediction.txt. Output file is MyStrain/prediction.gb
+			
+$script annotate -p MyStrain [-i alt-prediction-file]
+	Runs prediction in project MyStrain against MyStrain/prediction.gb, or an alternative file if specified. All messages are stored in MyStrain/log/annotation.log. Output files will appear in MyStrain/annotation/*.sql\n\n"
+
+if [ $# -eq 0 ];then printf "$usage";exit 0;fi
+home=`pwd`
+
+command=$1
+if ! `echo $command|grep '^-'`; then shift; fi
+while getopts "dhfp:i:r:t:c:" opt; do
+	case $opt in
+		h) printf "$helpmsg\n" exit 1 ;;
+		p) project=$OPTARG;;
+		r) reference=$OPTARG;;
+		i) target=$OPTARG;;
+		t) tag_prefix=$OPTARG;;
+		f) force="-f";;
+		c) command=$OPTARG;;
+		d) deNovo="-deNovo=T"
+	esac	
+done
+
+if [ $? -eq 1 ]; then exit 0;fi
+
+# Avoid creating a project that already exists, unless forcing with -f
+if [ -d "$project" ];then
+	if [ "$force" == "" ];then
+		if [ "$command" == "create" ];then
+			echo "Project $project already exists; add -f to override";
+			exit 1
+		elif [ "$command" == "build" ];then
+			echo "Project $project already exists; add -f to override";
+			exit 1
+		fi
+	fi
+fi
+
+if [ "$command" == "create" ]; then
+	mkdir -p "$project"/{annotation,log,build/assembly,build/prediction,build/annotation}
+	printf "Project files have been created for $project\n"
+	exit 0
+elif [ "$command" == "build" ];then # run a full genome build automatically
+	if [ "" == "$project" ];then #generate a project name from the target file name
+		project=`basename $target .sff`_Pipeline
+	fi
+	if [ "" == "$tag_prefix" ];then #generate a tag prefix from the target file name
+		tag_prefix=`basename $target .sff`
+	fi
+fi
+
+case $command in
+"build") # do everything
+	$script create -p $project $force
+	if [ $? -ne 0 ];then exit 1;fi
+	[ "$reference" != "" ] && refarg="-r $reference"
+	$script assemble -p $project -i $target $refarg -t $tag_prefix
+	if [ $? -ne 0 ];then exit 1;fi
+	$script predict -p $project
+	if [ $? -ne 0 ];then exit 1;fi
+	$script annotate -p $project
+	if [ $? -ne 0 ];then exit 1;fi
+	echo "Genome build complete."
+	;;
+"assemble")
+	[ ! -e "$target" ] && printf "File not found: $target\n" && exit 1
+	refarg=""
+	if [ "$reference" != "" ];then
+		#if [ -e "$reference" ];then 
+			for ref in $reference
+			do
+				refarg="$refarg -R $ref "
+			done
+		#else
+		#	printf "File not found: $reference\n"
+		#	exit 1
+		#fi
+	else
+		printf "No reference genome provided. Proceeding with de novo assembly...\n"
+	fi
+	echo ASSEMBLY START `date` | tee "$project/log/assembly.txt"	
+	time run_assembly --tempdir="$home/$project/build/assembly" --keep $refarg "$deNovo" --output "$home/$project/assembly.fasta" "$target" 2>&1 |tee --append "$project/log/assembly.txt"
+	echo ASSEMBLY END `date` | tee --append "$project/log/assembly.txt"
+	exit 0
+	;;
+"predict")
+	abl="$project/assembly.fasta"
+	if [ "$target" != ""  ];then # using an alternate fasta input
+		abl="$target"
+	fi
+	tagarg=""
+	if [ "$tag_prefix" != "" ];then tagarg="--tag-prefix=$tag_prefix";fi
+	if [ -e "$abl" ]; then
+		echo PREDICTION START `date` | tee "$project/log/prediction.txt"	
+		time run_prediction "$abl" --tempdir="$home/$project/build/prediction" --keep -o "$home/$project/prediction.gb" --strain_name="$project" $tagarg 2>&1|tee --append "$project/log/prediction.txt"
+		echo PREDICTION END `date` | tee --append "$project/log/prediction.txt"	
+		exit 0
+	else
+		printf "File not found: $abl\n" 	
+		exit 1
+	fi
+	;;
+"annotate")
+	pre="$project/prediction.gb"
+	if [ "$target" != "" ];then # probably using an alternate genbank input
+		pre="$target"
+	fi
+	if [ -e "$pre" ]; then
+		echo ANNOTATION START `date` | tee "$project/log/annotation.txt"	
+		time run_annotation "$pre" --tempdir="$home/$project/build/annotation" --keep -outdir="$home/$project/annotation"  2>&1|tee --append "$project/log/annotation.txt"
+		echo ANNOTATION END `date` | tee --append "$project/log/annotation.txt"	
+		exit 0
+	else
+		printf "File not found: $pre\n" 	
+		exit 1
+	fi
+	;;
+*)
+	printf "Command $command not recognized.\n$usage"
+	exit 0
+	;;
+esac 
