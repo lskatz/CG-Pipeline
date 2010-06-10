@@ -39,8 +39,8 @@ CREATE TABLE `signalp_hmm` (
 DROP TABLE IF EXISTS `tmhmm`;
 CREATE TABLE `tmhmm` (
   `protein_id` varchar(40) NOT NULL default '',
-  `predicted_number` int(10) default NULL,
   `length` int(11) default NULL,
+  `predicted_number` int(10) default NULL,
   `expected_number_aa` double default NULL,
   `expected_number_aa_60` double default NULL,
   `total_prob_n_in` double default NULL,
