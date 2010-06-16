@@ -50,7 +50,7 @@ sub main(){
 	my $atndir;
 	opendir($atndir,$$settings{'inputdir'}) or die "unable to open directory $$settings{'inputdir'}:$!\n";
 	my @atnfiles=readdir($atndir);
-	foreach $type ((qw/blast ipr_matches signalp_hmm signalp_nn tmhmm tmhmm_location vfdb_hits/)){
+	foreach $type ((qw/blast ipr_matches signalp_hmm signalp_nn tmhmm.sql tmhmm_location vfdb_hits/)){
 		my @files=grep(/$type/,@atnfiles);
 		if(@files){push(@sqlfiles,$$settings{'inputdir'} . "/" . $files[0]);}
 	}
@@ -62,11 +62,13 @@ sub main(){
 
 	STAGE_1:
 	#Stage 1: Make a hash of loci to SeqFeature objects from each data line
+	my $blastcount=0;
 	foreach my $sqlfile(@sqlfiles){
 		$type = (reverse split('\.', basename($sqlfile,'.sql')))[0];
 		if(!defined($type) || !defined($map{$type})){ print STDERR "Input filename rejected: $type\n";next;}
 		@params = @{$map{$type}};
 		open (FH, "<$sqlfile") or die $!; #one prediction file containing locus tags
+print STDERR "parsing $sqlfile\n";
 		while (<FH>){
 			chomp;
 			# skip a row of empties
@@ -94,6 +96,7 @@ sub main(){
 		}
 		close(FH);
 	}
+
 	STAGE_2:
 	#Stage 2: Select a name for each locus from available SeqFeature objects and integrate the other subfeatures
 	while( my $seq=$gbin->next_seq()){ #each contig
@@ -105,24 +108,23 @@ sub main(){
 		$contig =~ s/[a-zA-Z]*[0]*([0-9]+)_.*$/$1/;
 		$seq->display_id(sprintf("%s_%04d",$organism,$contig));
 		my @feats = $seq->all_SeqFeatures(); # features here are loci in the genome
-		$seq->flush_SeqFeatures();
-		foreach my $ftr (@feats){ # each feature in the contig
-			#print $ftr->primary_tag() . "\n";next;
+		#$seq->flush_SeqFeatures(); # try removing this.....
+		foreach my $ftr (@feats){ # each feature in the contig---each locus
 			if($ftr->primary_tag() eq 'gene'){next;} # we get two features, gene and CDS, duplicates
-			my $locus_tag = ($ftr->each_tag_value('locus_tag'))[0];
-			#$locus_tag =~ s/_Pipeline_draft_/_/g;
-			#print STDERR $ftr->gff_string($gff) . "\n";
-			if (!(defined($spfeats{$locus_tag}) && (0<scalar @{$spfeats{$locus_tag}}))){next;}
+			my $locus_tag = ($ftr->get_tag_values('locus_tag'))[0];
+			#if (!(defined($spfeats{$locus_tag}) && (0<scalar @{$spfeats{$locus_tag}}))){print STDERR "skipping due to having no features:$locus_tag\n"; next;}
+			if (!(defined($spfeats{$locus_tag}))){
+				print STDERR "skipping due to having no features:$locus_tag\n";
+				$seq->add_SeqFeature(@feats);# put predictions back in
+				next;
+			}
 			#initialize the naming hash
 			%data = (type=>'none',name=>'hypothetical',product=>'putative',identity=>1,evalue=>999,count=>'0');
+			my $ftrcount = scalar @{$spfeats{$locus_tag}};
+			print STDERR "$ftrcount features for $locus_tag\n";
+			my $skipper=0;
 			foreach $newftr ( @{$spfeats{$locus_tag}}){
-				#if($data{'product'} !~ /hypothetical|putative|probable|conserved/i){
-				#	#the gene has been satisfactorily named by a uniprot blast hit
-				#	next;	
-				#	#otherwise, the gene name will be the concatenation of all other evidence
-				#}
 				$newftr->strand($ftr->strand);
-	#User should always list data files in order: blast,ipr_matches,signalp,tmhmm
 				if($newftr->primary_tag eq 'blast'){
 					$newftr->start($ftr->start());
 					$newftr->end($ftr->end());
@@ -134,7 +136,10 @@ sub main(){
 					my $source =$newftr->source_tag();
 					my $locus_tag=($newftr->get_tag_values('locus_tag'))[0];
 					my $gene="unnamed";
-					if($identity<91 || $evalue>1e-9){next;}
+					if($identity<91 || $evalue>1e-9){
+# considering writing the empty features back to the locus and calling this the last iteration
+						next;
+					}
 					if(	($data{'evalue'} >= $evalue || #compare this blast hit to the previous one
 						$data{'identity'} <= $identity ) ){
 						%data=(type=>'blast',product=>$product,identity=>$identity,evalue=>$evalue,locus_tag=>$locus_tag,count=>$data{'count'}++);
@@ -288,11 +293,6 @@ sub main(){
 								if($each_ftr->start>$regionstart){$each_ftr->start($regionstart);}
 								if($each_ftr->end<$regionend){$each_ftr->end($regionend);}
 							}
-							#$newftr->remove_tag('locus_tag');
-							#my $note = ($each_ftr->get_tag_values('note'))[0] . "; " . remove_tags($newftr); 
-							#$each_ftr->remove_tag('note');
-							#$each_ftr->add_tag_value('note',$note);
-							#$newftr->add_tag_value('locus_tag',$locus_tag);
 						}
 					}
 				}
