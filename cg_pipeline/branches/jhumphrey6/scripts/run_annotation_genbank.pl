@@ -1,7 +1,4 @@
-#!/usr/bin/perl
-# usage: [scriptname] prediction.gb *.blast.sql *.ipr_matches.sql vfdb_hits.sql *.signalp_hmm.sql *.signalp_nn.sql *.tmhmm_location.sql *.tmhmm.sql > out.gbk
-# also writes annotation.gff
-
+#!/usr/bin/env perl
 use warnings;
 use strict;
 use Bio::Seq;
@@ -16,7 +13,7 @@ exit(&main());
 
 sub main(){
 	if(@ARGV < 1){
-		print STDERR "Usage: ". basename($0) . " --prediction=prediction.gb --inputdir=annotation-sql-folder --gb=genbank-output-file --gff=gff-output-file [--organism=organism_id] \n";
+		print STDERR "Usage: ". basename($0) . " --prediction=prediction.gb --inputdir=annotation-sql-folder --gb=genbank-output-file --gff=gff-output-file --fasta=fasta-output-file [--organism=organism_id] \n";
 		return 0;
 	}
 	my %data;
@@ -34,14 +31,15 @@ sub main(){
 		signalp_hmm	=> [ qw/locus_tag prediction signal_peptide_probability max_cleavage_site_probability start end/],
 		signalp_nn => [ qw/locus_tag measure_type start end value cutoff is_signal_peptide/],
 		tmhmm => [ qw/locus_tag length predicted_number expected_number_aa expected_number_aa_60 total_prob_n_in/],
-		tmhmm_location => [qw/locus_tag location start end/]
+		tmhmm_location => [qw/locus_tag location start end/],
+		uniprot => [qw/ac ac2 source product pro_type gene_type gene_name gene_id/]
 		#ipr_hits => [qw/locus_tag length domain_id product type/],
 		#ipr_classifications => [qw/locus_tag go_id class_type category description/],
 		#ipr_childrefs => [qw/locus_tag interpro_hit_id interpro_child_reference/],
 	);
 
 	my $settings = {};
-	GetOptions($settings,('organism=s','prediction=s','inputdir=s','gb=s','gff=s')) or die;
+	GetOptions($settings,('organism=s','prediction=s','inputdir=s','gb=s','gff=s','fasta=s')) or die;
 	my $organism="organism";
 	if(defined($$settings{'organism'})){
 		$organism=$$settings{'organism'};
@@ -50,15 +48,23 @@ sub main(){
 	my $atndir;
 	opendir($atndir,$$settings{'inputdir'}) or die "unable to open directory $$settings{'inputdir'}:$!\n";
 	my @atnfiles=readdir($atndir);
-	foreach $type ((qw/blast ipr_matches signalp_hmm signalp_nn tmhmm.sql tmhmm_location vfdb_hits/)){
+	foreach $type ((qw/uniprot blast ipr_matches signalp_hmm signalp_nn tmhmm.sql tmhmm_location vfdb_hits/)){
 		my @files=grep(/$type/,@atnfiles);
 		if(@files){push(@sqlfiles,$$settings{'inputdir'} . "/" . $files[0]);}
 	}
 	
 	my $gbin = Bio::SeqIO->new(-file=>$$settings{'prediction'},-format=>'genbank');
 	my $gbout = Bio::SeqIO->new(-file=>">".$$settings{'gb'},-format=>'genbank');
-	my $gff = Bio::Tools::GFF->new(-file=>">".$$settings{'gff'},-gff_version => 3);
+	my $fasta;
+	if(defined($$settings{'fasta'})){
+		$fasta = Bio::SeqIO->new(-file=>">".$$settings{'fasta'},-format=>'');
+	}
+	my $gff;
+	if(defined($$settings{'gff'})){
+		$gff = Bio::Tools::GFF->new(-file=>">".$$settings{'gff'},-gff_version => 3);
+	}
 
+	my %uniprot;
 
 	STAGE_1:
 	#Stage 1: Make a hash of loci to SeqFeature objects from each data line
@@ -73,10 +79,16 @@ print STDERR "parsing $sqlfile\n";
 			chomp;
 			# skip a row of empties
 			if( /^\s*\|/ ){ print STDERR "Skipping blank line:$_\n"; next;}
+			
+				
 			$newftr = Bio::SeqFeature::Generic->new(-primary=>$type,-start=>'0',-end=>'0');
 			s/\\\|/::/g;
 			my @values = split('\|');
-			if(scalar @values != scalar @params){print STDERR "Wrong number of fields:$_\n";next;}
+			if(scalar @values != scalar @params){if($type ne 'uniprot'){print STDERR "Wrong number of fields:" . scalar @values . "\n";next;}}
+			if($type eq 'uniprot'){
+				@{$uniprot{$values[0]}}{@params}=@values;#Wow! So that's how you make a hash out of two arrays.
+				next;
+			}
 			for(my $i=0;$i<scalar @params;$i++){
 				if($params[$i] eq "start"){
 					$newftr->start($values[$i]);
@@ -114,37 +126,37 @@ print STDERR "parsing $sqlfile\n";
 			my $locus_tag = ($ftr->get_tag_values('locus_tag'))[0];
 			#if (!(defined($spfeats{$locus_tag}) && (0<scalar @{$spfeats{$locus_tag}}))){print STDERR "skipping due to having no features:$locus_tag\n"; next;}
 			if (!(defined($spfeats{$locus_tag}))){
-				print STDERR "skipping due to having no features:$locus_tag\n";
+#				print STDERR "skipping due to having no features:$locus_tag\n";
 				$seq->add_SeqFeature(@feats);# put predictions back in
 				next;
 			}
 			#initialize the naming hash
 			%data = (type=>'none',name=>'hypothetical',product=>'putative',identity=>1,evalue=>999,count=>'0');
 			my $ftrcount = scalar @{$spfeats{$locus_tag}};
-			print STDERR "$ftrcount features for $locus_tag\n";
-			my $skipper=0;
+			#print STDERR "$ftrcount features for $locus_tag\n";
 			foreach $newftr ( @{$spfeats{$locus_tag}}){
 				$newftr->strand($ftr->strand);
 				if($newftr->primary_tag eq 'blast'){
 					$newftr->start($ftr->start());
 					$newftr->end($ftr->end());
 					$newftr->strand($ftr->strand());
-					my $identity=($newftr->get_tag_values('identity'))[0];
-					my $evalue=($newftr->get_tag_values('evalue'))[0];
-					my $product=($newftr->get_tag_values('name'))[0];
+					my $tags=tags2hash($newftr);
+				#	my $identity=($newftr->get_tag_values('identity'))[0];
+				#	my $evalue=($newftr->get_tag_values('evalue'))[0];
+				#	my $product=($newftr->get_tag_values('name'))[0];
+				#	my $locus_tag=($newftr->get_tag_values('locus_tag'))[0];
 					$newftr->remove_tag('name');#particularly shitty tag riddled with '='
 					my $source =$newftr->source_tag();
-					my $locus_tag=($newftr->get_tag_values('locus_tag'))[0];
 					my $gene="unnamed";
-					if($identity<91 || $evalue>1e-9){
+					if($$tags{'identity'}<91 || $$tags{'evalue'}>1e-9){
 # considering writing the empty features back to the locus and calling this the last iteration
 						next;
 					}
-					if(	($data{'evalue'} >= $evalue || #compare this blast hit to the previous one
-						$data{'identity'} <= $identity ) ){
-						%data=(type=>'blast',product=>$product,identity=>$identity,evalue=>$evalue,locus_tag=>$locus_tag,count=>$data{'count'}++);
-						if($product =~ /GN=([^=]+)\s+[A-Z]{2,}=/){$gene=$1;}# look for a short name
-						if($product =~ /^([^=]+)\s+[\S^=]+=.*$/){$data{'product'}=$1;}
+					if(	($data{'evalue'} >= $$tags{'evalue'} || $data{'identity'} <= $$tags{'identity'} ) ){ #compare this blast hit to the previous one
+						$$tags{'product'}=$uniprot{$$tags{'uniprot_id'}}{'product'};
+						%data=(type=>'blast',count=>$data{'count'}+1,%$tags);
+						$gene=$uniprot{$$tags{'uniprot_id'}}{'gene_name'};
+#print STDERR "$gene\n";
 						my $note=remove_tags($newftr);
 						$newftr->add_tag_value('note',$note);
 						$newftr->add_tag_value('product',$data{'product'});
@@ -158,14 +170,19 @@ print STDERR "parsing $sqlfile\n";
 						foreach my $curftr(@currentfeatures){
 							if(!$curftr->has_tag('locus_tag')){next;}
 							my $protid=($curftr->get_tag_values('locus_tag'))[0];
-							if($locus_tag !~ /^$protid$/){
+							if($$tags{'locus_tag'} !~ /^$protid$/){
 								$seq->add_SeqFeature($curftr);
 							}
 						}
 	#create the main feature
-						my $parent = gene_factory($newftr->start,$newftr->end,$newftr->strand,{locus_tag=>$locus_tag});
+						my $parent = gene_factory($newftr->start,$newftr->end,$newftr->strand,{locus_tag=>$$tags{'locus_tag'}});
 						$parent->add_SeqFeature($newftr);
-						if($gene ne 'unnamed' && $gene !~ /[_-]+/ && $gene !~ /^[A-Z]+/ && $gene !~ /^[0-9]{2,}/){$parent->add_tag_value('gene',$gene);}
+						if(defined($gene)){
+							if(!($gene eq 'unnamed' || ($gene =~ /[_-]+/) || ($gene =~ /^[A-Z]+/) || ($gene =~ /^[0-9]{2,}/))){
+								$parent->add_tag_value('gene',$gene);
+							}
+						}
+						$parent->add_tag_value('gene',$gene);
 						$seq->add_SeqFeature($parent);
 						$ftr=$parent;#future features (below, from ipr_matches, etc) will be subfeatures of this one
 					}
@@ -269,6 +286,7 @@ print STDERR "parsing $sqlfile\n";
 					my $note = remove_tags($newftr);
 					$newftr->add_tag_value('note',$note);
 					$newftr->add_tag_value('locus_tag',$locus_tag);
+					$newftr->add_tag_value('product','transmembrane structure');
 					$newftr->primary_tag('misc_structure');
 					$newftr->source_tag('TMHMM');
 					#$newftr->start(start2nuc($ftr->start,$newftr->start));
@@ -303,10 +321,13 @@ print STDERR "parsing $sqlfile\n";
 			foreach $newftr(@features){
 				if($newftr->has_tag('gene')){ 
 					my $gene = ($newftr->get_tag_values('gene'))[0];
-					if($gene eq 'unnamed' ||
+					if(defined($gene)){
+						if( 
+						$gene eq 'unnamed' ||
 						$gene =~ /^[A-Z]+/ ||
 						$gene =~ /^[0-9]{2,}/){
-						$newftr->remove_tag('gene');
+							$newftr->remove_tag('gene');
+						}
 					}
 				}
 				push(@finalfeatures,$newftr);
@@ -315,11 +336,30 @@ print STDERR "parsing $sqlfile\n";
 			$seq->add_SeqFeature(@finalfeatures);
 		}
 		$gbout->write_seq($seq);
-		foreach my $ftr ($seq->all_SeqFeatures()){
-			$ftr->seq_id($seq->display_id());
-			replace_tags($ftr);
-			$ftr->add_tag_value('organism',$organism);
-			$gff->write_feature($ftr);
+# write gff and fasta
+		if($gff or $fasta){
+			foreach my $ftr ($seq->all_SeqFeatures()){
+				$ftr->seq_id($seq->display_name());
+				replace_tags($ftr);
+				$ftr->add_tag_value('organism',$organism);
+				if($gff){
+					$gff->write_feature($ftr);
+				}
+				if($fasta){
+					my $seq2fasta = $ftr->seq;
+					my $seqid = scalar $seq2fasta->display_name;
+					if($ftr->has_tag('locus_tag')){
+						my $locus_tag = ($ftr->get_tag_values('locus_tag'))[0];
+						my $defline = sprintf("lcl|%s|%s|%d|%d",$locus_tag,$ftr->primary_tag,$ftr->start,$ftr->end);
+						$seq2fasta->display_name($defline);
+						if($ftr->has_tag('gene')){$seq2fasta->desc(($ftr->get_tag_values('gene'))[0]);}
+						elsif($ftr->has_tag('product')){$seq2fasta->desc(($ftr->get_tag_values('product'))[0]);}
+						elsif($ftr->primary_tag =~ /gene/){next;}#skip it! avoids printing duplicate gene/CDS pairs.
+						else{$seq2fasta->desc("predicted cds");}
+						$fasta->write_seq($seq2fasta) or die "$!\n";
+					}
+				}
+			}
 		}
 	}
 	return 0;
