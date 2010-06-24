@@ -182,7 +182,7 @@ print STDERR "parsing $sqlfile\n";
 								$parent->add_tag_value('gene',$gene);
 							}
 						}
-						$parent->add_tag_value('gene',$gene);
+						#$parent->add_tag_value('gene',$gene);
 						$seq->add_SeqFeature($parent);
 						$ftr=$parent;#future features (below, from ipr_matches, etc) will be subfeatures of this one
 					}
@@ -280,6 +280,7 @@ print STDERR "parsing $sqlfile\n";
 					$parent->add_tag_value('cleavage_prob',$$tags{'max_cleavage_site_probability'});
 					$parent->add_tag_value('signalp_prob',$$tags{'signal_peptide_probability'});
 					$parent->add_tag_value('product',$$tags{'prediction'});
+					$parent->add_tag_value('evidence','SignalP');
 				}
 				elsif($newftr->primary_tag eq 'tmhmm'){
 					$newftr->remove_tag('locus_tag');
@@ -289,6 +290,7 @@ print STDERR "parsing $sqlfile\n";
 					$newftr->add_tag_value('product','transmembrane structure');
 					$newftr->primary_tag('misc_structure');
 					$newftr->source_tag('TMHMM');
+					$newftr->add_tag_value('evidence','TMHMM');
 					#$newftr->start(start2nuc($ftr->start,$newftr->start));
 					#$newftr->end(end2nuc($ftr->start,$newftr->end));
 					$newftr->start($ftr->start);
@@ -345,19 +347,27 @@ print STDERR "parsing $sqlfile\n";
 				if($gff){
 					$gff->write_feature($ftr);
 				}
-				if($fasta){
+				if($fasta && $ftr->primary_tag eq 'gene'){
 					my $seq2fasta = $ftr->seq;
 					my $seqid = scalar $seq2fasta->display_name;
-					if($ftr->has_tag('locus_tag')){
-						my $locus_tag = ($ftr->get_tag_values('locus_tag'))[0];
-						my $defline = sprintf("lcl|%s|%s|%d|%d",$locus_tag,$ftr->primary_tag,$ftr->start,$ftr->end);
-						$seq2fasta->display_name($defline);
-						if($ftr->has_tag('gene')){$seq2fasta->desc(($ftr->get_tag_values('gene'))[0]);}
-						elsif($ftr->has_tag('product')){$seq2fasta->desc(($ftr->get_tag_values('product'))[0]);}
-						elsif($ftr->primary_tag =~ /gene/){next;}#skip it! avoids printing duplicate gene/CDS pairs.
-						else{$seq2fasta->desc("predicted cds");}
-						$fasta->write_seq($seq2fasta) or die "$!\n";
+					my $locus_tag = ($ftr->get_tag_values('locus_tag'))[0];
+					my $defline = sprintf("lcl|%s|%d|%d",$locus_tag,$ftr->start,$ftr->end);
+					$seq2fasta->display_name($defline); # >lcl|StrainName_Locus|start|end
+					my @desc;
+					if($ftr->has_tag('gene')){push(@desc,$ftr->get_tag_values('gene'));}
+					#locate a product tag
+					for my $eachftr ($seq->all_SeqFeatures()){
+						if($eachftr->primary_tag eq 'CDS'){
+							if($eachftr->has_tag('product')){
+								if($locus_tag ne ($ftr->get_tag_values('locus_tag'))[0]){die "alien CDS!$locus_tag\n";}
+								push(@desc,$eachftr->get_tag_values('product'));
+								last;
+							}
+						}
 					}
+					if(1>scalar @desc){push(@desc,"predicted cds");}
+					$seq2fasta->desc(join(" ",@desc));
+					$fasta->write_seq($seq2fasta) or die "$!\n";
 				}
 			}
 		}
