@@ -1,6 +1,9 @@
 #!/usr/bin/env perl
 use warnings;
 use strict;
+use FindBin;
+use lib "$FindBin::RealBin/../lib";
+use AKUtils;
 use Bio::Seq;
 use Bio::Seq::RichSeq;
 use Bio::SeqIO;
@@ -23,7 +26,9 @@ sub main(){
 	my $type;
 	my @params = ();
 	my $tag;
-	
+my $settings = {
+	appname => 'cgpipeline',
+};
 	my %map = (
 		blast => [qw/locus_tag uniprot_id length name rank score bits evalue identity positives/],
 		vfdb_hits => [qw/locus_tag target_id evalue coverage db_name identity/],
@@ -38,7 +43,7 @@ sub main(){
 		#ipr_childrefs => [qw/locus_tag interpro_hit_id interpro_child_reference/],
 	);
 
-	my $settings = {};
+	$settings = AKUtils::loadConfig($settings);
 	GetOptions($settings,('organism=s','prediction=s','inputdir=s','gb=s','gff=s','fasta=s')) or die;
 	my $organism="organism";
 	if(defined($$settings{'organism'})){
@@ -65,7 +70,7 @@ sub main(){
 	}
 
 	my %uniprot;
-
+goto STAGE_2;
 	STAGE_1:
 	#Stage 1: Make a hash of loci to SeqFeature objects from each data line
 	my $blastcount=0;
@@ -119,6 +124,10 @@ print STDERR "parsing $sqlfile\n";
 		my $contig=$seq->primary_seq->display_id;
 		$contig =~ s/[a-zA-Z]*[0]*([0-9]+)_.*$/$1/;
 		$seq->display_id(sprintf("%s_%04d",$organism,$contig));
+		if(defined($$settings{'comment'})){
+			$seq->annotation->add_Annotation('comment',Bio::Annotation::Comment->new(-text=>$$settings{'comment'}));
+print STDERR Dumper($seq->annotation);
+		}
 		my @feats = $seq->all_SeqFeatures(); # features here are loci in the genome
 		#$seq->flush_SeqFeatures(); # try removing this.....
 		foreach my $ftr (@feats){ # each feature in the contig---each locus
