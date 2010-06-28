@@ -211,6 +211,8 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 		}
 	}
 
+  logmsg scalar(keys(%unified_predictions))." predictions made."; #LK
+
 	return \%unified_predictions;
 }
 
