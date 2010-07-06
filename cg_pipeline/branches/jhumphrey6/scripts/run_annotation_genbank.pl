@@ -16,7 +16,7 @@ exit(&main());
 
 sub main(){
 	if(@ARGV < 1){
-		print STDERR "Usage: ". basename($0) . " --prediction=prediction.gb --inputdir=annotation-sql-folder --gb=genbank-output-file --gff=gff-output-file --fasta=fasta-output-file [--organism=organism_id] \n";
+		print STDERR "Usage: ". basename($0) . " --prediction=prediction.gb --inputdir=annotation-sql-folder --gb=genbank-output-file --gff=gff-output-file [--organism=organism_id] \n";
 		return 0;
 	}
 	my %data;
@@ -44,7 +44,7 @@ my $settings = {
 	);
 
 	$settings = AKUtils::loadConfig($settings);
-	GetOptions($settings,('organism=s','prediction=s','inputdir=s','gb=s','gff=s','fasta=s')) or die;
+	GetOptions($settings,('organism=s','prediction=s','inputdir=s','gb=s','gff=s')) or die;
 	my $organism="organism";
 	if(defined($$settings{'organism'})){
 		$organism=$$settings{'organism'};
@@ -70,7 +70,7 @@ my $settings = {
 	}
 
 	my %uniprot;
-goto STAGE_2;
+#goto STAGE_2;
 	STAGE_1:
 	#Stage 1: Make a hash of loci to SeqFeature objects from each data line
 	my $blastcount=0;
@@ -119,14 +119,18 @@ print STDERR "parsing $sqlfile\n";
 	while( my $seq=$gbin->next_seq()){ #each contig
 		if($organism eq 'organism'){#not set
 			$organism=$seq->primary_seq->desc;
-			$organism =~ s/^([^_]+).*$/$1/;
+			$organism =~ s/^([^,_]+).*$/$1/;
 		}
 		my $contig=$seq->primary_seq->display_id;
-		$contig =~ s/[a-zA-Z]*[0]*([0-9]+)_.*$/$1/;
+		$contig =~ s/[a-zA-Z]*([0-9]+).*$/$1/;
 		$seq->display_id(sprintf("%s_%04d",$organism,$contig));
-		if(defined($$settings{'comment'})){
-			$seq->annotation->add_Annotation('comment',Bio::Annotation::Comment->new(-text=>$$settings{'comment'}));
-print STDERR Dumper($seq->annotation);
+		if(defined($$settings{'pipeline_version'})){#write pipeline version into the COMMENT field
+			my $pipeline_version="CG-Pipeline version " . $$settings{'pipeline_version'};
+			$seq->annotation->add_Annotation('comment',Bio::Annotation::Comment->new(-text=>$pipeline_version));
+		}
+		if(defined($$settings{'pipeline_reference'})){
+			my ($gb_authors,$gb_title,$gb_journal,$gb_pubmed)=split('\|',$$settings{'pipeline_reference'});
+			$seq->annotation->add_Annotation('reference',Bio::Annotation::Reference->new(-title=>$gb_title,-authors=>$gb_authors,-location=>$gb_journal,-pubmed=>$gb_pubmed));
 		}
 		my @feats = $seq->all_SeqFeatures(); # features here are loci in the genome
 		#$seq->flush_SeqFeatures(); # try removing this.....
@@ -366,9 +370,11 @@ print STDERR Dumper($seq->annotation);
 					if($ftr->has_tag('gene')){push(@desc,$ftr->get_tag_values('gene'));}
 					#locate a product tag
 					for my $eachftr ($seq->all_SeqFeatures()){
+						if(!$eachftr->has_tag('locus_tag')){next;}
+						if($locus_tag ne ($eachftr->get_tag_values('locus_tag'))[0]){next;}
 						if($eachftr->primary_tag eq 'CDS'){
 							if($eachftr->has_tag('product')){
-								if($locus_tag ne ($ftr->get_tag_values('locus_tag'))[0]){die "alien CDS!$locus_tag\n";}
+								if($locus_tag ne ($eachftr->get_tag_values('locus_tag'))[0]){die "alien CDS!$locus_tag\n";}
 								push(@desc,$eachftr->get_tag_values('product'));
 								last;
 							}
