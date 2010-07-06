@@ -77,17 +77,17 @@ sub main(){
   my $invoke_string;
   switch($command){
     # if build then go through every stage of the pipeline
-    case (/build/){
+    case (/^build$/){
       #print __LINE__."\n";
     }
-    case (/build|create/){
+    case (/^build$|^create$/){
       CGLog("$project/log/create.txt","CREATE START ".date());
       mkpath("$project/annotation","$project/log","$project/build/assembly","$project/build/prediction","$project/build/annotation");
       #`$invoke_string`;
       CGLog("$project/log/create.txt","CREATE END ".date());
-      last if($command ne "build");
+      last if($command !~ /^build$/);
     }
-    case (/build|assemble/){
+    case (/^build$|^assemble$/){
       my $logfile="$project/log/assembly.txt";
       CGLog($logfile,"ASSEMBLY START ".date());
       foreach(@$target){
@@ -124,9 +124,9 @@ sub main(){
       system($invoke_string);
       CGLog($logfile,'ASSEMBLY END '.date(),'append');
       $$settings{input}=""; # unset input for any possible future steps, because input was meant as an SFF in this case
-      last if($command ne "build");
+      last if($command !~ /^build$/);
     }
-    case (/build|predict/){
+    case (/^build$|^predict$/){
       my $logfile="$project/log/prediction.txt";
       CGLog($logfile,"PREDICTION START on project $project ".date());
       my $mfaArg="";
@@ -149,15 +149,15 @@ sub main(){
       CGLog($logfile,"PREDICTION END on project $project ".date(),'append');
       # It's not necessary to unset variables here like in assembly, because if build were the command, then everything is unset. 
       #   If predict is the command, then the wrapper will not continue.
-      last if($command ne "build");
+      last if($command !~ /^build$/);
     }
-    case (/build|annotate/){
+    case (/^build$|^annotate$/){
       my $logfile="$project/log/annotation.txt";
       CGLog($logfile,"ANNOTATION START on $project ".date());
       my $gbArg="";
       foreach(@{ $$settings{input} }){
         if(! -e){
-          die("Input FASTA file $_ does not exist.");
+          die("Input GENBANK file $_ does not exist.");
         }
         $gbArg.="$_ ";
       }
@@ -172,7 +172,22 @@ sub main(){
       CGLog($logfile,"COMMAND\n  $invoke_string",'append');
       system($invoke_string);
       CGLog($logfile,"ANNOTATION END on $project ".date(),'append');
-      last if($command ne "build");
+      last if($command !~ /^build$|^annotate$/);
+    }
+    case (/^build$|^annotate$|^genbank$/){
+      my $logfile="$project/log/annotation.txt";
+      CGLog($logfile,"ANNOTIATION GENBANK START on $project ".date());
+			$invoke_string="run_annotation_genbank.pl --organism=$tag_prefix --prediction=$home/$project/prediction.gb --inputdir=$home/$project/annotation --gff=$home/$project/annotation.gff --gb=$home/$project/annotation.gb 2>&1 ";
+      if($verbose>1){
+        $invoke_string.="|tee --append $logfile";
+      }
+      else{
+        $invoke_string.=">>$logfile";
+      }
+      CGLog($logfile,"COMMAND\n  $invoke_string",'append');
+      system($invoke_string);
+      CGLog($logfile,"ANNOTATION GENBANK END on $project ".date(),'append');
+      last if($command !~ /^build$/);
     }
     else{
       die "Command $command not found.\n".usage();
@@ -250,7 +265,7 @@ $script assemble -p MyStrain -i sff-file [ -r reference ]
 $script predict -p MyStrain [-i assembly-file]
   Runs prediction in project MyStrain against MyStrain/assembly.fasta, or an alternative file if specified. All messages are stored in MyStrain/log/prediction.txt. Output file is MyStrain/prediction.gb
 
-$script annotate -p MyStrain [-i alt-prediction-file]
+$script annotate -p MyStrain [-i prediction-file]
   Runs prediction in project MyStrain against MyStrain/prediction.gb, or an alternative file if specified. All messages are stored in MyStrain/log/annotation.log. Output files will appear in MyStrain/annotation/*.sql\n\n";
   }
   else{
