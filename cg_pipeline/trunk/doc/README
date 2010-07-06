@@ -1,5 +1,7 @@
 SYNOPSIS
 
+run_pipeline [build|create|assemble|predict|annotate] [-p project] -i target.sff [-r reference.fasta] [-t tag_prefix]
+
 run_cg_pipeline input.sff -strain_name=name
 
 run_assembly input.sff [, input2.sff, ...] [-R references.mfa]
@@ -33,4 +35,4 @@ Computational Genomics Group (http://compgenomics.biology.gatech.edu/)
 Evolutionary Systems Biology Group (http://esbg.biology.gatech.edu/)
 Neisseria Base (http://nbase.biology.gatech.edu/)
 
-[1] A computational genomics pipeline for microbial sequencing projects. Kislyuk et al. Submitted.
+[1] A computational genomics pipeline for microbial sequencing projects. Kislyuk et al. Bioinformatics Advance Access June 2, 2010, DOI 10.1093/bioinformatics/btq284.
