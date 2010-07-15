@@ -1,0 +1,24 @@
+<!-- left gutter layout -->
+[% submenu = {
+	'2'=>{label=>'Gene', location => "search.cgi?sub=gene"}
+	'3'=>{label=>'Protein', location => "search.cgi?sub=protein"}
+	'4'=>{label=>'Signal Peptide', location => "search.cgi?sub=sig_peptide"}
+	'5'=>{label=>'TMHMM', location => "search.cgi?sub=tmhmm"}
+	'6'=>{label=>'BLAST', location => "search.cgi?sub=blast"}
+} %]
+<div id="left_gut">
+<ul>
+	<li></li>
+	<li>Browse</li>
+	<li>
+		<div id="navigate_container">
+		[% PROCESS 'search/organism.tt' %]
+		</div>
+	</li>
+	<li></li>
+	<li>Search</li>
+		[% FOREACH item IN submenu.keys.sort %]
+			<li class="guttersub"><a href="#" onclick="javascript:sendQuery('content_for_layout','[% submenu.$item.location %]','f_organisms')">[% submenu.$item.label %]</a></li>
+		[% END %]
+</ul>
+</div>

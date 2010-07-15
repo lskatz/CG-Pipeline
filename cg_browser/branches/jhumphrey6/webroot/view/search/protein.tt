@@ -1,0 +1,12 @@
+[% action="javascript:sendQuery('results_container','search.cgi?execute=1','sub,prot_name,prot_min,prot_max,f_organisms,scroll')" %] 
+<h3>Protein Information</h3>
+<form action="[% action %]" type="post">
+<input  type="hidden" id="sub" name="sub" value="protein"/>
+<label for="prot_name">Protein Keyword</label>
+  <input  id="prot_name" prot_name="prot_name" type="text" />
+<label for="prot_min">Minimum Length</label>
+  <input  id="prot_min" prot_name="prot_min" type="text" />
+<label for="prot_max">Maximum Length</label>
+  <input  id="prot_max" prot_name="prot_max" type="text" />
+<input  name="send" onclick="[% action %]" type="button" value="Search" />
+</form>

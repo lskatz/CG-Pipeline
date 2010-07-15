@@ -1,0 +1,175 @@
+<div id="details">
+<h4>[% title %]</h4>
+[% IF strand < 0 %]
+[% imgflip = ';flip=0' %]
+[% END %]
+[% IF gene.0 %]
+[% image_gene = '/gb2/gbrowse_img/' _ source _ '/?name=' _ contig _ ':' _ start _ '..' _ end _ ';width=200;type=Gene' _ imgflip %]
+<table>
+	<tr>
+		<th rowspan="[% gene.size + 2 %]">
+			Gene<br/>
+			<a target="_blank" href="[% image_gene %]"><img src="[% image_gene %]"/ width=200 height=100></a>
+		</th>
+		<th>Pos</th>
+		<th>Name</th>
+		<th>Length</th>
+	</tr>
+	[% FOREACH c IN gene %]
+	[% c.url = '/gb2/gbrowse/' _ source _ '?name=' _ contig _ ':' _ c.pos %]
+	[% IF c.main %]
+	<tr class="main_feature">
+		<td><a href="[% c.url %]">[% c.pos %]</a></td>
+	[% ELSE %]
+	<tr>
+		<td><a href="[% c.url %]">[% c.pos %]</a><br/><a href='details.cgi?source=pipeline&fid=[% c.fid %]'>view</a></td>
+	[% END %]
+		<td>[% c.gene %]</td>
+		<td>[% c.length %]</td>
+	</tr>
+	[% END %]
+<tr class="spacer"></tr>
+[% END %]
+[% IF CDS.0 %]
+[% image_cds = '/gb2/gbrowse_img/' _ source _ '/?name=' _ contig _ ':' _ start _ '..' _ end _ ';type=CDS;width=200' _ imgflip  %]
+	<tr>
+		<th rowspan="[% CDS.size + 2 %]">
+			UniProt Evidence<br/>
+			<a target="_blank" href="[% image_cds %]"><img src="[% image_cds %]"/ width=200 height=100></a>
+		</th>
+		<th>Pos</th>
+		<th>UniProt ID</th>
+		<th>Product</th>
+		<th>e-value</th>
+		<th>Identity</th>
+		<th>Score</th>
+		<th>Length</th>
+	</tr>
+	[% FOREACH c IN CDS %]
+	[% c.url = '/gb2/gbrowse/' _ source _ '?name=' _ contig _ ':' _ c.pos %]
+	[% IF c.main %]
+	<tr class="main_feature">
+		<td><a href="[% c.url %]">[% c.pos %]</a></td>
+	[% ELSE %]
+	<tr>
+		<td><a href="[% c.url %]">[% c.pos %]</a><br/><a href='details.cgi?source=pipeline&fid=[% c.fid %]'>view</a></td>
+	[% END %]
+		<td><a href="http://www.uniprot.org/uniprot/[% c.uniprot_id %]">[% c.uniprot_id %]</a></td>
+		<td>[% c.product %]</td>
+		<td>[% c.evalue ? c.evalue : '0.0' %]</td>
+		<td>[% c.identity %]</td>
+		<td>[% c.score %]</td>
+		<td>[% c.length %]</td>
+	</tr>
+	[% END %]
+[% END %]
+<tr class="spacer"></tr>
+[% IF misc_feature.0 %]
+[% image_misc_feature = '/gb2/gbrowse_img/pipeline/?name=' _ contig _ ':' _ start _ '..' _ end _ ';type=Misc;width=200' _ imgflip %]
+	<tr>
+		<th rowspan="[% misc_feature.size + 2 %]">
+			InterPro Evidence<br/>
+			<a target="_blank" href="[% image_misc_feature %]"><img src="[% image_misc_feature %]"/ width=200 height=100></a>
+		</th></tr>
+	<tr>
+		<th>Pos</th>
+		<th>Source:ID</th>
+		<th>Product</th>
+		<th>e-value</th>
+	</tr>
+	[% FOREACH c IN misc_feature %]
+	[% c.url = '/gb2/gbrowse/' _ source _ '?name=' _ contig _ ':' _ c.pos %]
+	[% IF c.main %]
+	<tr class="main_feature">
+		<td><a href="[% c.url %]">[% c.pos %]</a></td>
+	[% ELSE %]
+	<tr>
+		<td><a href="[% c.url %]">[% c.pos %]</a><br/><a href='details.cgi?source=pipeline&fid=[% c.fid %]'>view</a></td>
+	[% END %]
+		<td><a href="http://www.ebi.ac.uk/interpro/ISearch?query=[% c.accession_num %]">[% c.database_name %]:[% c.accession_num %]</a></td>
+		<td>[% c.product %]</td>
+		<td>[% c.evalue ? e.evalue : '0.0' %]</td>
+	</tr>
+	[% END %]
+[% END %]
+<tr class="spacer"></tr>
+[% IF sig_peptide.0 %]
+[% image_sig_peptide = '/gb2/gbrowse_img/pipeline/?name=' _ contig _ ':' _ start _ '..' _ end _ ';type=SignalP;width=200' _ imgflip %]
+[% image_sig_peptide = "#foo" %]
+	<tr>
+		<th rowspan="[% sig_peptide.size + 2 %]">
+			Signal Peptide<br/>
+			<a target="_blank" href="[% image_sig_peptide %]"><img src="[% image_sig_peptide %]"/ width=200 height=100></a>
+		</th></tr>
+	<tr>
+		<th>Pos</th>
+		<th>max. Y</th>
+		<th>max. C</th>
+		<th>max. S</th>
+		<th>mean S</th>
+		<th>signalp prob</th>
+		<th>cleavage prob</th>
+		<th>D-score</th>
+		<th>cleavage site</th>
+	</tr>
+	[% FOREACH c IN sig_peptide %]
+	[% c.url = '/gb2/gbrowse/' _ source _ '?name=' _ contig _ ':' _ c.pos %]
+	[% IF c.main %]
+	<tr class="main_feature">
+		<td><a href="[% c.url %]">[% c.pos %]</a></td>
+	[% ELSE %]
+	<tr>
+		<td><a href="[% c.url %]">[% c.pos %]</a><br/><a href='details.cgi?source=pipeline&fid=[% c.fid %]'>view</a></td>
+	[% END %]
+		<td>[% c.maxY %]</td>
+		<td>[% c.maxC %]</td>
+		<td>[% c.maxS %]</td>
+		<td>[% c.meanS %]</td>
+		<td>[% c.signalp_prob %]</td>
+		<td>[% c.cleavage_prob %]</td>
+		<td>[% c.d_score %]</td>
+		<td>[% c.cleavage_site %]</td>
+	</tr>
+	[% END %]
+[% END %]
+<tr class="spacer"></tr>
+[% IF misc_structure.0 %]
+[% image_misc_structure = '/gb2/gbrowse_img/pipeline/?name=' _ contig _ ':' _ start _ '..' _ end _ ';type=Structure;width=200' %]
+	<tr>
+		<th rowspan="[% misc_structure.size + 2 %]">
+			Transmembrane Structure<br/>
+			<a target="_blank" href="[% image_misc_structure %]"><img src="[% image_misc_structure %]"/ width=200 height=100></a>
+		</th></tr>
+	<tr>
+		<th>Pos</th>
+		<th>Location</th>
+	</tr>
+	[% FOREACH c IN misc_structure %]
+	[% c.url = '/gb2/gbrowse/' _ source _ '?name=' _ contig _ ':' _ c.pos %]
+	[% IF c.main %]
+	<tr class="main_feature">
+	[% ELSE %]
+	<tr>
+	[% END %]
+		<td>[% c.pos %]</td>
+		<td>[% c.location%]</td>
+	</tr>
+	[% END %]
+[% END %]
+</table>
+<h4>[% title %]</h4>
+[% IF translation %]
+<p>
+<h3>Translation</h3>
+<div class="sequence">
+<pre>[% translation %]</pre>
+</div>
+</p>
+[% END %]
+<p>
+<h3>Sequence</h3>
+<div class="sequence">
+<pre>[% sequence %]</pre>
+</div>
+</p>
+</div>

@@ -1,0 +1,59 @@
+[% conf = {
+	types => {
+		CDS => 'Coding Sequence',
+		gene => 'Gene',
+		misc_feature => 'Protein Family/Domain',
+		misc_structure => 'Transmembrane',
+		sig_peptide => 'Signal Peptide'
+		},
+	sources => {
+	 COIL        =>1,
+	 GENE3D      =>1,
+	 HAMAP       =>1,
+	 PANTHER     =>1,
+	 PFAM        =>1,
+	 PIR         =>1,
+	 PRINTS      =>1,
+	 PRODOM      =>1,
+	 PROFILE     =>1,
+	 PROSITE     =>1,
+	 SEG         =>1,
+	 SMART       =>1,
+	 SUPERFAMILY =>1,
+	 TIGRFAMs    =>1,
+	 TMHMM       =>1
+	}
+	}
+%]
+
+		
+<fieldset><legend>search filters</legend>
+[% IF organisms %]
+<label class='topper' for='f_organisms'>organism</label>
+<select id='f_organisms' multiple="multiple" name='f_organisms'>
+	[% FOREACH org IN organisms %]
+	<option value="[% org %]"[%IF f.organisms.grep(org) %] selected="1"[% END %]>[% org %]</option>
+	[% END %]
+</select>
+[% END %]
+[% IF featuretypes %]
+<label class='topper' for='f_types'>type</label>
+<select id='f_types' multiple="multiple" name='f_types'>
+	[% FOREACH type IN featuretypes %]
+		[% IF conf.types.$type %]
+	<option value="[% type %]">[% conf.types.$type %]</option>
+		[% END %]
+	[% END %]
+</select>
+[% END %]
+[% IF sources %]
+<label class='topper' for='f_sources'>source</label>
+<select id='f_sources' multiple="multiple" name='f_types'>
+	[% FOREACH source IN sources %]
+		[% IF conf.sources.$source %]
+	<option value="[% source %]">[% source %]</option>
+		[% END %]
+	[% END %]
+</select>
+[% END %]
+</fieldset>
