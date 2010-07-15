@@ -1,0 +1,27 @@
+[% IF message %]
+<fieldset>
+<code>[% message %]</code>
+</fieldset>
+[% END %]
+[% IF results.0 %]
+	<div id="searchtable">
+	<table>
+		<tr>
+			<th>locus</th>
+			<th>gene/product</th>
+			<th>identity</th>
+			<th>evalue</th>
+		</tr>
+		[% counter = 0 %]
+		[% FOREACH result IN results %]
+		<tr[% IF counter % 2 == 0 %] class="altrow"[% END %]>
+			<td><a target="_blank" href="/details.cgi?source=pipeline&fid=[% result.fid %]">[% result.locus_tag %]</a></td>
+			<td>[% result.desc %]</td>
+			<td>[% result.identity %]</td>
+			<td>[% result.evalue %]</td>
+		</tr>
+		[% counter = counter + 1 %]
+		[% END %]
+	</table>
+	</div>
+[% END %]

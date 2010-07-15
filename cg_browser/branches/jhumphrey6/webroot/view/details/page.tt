@@ -1,0 +1,30 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<title>[% title %]</title>
+<meta http-equiv="Content-Language" content="English" />
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<link type="text/css" media="screen" href="/css/headerbar.css" rel="stylesheet"/>
+<link type="text/css" media="screen" href="/css/layout.css" rel="stylesheet"/>
+<script type="text/javascript" src="/js/prototype.js"></script>
+<script type="text/javascript" src="/js/cgpbase.js"></script>
+</head>
+<body>
+<script type="text/javascript" src="/js/wz_tooltip.js"></script>
+[% PROCESS header.tt %]
+[% PROCESS details/sidebar.tt %]
+<div id="headspacer"> </div>
+<div id="center">
+	<div id="content_for_layout">
+		[% IF message %]
+		<h3>[% message %]</h3>
+		[% END %]
+		[% content_for_layout %]
+		<div class="push"></div>
+	</div>
+</div>
+<div class="footer">
+[% PROCESS footer.tt %]
+</div>
+</body>
+</html>

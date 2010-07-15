@@ -1,0 +1,21 @@
+<div id="nbase_header">
+	<img style="float:left;" src="http://www.gatech.edu/images/logo.gif"/>
+	<p class="nbase_header">NBase</p>
+	<p class="nbase_text">A database of <i>Neisseria</i> genomes<br/>created by the Jordan Lab, School of Biology, Georgia Institute of Technology</p>
+	<div id="tabmenu">
+		<ul>
+		[% menu = {
+			'0'=>{label=>'home', location => "/index.cgi"},
+			'1'=>{label=>'search', location => "/search.cgi"},
+			'2'=>{label=>'SNPtool', location=>"/tools/snp/ShowSNPtool.cgi"},
+			'3'=>{label=>'download', location => "/download.cgi"},
+			#'2'=>{label=>'viewer',location=> "/gb2/gbrowse"},
+			#'3'=>{label=>'synteny',location=> "/gb2/gbrowse_syn"},
+			#'4'=>{label=>'forum',location => "/forum"}
+		} %]
+		[% FOREACH item IN menu.keys.sort %]
+		<li><a href="[% menu.$item.location %]"[% IF current == menu.$item.label %] class="current"[% END %]>[% menu.$item.label %]</a></li>
+		[% END %]
+		</ul>
+	</div>
+</div>

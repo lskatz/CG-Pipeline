@@ -1,0 +1,20 @@
+<!-- navigate through cgpbase from these selectors -->
+	<form method='post' action="javascript:gbrowse()">
+		<label for='organism'>organism</label>
+		<select id='organism' name='organism[]' onchange="loadXMLDoc('navigate_container','/search.cgi?sub=organism&genome='+this.value)">
+			<option value="[% genome %]" selected="1">Select</option>
+		[% FOREACH org IN organisms %]
+			<option value="[% org %]"[%IF genome == org %] selected="1"[% END %]>[% org %]</option>
+		[% END %]
+		</select>
+		<br/>
+		<label for='contig'>contig</label>
+		<select id='contig' name='contig'>";
+		[% IF contigs %]
+			[% FOREACH ctg IN contigs %]
+			<option value="[% ctg %]"[%IF contig == ctg %] selected="1"[% END %]>[% ctg %]</option>
+			[% END %]
+		[% END %]
+		</select>
+		<input style="display:inline" type='submit' value='Go'/>
+	</form>

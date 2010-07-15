@@ -1,0 +1,38 @@
+[% IF searchform %]
+<div id="search_container">
+[% PROCESS $searchform %]
+</div>
+[% END %]
+[% IF !results.0 %]
+<h2>no matches</h2>
+[% ELSE %]
+<div class="searchtable">
+<table>
+<tr>
+<th>organism</th>
+<th style="width:50%;">[% results.0.matchtype %]</th>
+<th>length</th>
+<th>type:source</th>
+<th>browse</th>
+</tr>
+[% counter = 0 %]
+[% FOREACH result IN results %]
+<tr[% IF counter % 2 == 0 %] class="altrow"[% END %]>
+<td>[% result.organism %]</td>
+[% IF results.0.matchtype != "none" %]
+<td><a target="_blank" target="_blank" href="/details.cgi?source=pipeline&fid=[% result.feature_id %]">[% result.match %]</a></td>
+[% END%]
+<!--<td>[% result.overlap %]</td>-->
+<td>[% result.length %]</td>
+<td>[% result.type %]</td>
+[% IF result.start < result.end %]
+<td><a target="_blank" href="/gb2/gbrowse/pipeline?name=[% result.contig %]:[% result.start %]..[% result.end %]">[% result.contig %]:[% result.start %] - [% result.end %]</a></td>
+[% ELSE %]
+<td><a target="_blank" href="/gb2/gbrowse/pipeline?name=[% result.contig %]:[% result.end %]..[% result.start %]">[% result.contig %]:[% result.end %] - [% result.start %]</a></td>
+[% END %]
+</tr>
+[% counter = counter + 1 %]
+[% END %]
+</table>
+</div>
+[% END %]
