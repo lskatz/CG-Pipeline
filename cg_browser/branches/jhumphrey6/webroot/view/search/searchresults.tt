@@ -6,6 +6,12 @@
 [% IF !results.0 %]
 <h2>no matches</h2>
 [% ELSE %]
+
+[% IF external_link %]
+<a href="[% external_link %]">link to this search</a>
+[% END %]
+
+
 <div class="searchtable">
 <table>
 <tr>

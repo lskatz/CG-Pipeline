@@ -1,10 +1,16 @@
-[% action="javascript:sendQuery('results_container','search.cgi?execute=1','sub,quick,f_organisms,f_types,f_sources,scroll')" %]
-<h3>Search All</h3>
-<p>Query all gene features, all attributes of features.<br/>
+[% IF nodesc %]
+[% container='content_for_layout' %]
+[% ELSE %]
+[% container='results_container' %]
+[% END %]
+[% action="javascript:sendQuery('$container','/search.cgi?execute=1','sub,quick,f_organisms,f_types,f_sources')" %]
+[% UNLESS nodesc %]
+<p>Search genes, proteins, other features<br/>
 Multiple search terms yield results for any term.</p>
+[% END %]
 <form  type="post" action="[% action %]">
-<input  name="sub" type="hidden" id="sub" value="quick"/>
-<label for="quick">Keyword:</label>
+<input  id="sub" name="sub" type="hidden" value="quick" />
+<label for="quick">Keyword</label>
 <input  id="quick" name="quick" type="text" />
 <input  name="send" onclick="[% action %]" type="button" value="Search" />
 </form>

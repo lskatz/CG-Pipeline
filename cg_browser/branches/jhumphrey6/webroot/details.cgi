@@ -13,6 +13,12 @@ my $tpl = Template->new({INCLUDE_PATH => '/var/www/nbase2010/html/view',}) or  d
 my $data = {};
 my $vars = Vars; # input variables from HTTP request
 
+$vars={%$vars,
+	organisms=>CGPBase::getorganisms(),
+	featuretypes=>CGPBase::gettypes(),
+	sources=>CGPBase::getsources(),
+	current=>'search'
+};
 
 sub getfullpage($$){
 	my ($template,$myvars) = @_;
@@ -20,18 +26,19 @@ sub getfullpage($$){
 	my $finalout = "";
 	$tpl->process($template,$myvars,\$output) or die $tpl->error();
 	$$myvars{'content_for_layout'} = $output;
-	$tpl->process('details/page.tt', $myvars,\$finalout);
+	$tpl->process('page.tt', $myvars,\$finalout);
 	return $finalout;
 }
 
 if($$vars{'file'}){
+	print header('text/plain');
 	if ($$vars{'file'} eq 'fasta'){
-		print header('text/plain');
 		CGPBase::fasta($$vars{'source'},$$vars{'fid'});
 	}
 }
 else{
 	print header('text/html');
 	$data = CGPBase::details_page($$vars{'source'},$$vars{'fid'});
-	print getfullpage("details/details.tt",$data);
+	$vars={%$vars,%$data,'current'=>'details'};
+	print getfullpage("details/details.tt",$vars);
 }
