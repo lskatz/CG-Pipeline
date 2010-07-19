@@ -54,6 +54,7 @@ sub results_factory($$$$){ # takes a feature object and returns a search results
 			}
 		}
 	} 
+	$description =~ s/^(.{30}).*$/$1.../ if length $description > 30;
 	my $row = {
 		type => $f->type,
 		contig => $f->seq_id,
@@ -75,7 +76,7 @@ sub results_factory($$$$){ # takes a feature object and returns a search results
 	elsif(grep(/^$type$/,qw/sig_peptide/)){
 		$$row{'score'}=0;
 		$description = sprintf("max C=%s, mean S=%s",($f->get_tag_values('meanS'))[0],($f->get_tag_values('meanS'))[0]);
-		my @overlaps = $f->contained_features();
+		my @overlaps = $f->overlapping_features();
 		foreach my $subftr (@overlaps){
 			if($subftr->has_tag('gene')){
 				$description .= sprintf(", %s",($subftr->get_tag_values('gene'))[0]);
@@ -91,7 +92,7 @@ sub results_factory($$$$){ # takes a feature object and returns a search results
 	elsif(grep(/^$type$/,qw/tmhmm/)){
 		$$row{'score'}=0;
 		$$row{'length'} = int ($$row{'length'}/3 + 0.5);
-		my @overlaps = $f->contained_features();
+		my @overlaps = $f->overlapping_features();
 		my @descriptions;
 		foreach my $subftr (@overlaps){
 			if($subftr->has_tag('gene')){
@@ -125,6 +126,9 @@ sub quick($){
 	}
 	if(defined $$vars{'f_types'}){
 		@types = split('\|',$$vars{'f_types'});
+		if(!@types){	
+			@types=qw/gene CDS misc_feature misc_structure sig_peptide/;
+		}
 		if(0<@types){
 			foreach (@types){
 				s/^(.*)$/'$1'/;
@@ -176,7 +180,7 @@ sub quick($){
 	else{
 		my @termlist = split(/\s+/, $term);
 		foreach $term (@termlist){
-			my $query = "select fid from fattribute_to_feature where fattribute_value like '\%$term\%' and fattribute_id not in (select fattribute_id from fattribute where fattribute_name like '\%translation\%')";
+			my $query = "select fid from fattribute_to_feature where fattribute_value like '\%$term\%' and fattribute_id not in (select fattribute_id from fattribute where fattribute_name like '\%translation\%' or '\%organism\%')";
 			if(@filters){$query .= " and " . join(" and ",@filters);}
 			my $fids = query_get_fids($query);
 			foreach my $fid (@$fids){
@@ -366,6 +370,8 @@ sub fasta($$){
 		else{$seq2fasta->desc("predicted cds");}
 	}
 	$fasta->write_seq($seq2fasta) or die "$!\n";
+	$seq2fasta->seq($seq2fasta->translate->seq);
+	$fasta->write_seq($seq2fasta) or die "$!\n";
 	return;
 }
 
@@ -420,7 +426,7 @@ sub details_page($$){
 	my %titles = (gene=>'gene',CDS=>'cds',misc_feature=>'family/domain',sig_peptide=>'signal peptide',misc_structure=>'structure');
 
 	foreach my $ftrtype (keys %titles){
-		my @features = $db->contained_features(-refseq => $contig, -start => $f->start, -stop => $f->end, -type=>$ftrtype );
+		my @features = $db->overlapping_features(-refseq => $contig, -start => $f->start, -stop => $f->end, -type=>$ftrtype );
 		my $i = 0;
 		foreach my $subftr (@features){
 			my $ftrtags=tags2hash($subftr);
@@ -429,7 +435,7 @@ sub details_page($$){
 				$$ftrtags{'main'}=1;
 				if($ftrtype eq 'gene' && defined $$ftrtags{'gene'}){$titles{'gene'}=$$ftrtags{'gene'};}
 				if(defined $$ftrtags{'product'}){$titles{$ftrtype}=$$ftrtags{'product'};}
-				$$ftr{'title'}=sprintf("%s - %s",$titles{$ftrtype},$$ftrtags{'locus_tag'});
+				$$ftr{'title'}=sprintf("%s: %s - %s",$$ftrtags{'organism'},$titles{$ftrtype},$$ftrtags{'locus_tag'});
 			}
 			if($f->strand <= 0){
 				$$ftrtags{'pos'}=$subftr->end . ".." . $subftr->start;
@@ -538,3 +544,34 @@ sub blast($){
 	}
 	return \@results;
 }
+sub organism_data{
+	my $db = gff_connect('pipeline');
+	my @orgs=$db->features(-type=>'organism');
+	my %tag_data;
+	foreach my $org(@orgs){
+		my $tags=tags2hash($org);
+		$tag_data{$org->seq_id}=$tags;
+	}
+	#print STDERR Dumper(%tag_data);
+	return \%tag_data;
+}		
+
+		
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
