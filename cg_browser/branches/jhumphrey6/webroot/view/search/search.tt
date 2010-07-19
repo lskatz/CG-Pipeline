@@ -1,29 +1,12 @@
-<!-- contig.tt  EC.tt  interproid.tt  kegg.tt  ko.tt  protein.tt  pubmedid.tt -->
-[% submenu = {
-	'0'=>{label=>'Quick', location => "search.cgi?sub=quick"},
-	'2'=>{label=>'Gene', location => "search.cgi?sub=gene"}
-	'3'=>{label=>'Protein', location => "search.cgi?sub=protein"}
-	'4'=>{label=>'Signal Peptide', location => "search.cgi?sub=sig_peptide"}
-	'5'=>{label=>'TMHMM', location => "search.cgi?sub=tmhmm"}
-	'6'=>{label=>'BLAST', location => "search.cgi?sub=blast"}
-} %]
-<div class="headspacer"> <!-- top spacer --> </div>
-<h2 style="display:inline">search</h2>
-<div class="headspacer"> <!-- top spacer --> </div>
-
-<div class="submenu">
-	<ul>
-	[% FOREACH item IN submenu.keys.sort %]
-		<li><a href="#" onclick="javascript:sendQuery('search_container','[% submenu.$item.location %]','f_organisms')">[% submenu.$item.label %]</a></li>
-	[% END %]
-	</ul>
-</div>
-
 <div id="filters_container">
 	[% PROCESS 'search/filters.tt' %]
 </div>
-
 <div id="search_container">
-	[% PROCESS 'search/quick.tt' %]
+	[% IF load %]
+		[% load = 'search/' _ load _ '.tt' %]
+		[% PROCESS $load %]
+	[% ELSE %]
+		[% PROCESS 'search/quick.tt' %]
+	[% END %]
 </div>
 <div id="results_container"></div>

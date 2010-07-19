@@ -1,5 +1,8 @@
 <div id="details">
-<h4>[% title %]</h4>
+<h4>[% organism %] [% title %]</h4>
+<p>
+<a target="_blank" href="details.cgi?source=pipeline&fid=[% fid %]&file=fasta">FASTA</a>
+</p>
 [% IF strand < 0 %]
 [% imgflip = ';flip=0' %]
 [% END %]
@@ -7,9 +10,8 @@
 [% image_gene = '/gb2/gbrowse_img/' _ source _ '/?name=' _ contig _ ':' _ start _ '..' _ end _ ';width=200;type=Gene' _ imgflip %]
 <table>
 	<tr>
-		<th rowspan="[% gene.size + 2 %]">
-			Gene<br/>
-			<a target="_blank" href="[% image_gene %]"><img src="[% image_gene %]"/ width=200 height=100></a>
+		<th rowspan="[% gene.size + 2 %]" style="min-width:170px;height:140px;background-image:url('[% image_gene %]');">
+			<span>Gene</span>
 		</th>
 		<th>Pos</th>
 		<th>Name</th>
@@ -31,11 +33,10 @@
 <tr class="spacer"></tr>
 [% END %]
 [% IF CDS.0 %]
-[% image_cds = '/gb2/gbrowse_img/' _ source _ '/?name=' _ contig _ ':' _ start _ '..' _ end _ ';type=CDS;width=200' _ imgflip  %]
+[% image_CDS = '/gb2/gbrowse_img/' _ source _ '/?name=' _ contig _ ':' _ start _ '..' _ end _ ';type=CDS;width=200' _ imgflip  %]
 	<tr>
-		<th rowspan="[% CDS.size + 2 %]">
-			UniProt Evidence<br/>
-			<a target="_blank" href="[% image_cds %]"><img src="[% image_cds %]"/ width=200 height=100></a>
+		<th rowspan="[% CDS.size + 2 %]" style="background-image:url('[% image_CDS %]');">
+			<span>UniProt Evidence</span>
 		</th>
 		<th>Pos</th>
 		<th>UniProt ID</th>
@@ -67,9 +68,8 @@
 [% IF misc_feature.0 %]
 [% image_misc_feature = '/gb2/gbrowse_img/pipeline/?name=' _ contig _ ':' _ start _ '..' _ end _ ';type=Misc;width=200' _ imgflip %]
 	<tr>
-		<th rowspan="[% misc_feature.size + 2 %]">
-			InterPro Evidence<br/>
-			<a target="_blank" href="[% image_misc_feature %]"><img src="[% image_misc_feature %]"/ width=200 height=100></a>
+		<th rowspan="[% misc_feature.size + 2 %]" style="height:140px;background-image:url('[% image_misc_feature %]');">
+			<span>InterPro Evidence</span>
 		</th></tr>
 	<tr>
 		<th>Pos</th>
@@ -95,11 +95,9 @@
 <tr class="spacer"></tr>
 [% IF sig_peptide.0 %]
 [% image_sig_peptide = '/gb2/gbrowse_img/pipeline/?name=' _ contig _ ':' _ start _ '..' _ end _ ';type=SignalP;width=200' _ imgflip %]
-[% image_sig_peptide = "#foo" %]
 	<tr>
-		<th rowspan="[% sig_peptide.size + 2 %]">
-			Signal Peptide<br/>
-			<a target="_blank" href="[% image_sig_peptide %]"><img src="[% image_sig_peptide %]"/ width=200 height=100></a>
+		<th rowspan="[% sig_peptide.size + 2 %]" style="height:140px;background-image:url('[% image_sig_peptide %]');">
+			<span>Signal Peptide</span>
 		</th></tr>
 	<tr>
 		<th>Pos</th>

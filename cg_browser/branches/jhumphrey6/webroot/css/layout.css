@@ -89,19 +89,20 @@ padding:0px;
 }
 li.guttersub a{
 text-align:right !important;
+font-weight:normal !important;
 }
 
 #left_gut ul li a {
 	color: #000000;
 	background: #D0D0D0;
-	font: normal 1em Arial, sans-serif; 
+	font: bold 1em Arial, sans-serif; 
 	padding: 2px 4px;
 	text-decoration: none;
 	display:block;
 }
 #left_gut a:hover {
 	color: #000000;
-	background: #FFFFFF;
+	background: #996600;
 }
 #left_gut a:visited {
 	color: #000000;
@@ -214,11 +215,19 @@ vertical-align:top;
 #details th {
 vertical-align:top;
 height:1em;
+background-color:#E0F0E0;
+background-position:center center;
+background-repeat: no-repeat;
+background-attachment:scroll;
 }
 #details tr {
 }
 #details {
-margin-left:20px;
+}
+#details span {
+background-color:#E0F0E0;
+padding:0 1em;
+display:block;
 }
 ul.h_list li {
 display:inline;

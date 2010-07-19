@@ -2,7 +2,7 @@
 #use warnings;
 use strict;
 no strict "refs";
-use Bio::DB::GFF;
+#use Bio::DB::GFF;
 #use Data::Dumper;
 use CGI qw/:standard/;
 use CGI qw/:cgi-lib/;
@@ -63,7 +63,9 @@ if (defined $$vars{'sub'}) {
 		if($$vars{execute}){
 			my @results = &$cgpcall($vars);
 			@$vars{'results'}=@results;
-			print getpage("search/searchresults.tt",$vars);
+			$$vars{'external_link'}=$ENV{REQUEST_URI} . "&external";
+			if(defined $$vars{external}){print getfullpage('search/searchresults.tt', $vars);}
+			else{print getpage("search/searchresults.tt",$vars);}
 		}
 		else{
 			print getpage("search/$action.tt",$vars);
@@ -83,6 +85,11 @@ if (defined $$vars{'sub'}) {
 		else{
 			print getpage("search/blast.tt",$vars);
 		}
+	}
+	elsif ($action eq 'organism_data'){
+		$$vars{'organism_data'}=CGPBase::organism_data;
+		$$vars{'current'}='organism_data';
+		print getfullpage('organism_data.tt', $vars);
 	}
 	else {
 	#	print STDERR "controller not found\n";
