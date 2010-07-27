@@ -1,0 +1,50 @@
+------------------------------------------------------------------------
+r77 | jhumphrey6 | 2010-07-27 13:32:56 -0400 (Tue, 27 Jul 2010) | 1 line
+Changed paths:
+   M /cg_pipeline/trunk/doc/INSTALL
+
+emphasizing CONFIGURATION in the installation instructions doc/INSTALL
+------------------------------------------------------------------------
+r76 | jhumphrey6 | 2010-07-27 13:19:15 -0400 (Tue, 27 Jul 2010) | 1 line
+Changed paths:
+   M /cg_pipeline/trunk/scripts/run_annotation_genbank.pl
+   M /cg_pipeline/trunk/scripts/run_pipeline
+
+genbank script wrote duplicates (fixed), log wiped out annotation log (fixed)
+------------------------------------------------------------------------
+r67 | jhumphrey6 | 2010-07-06 12:28:14 -0400 (Tue, 06 Jul 2010) | 2 lines
+Changed paths:
+   M /cg_pipeline/trunk/doc/README
+
+Update README with run_pipeline usage and publication data.
+
+------------------------------------------------------------------------
+r66 | jhumphrey6 | 2010-07-06 12:01:51 -0400 (Tue, 06 Jul 2010) | 2 lines
+Changed paths:
+   M /cg_pipeline/trunk/conf/cgpipelinerc
+   A /cg_pipeline/trunk/scripts/run_annotation_genbank.pl (from /cg_pipeline/branches/jhumphrey6/scripts/run_annotation_genbank.pl:65)
+   M /cg_pipeline/trunk/scripts/run_pipeline
+
+Integrate annotation genbank creator to trunk
+
+------------------------------------------------------------------------
+r64 | lkatz | 2010-06-28 11:07:07 -0400 (Mon, 28 Jun 2010) | 1 line
+Changed paths:
+   A /cg_pipeline/trunk/scripts/run_assembly_core.pl
+
+assembly core.pl added
+------------------------------------------------------------------------
+r63 | lkatz | 2010-06-28 11:06:25 -0400 (Mon, 28 Jun 2010) | 1 line
+Changed paths:
+   A /cg_pipeline/trunk/scripts/run_assembly_chooseBest.pl
+
+chooseBest.pl added
+------------------------------------------------------------------------
+r62 | lkatz | 2010-06-28 11:03:50 -0400 (Mon, 28 Jun 2010) | 1 line
+Changed paths:
+   M /cg_pipeline/trunk/scripts/run_assembly
+   M /cg_pipeline/trunk/scripts/run_pipeline
+   M /cg_pipeline/trunk/scripts/run_prediction
+
+totally new pipeline wrapper, written in Perl instead of Bash
+------------------------------------------------------------------------
