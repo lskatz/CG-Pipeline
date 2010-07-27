@@ -49,6 +49,10 @@ Finally, to be able to run cg_pipeline from any directory, add the scripts subdi
 PATH="${PATH}:/opt/cg_pipeline/scripts"
 
 
+CONFIGURATION
+
+Default settings and the locations of databases are set in the configuration file [DESTDIR]/cg_pipeline/conf/cgpipelinerc. You should make sure these directories exist and contain the necessary databases before running any applications.
+
 USAGE
 
 See the README file for usage instructions.
