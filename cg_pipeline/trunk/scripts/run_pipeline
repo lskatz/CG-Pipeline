@@ -175,7 +175,7 @@ sub main(){
       last if($command !~ /^build$|^annotate$/);
     }
     case (/^build$|^annotate$|^genbank$/){
-      my $logfile="$project/log/annotation.txt";
+      my $logfile="$project/log/annotation-genbank.txt";
       CGLog($logfile,"ANNOTIATION GENBANK START on $project ".date());
 			$invoke_string="run_annotation_genbank.pl --organism=$tag_prefix --prediction=$home/$project/prediction.gb --inputdir=$home/$project/annotation --gff=$home/$project/annotation.gff --gb=$home/$project/annotation.gb 2>&1 ";
       if($verbose>1){
