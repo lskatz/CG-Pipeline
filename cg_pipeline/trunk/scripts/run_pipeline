@@ -82,7 +82,7 @@ sub main(){
     }
     case (/^build$|^create$/){
       CGLog("$project/log/create.txt","CREATE START ".date());
-      mkpath("$project/annotation","$project/log","$project/build/assembly","$project/build/prediction","$project/build/annotation");
+      mkpath(["$project/annotation","$project/log","$project/build/assembly","$project/build/prediction","$project/build/annotation"]);
       #`$invoke_string`;
       CGLog("$project/log/create.txt","CREATE END ".date());
       last if($command !~ /^build$/);
