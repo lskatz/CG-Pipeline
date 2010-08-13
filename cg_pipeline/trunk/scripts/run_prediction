@@ -343,8 +343,6 @@ sub getRRnaPredictions($$){
 sub rnammer($$){
   # usage(): rnammer -S arc/bac/euk (-multi) (-m tsu,lsu,ssu) (-f) (-k) (-gff [gff file]) (-xml [xml file]) (-f [fasta file]) (-h [HMM report]) [sequence]
   my($input_files,$settings)=@_;
-  logmsg "Warning: RNAmmer is not being run; only tested right now";
-  return loadRnammerPredictions("$$settings{tempdir}/rnammer.gff",$settings);
   my($predictions,$domain);
   $domain='bac'; # TODO from $settings, gather which it should be: arc/bac/euk
   $$settings{rnammer_exec} ||= AKUtils::fullPathToExec('rnammer');

@@ -161,12 +161,15 @@ print STDERR "parsing $sqlfile\n";
 					$newftr->remove_tag('name');#particularly shitty tag riddled with '='
 					my $source =$newftr->source_tag();
 					my $gene="unnamed";
-					if($$tags{'identity'}<91 || $$tags{'evalue'}>1e-9){ next; }
+					if($$tags{'identity'}<91 || $$tags{'evalue'}>1e-9){
+# considering writing the empty features back to the locus and calling this the last iteration
+						next;
+					}
 					if(	($data{'evalue'} >= $$tags{'evalue'} || $data{'identity'} <= $$tags{'identity'} ) ){ #compare this blast hit to the previous one
 						$$tags{'product'}=$uniprot{$$tags{'uniprot_id'}}{'product'};
 						%data=(type=>'blast',count=>$data{'count'}+1,%$tags);
 						$gene=$uniprot{$$tags{'uniprot_id'}}{'gene_name'};
-					#print STDERR "$gene\n";
+#print STDERR "$gene\n";
 						my $note=remove_tags($newftr);
 						$newftr->add_tag_value('note',$note);
 						$newftr->add_tag_value('product',$data{'product'});
@@ -175,7 +178,7 @@ print STDERR "parsing $sqlfile\n";
 						$newftr->primary_tag('CDS');
 						addtranslation($newftr,$seq);
 						$newftr->display_name($data{'name'});
-					#remove any existing feature for this locus
+	#remove any existing feature for this locus
 						my @currentfeatures=$seq->remove_SeqFeatures();
 						foreach my $curftr(@currentfeatures){
 							if(!$curftr->has_tag('locus_tag')){next;}
@@ -184,7 +187,7 @@ print STDERR "parsing $sqlfile\n";
 								$seq->add_SeqFeature($curftr);
 							}
 						}
-					#create the main feature
+	#create the main feature
 						my $parent = gene_factory($newftr->start,$newftr->end,$newftr->strand,{locus_tag=>$$tags{'locus_tag'}});
 						$parent->add_SeqFeature($newftr);
 						if(defined($gene)){
@@ -328,9 +331,8 @@ print STDERR "parsing $sqlfile\n";
 				}
 			}
 	#post-processing
-			my @features = sort {$a->start<=>$b->start} sort {$a->primary_tag cmp $b->primary_tag} $seq->all_SeqFeatures();
+			my @features = sort {$a->start<=>$b->start}$seq->all_SeqFeatures();
 			my @finalfeatures = ();
-			$seq->flush_SeqFeatures();
 			foreach $newftr(@features){
 				if($newftr->has_tag('gene')){ 
 					my $gene = ($newftr->get_tag_values('gene'))[0];
@@ -343,35 +345,10 @@ print STDERR "parsing $sqlfile\n";
 						}
 					}
 				}
-				if(scalar @finalfeatures){
-					my $prev=pop @finalfeatures;
-					if(
-						($prev->primary_tag =~/gene/ && $newftr->primary_tag =~/gene/)&&
-						($prev->has_tag('locus_tag') && $newftr->has_tag('locus_tag')) &&
-						(($prev->get_tag_values('locus_tag'))[0] eq ($newftr->get_tag_values('locus_tag'))[0])&&
-						($prev->start eq $newftr->start)&&
-						($prev->end eq $newftr->end)){
-			#	print STDERR "\n\nDuplicate gene found\n\n";	
-						my @tags=$newftr->all_tags();
-					#fix merge newftr with prev, discard newftr, push prev
-						foreach my $tag (@tags){
-							if(!$prev->has_tag($tag)){next;}
-							my @values = map{$_,1} ($prev->get_tag_values($tag),$newftr->get_tag_values($tag));
-							$prev->remove_tag($tag);
-							$prev->add_tag_value($tag,@values);
-						}
-						push(@finalfeatures,$prev);
-					}
-					else{
-						push(@finalfeatures,$prev);
-						push(@finalfeatures,$newftr);
-					}
-				}
-				else{
-					push(@finalfeatures,$newftr);
-				}
+				push(@finalfeatures,$newftr);
 			}
-			$seq->add_SeqFeature(sort {$a->start<=>$b->start} @finalfeatures);
+			$seq->flush_SeqFeatures();
+			$seq->add_SeqFeature(@finalfeatures);
 		}
 		$gbout->write_seq($seq);
 # write gff and fasta
@@ -444,21 +421,6 @@ sub replace_tags($){
 		else{$ftr->add_tag_value($tag,$value);}
 	}
 	$ftr->remove_tag('note');
-	my @tags = $ftr->all_tags();
-	#fix bad tag names
-	foreach my $tag (@tags){
-		my @values = $ftr->get_tag_values($tag);
-		$ftr->remove_tag($tag);
-		$tag =~ s/^\s+//;
-		$ftr->add_tag_value($tag,@values);
-		#remove duplicate values
-		@values = $ftr->get_tag_values($tag);
-		if(@values){
-			my %uniquevalues = map { $_,1 } @values;
-			$ftr->remove_tag($tag);
-			$ftr->add_tag_value($tag,keys %uniquevalues);
-		}
-	}
 }
 sub start2nuc($$){
 	my ($start,$coord) = @_;
