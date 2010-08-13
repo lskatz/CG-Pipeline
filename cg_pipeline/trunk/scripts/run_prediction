@@ -356,6 +356,7 @@ sub rnammer($$){
     system($command);
   }
   logmsg "RNAmmer output files are in $$settings{tempdir}\n";
+  $predictions=loadRnammerPredictions("$$settings{tempdir}/rnammer.gff",$settings);
   return $predictions;
 }
 
