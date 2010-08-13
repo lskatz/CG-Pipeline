@@ -97,6 +97,7 @@ sub main() {
 	return 0;
 }
 
+# creates qual and sequence fasta files for an SFF file
 sub sff2fastaqual($$) {
 	my ($sff_files, $settings) = @_;
 	my @fastaqualfiles;

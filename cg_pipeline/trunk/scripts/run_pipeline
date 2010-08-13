@@ -21,7 +21,6 @@ use AKUtils qw(logmsg);
 
 use Getopt::Long;
 use File::Temp ('tempdir');
-use File::Path;# qw(make_path remove_tree);
 use File::Path;
 use File::Spec;
 use File::Copy;
@@ -31,7 +30,6 @@ use CGPipelineUtils;
 use Data::Dumper;
 use Switch 'fallthrough';
 
-my $WRAPPER_VERSION=0.2; # this is the wrapper version only.  Not the CP-Pipeline version.
 my $verbose;
 
 $0 = fileparse($0);
@@ -81,10 +79,16 @@ sub main(){
       #print __LINE__."\n";
     }
     case (/^build$|^create$/){
+<<<<<<< .mine
+      mkpath(["$project/annotation","$project/log","$project/build/assembly","$project/build/prediction","$project/build/annotation"]);
+      #system("run_create_project -p $project");
+      CGLog("$project/log/create.txt","Project created ".date());
+=======
       CGLog("$project/log/create.txt","CREATE START ".date());
       mkpath(["$project/annotation","$project/log","$project/build/assembly","$project/build/prediction","$project/build/annotation"]);
       #`$invoke_string`;
       CGLog("$project/log/create.txt","CREATE END ".date());
+>>>>>>> .r81
       last if($command !~ /^build$/);
     }
     case (/^build$|^assemble$/){
@@ -203,7 +207,7 @@ sub verbosity($){
 }
 sub date{
   use Date::Format;
-  return time2str('%a %b %e %k:%M:%S',time())." (CG-Pipeline wrapper v$WRAPPER_VERSION, CG-Pipeline v$VERSION)";
+  return time2str('%a %b %e %k:%M:%S',time())." (CG-Pipeline v$$settings{pipeline_version})";
 }
 # logs a message to a file and prints it at the same time
 # parameter: filename
@@ -216,7 +220,7 @@ sub CGLog($$;$){
     open FILE,">>",$filename or warn("Cannot open log file $filename for writing.\n");
   }
   else{
-    open FILE,">",$filename or warn("Cannot open log file $filename for writing.\n");
+    open FILE,">", $filename or warn("Cannot open log file $filename for writing.\n");
   }
   print FILE $str;
   print $str if($verbose>0);
@@ -260,7 +264,7 @@ $script create -p MyStrain
   Creates a directory named MyStrain containing subdirectories where project files will be generated.
 
 $script assemble -p MyStrain -i sff-file [ -r reference ]
-  Runs assembly in project MyStrain of sff-file using a reference in nucleotide fasta file if -r is specified, de novo if not. All messages are stored in MyStrain/log/assembly.txt
+  Runs assembly in project MyStrain of sff-file using a reference in nucleotide fasta file if -r is specified, de novo if not (-d=T to force de novo). All messages are stored in MyStrain/log/assembly.txt
 
 $script predict -p MyStrain [-i assembly-file]
   Runs prediction in project MyStrain against MyStrain/assembly.fasta, or an alternative file if specified. All messages are stored in MyStrain/log/prediction.txt. Output file is MyStrain/prediction.gb

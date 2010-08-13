@@ -38,7 +38,7 @@ sub main() {
   $settings = AKUtils::loadConfig($settings);
   die("  Usage: $0 assembly1.fasta [,assembly2.fasta...] -output bestAssembly.fasta\n  Tip: put your preffered assembly first to help break ties.\n") if @ARGV<1;
 
-  my @cmd_options=('output=s');
+  my @cmd_options=('output=s','expectedGenomeLength=i');
   GetOptions($settings, @cmd_options) or die;
 
   $$settings{outfile} = $$settings{output} || "$0.out.fasta";
@@ -50,7 +50,7 @@ sub main() {
 	  $file = File::Spec->rel2abs($file);
 	  die("Input or reference file $file not found") unless -f $file;
   }
-  my $final_seqs=bestAssemblySeqs(\@input_files);
+  my $final_seqs=bestAssemblySeqs(\@input_files,$settings);
   
   AKUtils::printSeqsToFile($final_seqs, $$settings{outfile}, {order_seqs_by_name => 1});
   logmsg "Output is in $$settings{outfile}.";
@@ -61,8 +61,8 @@ sub main() {
 # Find the best assembly, given the contigs in that assembly
 # params: list each assembly, composed of contigs
 # return seqs of best assembly
-sub bestAssemblySeqs($){
-  my($seqs)=@_;
+sub bestAssemblySeqs($$){
+  my($seqs,$settings)=@_;
   my(@stats,@vote,$winningSeqIndex,$i,@seqsFilename);
 
   for($i=0;$i<@$seqs;$i++){
@@ -75,13 +75,13 @@ sub bestAssemblySeqs($){
     my $largestStat=-1000; # this can be any very negative number that all assemblies will beat
     $winningSeqIndex=0; # by default, the first assembly wins the vote
     for($i=0;$i<@$seqs;$i++){
-      my $stat=&$statistic($$seqs[$i]);
+      my $stat=&$statistic($$seqs[$i],$settings);
       if($stat>$largestStat){
         $winningSeqIndex=$i;
         $largestStat=$stat;
       }
     }
-    logmsg "$seqsFilename[$winningSeqIndex] wins a point with metric $statistic ($largestStat).";
+    logmsg "$seqsFilename[$winningSeqIndex] has the biggest $statistic with $largestStat.";
     $vote[$winningSeqIndex]++;
   }
   # for each statistic give a point to the winner (LOWEST number)
@@ -95,7 +95,7 @@ sub bestAssemblySeqs($){
         $smallestStat=$stat;
       }
     }
-    logmsg "$seqsFilename[$winningSeqIndex] wins a point with metric $statistic ($smallestStat).";
+    logmsg "$seqsFilename[$winningSeqIndex] has the fewest $statistic with $smallestStat.";
     $vote[$winningSeqIndex]++;
   }
 
@@ -132,10 +132,10 @@ sub longestContig($){
 
 # Find the N50 of an assembly.  The N50 is the size N such that 50% of the genome is contained in contigs of size N or greater.
 # param: fasta filename
-# optional param: total size of genome
+# optional param: $$settings
 # return int The N50 in bp.
 sub N50($;$){
-  my($seqs,$genomeSize)=@_;
+  my($seqs,$settings)=@_;
   my($seqname,@seqs,$numSeqs,$N50);
   # put the seqs into an array. No defline needed in this subroutine, so it can be discarded
   foreach $seqname (keys %$seqs){
@@ -148,14 +148,13 @@ sub N50($;$){
     length($a)<=>length($b);
   } @seqs;
   # if the size is not provided, assume the size of the assembly is the genome size
-  $genomeSize ||= genomeLength($seqs);
+  my $genomeSize = $$settings{expectedGenomeLength}||genomeLength($seqs);
   my $halfGenomeSize=$genomeSize/2;
   my $currentGenomeLength=0;
   # find the contig that resides at (size/2)
   for(my $i=0;$i<$numSeqs;$i++){
     my $seqLength=length($seqs[$i]);
     $currentGenomeLength+=$seqLength;
-#   print join ("\t", ($i,$seqLength,$currentGenomeLength,$halfGenomeSize))."\n";
     if($currentGenomeLength>$halfGenomeSize){
       $N50=$seqLength;
       last;
