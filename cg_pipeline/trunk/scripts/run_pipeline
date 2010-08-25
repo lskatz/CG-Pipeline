@@ -80,10 +80,8 @@ sub main(){
       #print __LINE__."\n";
     }
     case (/^build$|^create$/){
-      #mkpath("$project/annotation","$project/log","$project/build/assembly","$project/build/prediction","$project/build/annotation");
-      system("run_create_project -p $project");
+      mkpath(["$project/annotation","$project/log","$project/build/assembly","$project/build/prediction","$project/build/annotation"]);
       CGLog("$project/log/create.txt","Project created ".date());
-      #CGLog("$project/log/create.txt","CREATE END ".date(),'append');
       last if($command !~ /^build$/);
     }
     case (/^build$|^assemble$/){
