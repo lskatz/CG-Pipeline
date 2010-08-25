@@ -1,17 +1,17 @@
-pipeline_version = "0.2.6"
+pipeline_version = "0.2.4"
 pipeline_reference = "Andrey O. Kislyuk, Lee S. Katz, Sonia Agrawal, Matthew S. Hagen, Andrew B. Conley, Pushkala Jayaraman, Viswateja Nelakuditi, Jay C. Humphrey, Scott A. Sammons, Dhwani Govil, Raydel D. Mair, Kathleen M. Tatti, Maria L. Tondella, Brian H. Harcourt, Leonard W. Mayer, and I. King Jordan.|A computational genomics pipeline for prokaryotic sequencing projects.|Bioinformatics Advance Access published on June 2, 2010, DOI 10.1093/bioinformatics/btq284.|20519285"
-prediction_blast_db = "/home/lkatz/bin/cg_pipeline/data/uniprot_sprot"
+classification = "Neisseria meningitidis Neisseria Neisseriaceae Neisseriales Betaproteobacteria Proteobacteria Bacteria"
+prediction_blast_db = "/opt/cg_pipeline/data/swissprot"
 prediction_transl_table = 11
 prediction_use_genemark = 1
-gms_datadir = "/home/lkatz/bin/genemark_suite_linux_64"
-classification = "Neisseria meningitidis Neisseria Neisseriaceae Neisseriales Betaproteobacteria Proteobacteria Bacteria"
-annotation_blast_db = "/home/lkatz/bin/cg_pipeline/data/uniprot_sprot_trembl"
+gms_datadir = "/usr/local/share/gms"
+annotation_blast_db = "/opt/cg_pipeline/data/uniprot_sprot_trembl"
 annotation_uniprot_xml = "fixme"
-annotation_uniprot_db3 = "/home/lkatz/bin/cg_pipeline/data/cgpipeline.db3"
-annotation_uniprot_evidence_db3 = "/home/lkatz/bin/cg_pipeline/data/cgpipeline.evidence.db3"
+annotation_uniprot_db3 = "/opt/cg_pipeline/data/cgpipeline.db3"
+annotation_uniprot_evidence_db3 = "/opt/cg_pipeline/data/cgpipeline.evidence.db3"
 
-reporting_email = lskatz+cg_pipeline@gmail.com
+reporting_email = none
 
-vfdb_blast_db = "/home/lkatz/bin/cg_pipeline/data/vfdb_CP_VFs_aa"
+vfdb_blast_db = "/opt/cg_pipeline/data/vfdb_CP_VFs_aa"
 min_vfdb_aa_coverage = 0.8
 min_vfdb_aa_identity = 0.95
