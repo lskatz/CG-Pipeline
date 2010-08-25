@@ -1076,7 +1076,7 @@ sub gettRNAscanSEPredictions($;$) {
 	logmsg "Running tRNAscanSE on $input_file_full...";
 	$$settings{tse_exec} = AKUtils::fullPathToExec($$settings{tse_exec} or 'tRNAscan-SE');
 
-	my $tse_opts = "-q";
+	my $tse_opts = "-q -Q";
 	$tse_opts .= "" if $$settings{trnascan_modeltype} eq 'eukaryotic';
 	$tse_opts .= " -G" if $$settings{trnascan_modeltype} eq 'general';
 	$tse_opts .= " -O" if $$settings{trnascan_modeltype} eq 'organellar';
