@@ -10,6 +10,7 @@ AMOS (http://amos.sourceforge.net/)
 Glimmer3 (http://www.cbcb.umd.edu/software/glimmer/)
 PSORTb (http://www.psort.org/psortb/)
 tRNAscan-SE (http://lowelab.ucsc.edu/tRNAscan-SE/)
+RNAmmer (http://www.cbs.dtu.dk/cgi-bin/nph-sw_request?rnammer)
 (Note: In case of problems installing tRNAscan-SE from the authors' website, a distribution is available from our website at http://nbase.biology.gatech.edu/download.html)
 
 The following packages are required. However, their installation may present some difficulties, and parts of the pipeline will still be able to function without them.
