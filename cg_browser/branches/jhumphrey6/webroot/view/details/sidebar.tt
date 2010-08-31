@@ -1,7 +1,0 @@
-<!-- left gutter layout -->
-<div id="left_gut">
-<ul>
-	<li><a target="_blank" href="details.cgi?source=pipeline&fid=[% gene.0.fid %]&file=fasta">FASTA</a></li>
-<li></li>
-</ul>
-</div>
