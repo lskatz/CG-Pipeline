@@ -6,7 +6,7 @@ The following packages (and their dependencies) are required for the operation o
 
 BioPerl (>= 1.6)
 NCBI BLAST (ftp://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/)
-AMOS (http://amos.sourceforge.net/)
+AMOS 2.0.8 (http://amos.sourceforge.net/)
 Glimmer3 (http://www.cbcb.umd.edu/software/glimmer/)
 PSORTb (http://www.psort.org/psortb/)
 tRNAscan-SE (http://lowelab.ucsc.edu/tRNAscan-SE/)
