@@ -199,14 +199,31 @@ sub combineNewblerAMOS($$$) {
 	die if $?;
 	my $repeat_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_repeat.sff"], $settings);
 
+	my $newbler_contigs = count_contigs("$newbler_basename/mapping/454AllContigs.fna");
+	my $amos_contigs = count_contigs("$amos_basename.fasta");
 	my $combined_fasta_file = "$$settings{tempdir}/combined_in.fasta";
-	system("cat '$newbler_basename/mapping/454AllContigs.fna' '$amos_basename.fasta' '$$unmapped_fastaqual[0]->[0]' > $combined_fasta_file");
-#	system("cat '$newbler_basename/mapping/454AllContigs.fna' '$amos_basename.fasta' > $combined_fasta_file");
+	my $numcontigs=0;
+	if($newbler_contigs < $amos_contigs){
+		system("cat '$newbler_basename/mapping/454AllContigs.fna' '$amos_basename.fasta' '$$unmapped_fastaqual[0]->[0]' > $combined_fasta_file");
+		$numcontigs=$newbler_contigs;
+		logmsg("Newbler reference assembly selected as reference for minimus2");
+	}
+	else{
+		system("cat '$amos_basename.fasta' '$newbler_basename/mapping/454AllContigs.fna' '$$unmapped_fastaqual[0]->[0]' > $combined_fasta_file");
+		$numcontigs=$amos_contigs;
+		logmsg("AMOScmp reference assembly selected as reference for minimus2");
+	}
 	die if $?;
-	system("toAmos -s '$combined_fasta_file' -o '$combined_fasta_file.afg'");
-	die if $?;
-	system("minimus -D TGT='$combined_fasta_file.afg' '$$settings{tempdir}/minimus.combined'");
-	die if $?;
+	system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
+	system("minimus2 -D REFCOUNT=$numcontigs '$$settings{tempdir}/minimus.combined'");
 
 	return "$$settings{tempdir}/minimus.combined.fasta";
+}
+sub count_contigs{
+	my $file=shift;
+	open(FH,"<$file")or die $!;
+	my @lines=<FH>;
+	close(FH);
+	my @contigs=grep /^>/,@lines;
+	return scalar @contigs;
 }
