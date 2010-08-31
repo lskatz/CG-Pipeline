@@ -1,5 +1,0 @@
-<ul>
-[% FOREACH file IN files %]
-<li><a href="/download/[% file %]">[% file %]</a></li>
-[% END %]
-</ul>
