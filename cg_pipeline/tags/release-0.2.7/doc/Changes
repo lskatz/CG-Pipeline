@@ -1,58 +1,13 @@
 ------------------------------------------------------------------------
-r81 | jhumphrey6 | 2010-08-06 15:05:13 -0400 (Fri, 06 Aug 2010) | 1 line
-Changed paths:
-   M /cg_pipeline/trunk/scripts/run_pipeline
+r97 | jhumphrey6 | 2010-09-14 15:33:00 -0400 (Tue, 14 Sep 2010) | 1 line
 
-fixed mkpath syntax in run_pipeline
+GenBank compiler locus_tag fix
 ------------------------------------------------------------------------
-r82 | lkatz | 2010-08-13 18:45:55 -0400 (Fri, 13 Aug 2010) | 1 line
-Changed paths:
-   M /cg_pipeline/trunk/conf/cgpipelinerc
-   M /cg_pipeline/trunk/scripts/run_assembly_chooseBest.pl
-   M /cg_pipeline/trunk/scripts/run_assembly_core.pl
-   M /cg_pipeline/trunk/scripts/run_pipeline
-   M /cg_pipeline/trunk/scripts/run_prediction
+r95 | jhumphrey6 | 2010-08-31 11:31:31 -0400 (Tue, 31 Aug 2010) | 1 line
 
-Updated pipeline wrapper to fix some bugs; introduced RNAmmer to predict rRNAs; improved on choosing the best assembly; updated config file
+Use Minimus2 instead of Minimus
 ------------------------------------------------------------------------
-r83 | lkatz | 2010-08-13 18:56:43 -0400 (Fri, 13 Aug 2010) | 1 line
-Changed paths:
-   M /cg_pipeline/trunk/scripts/run_annotation_genbank.pl
-   M /cg_pipeline/trunk/scripts/run_pipeline
-   M /cg_pipeline/trunk/scripts/run_prediction
+r94 | jhumphrey6 | 2010-08-25 13:22:05 -0400 (Wed, 25 Aug 2010) | 1 line
 
-removed a return statement before RNAmmer was able to run, ie fixed it
-------------------------------------------------------------------------
-r84 | lkatz | 2010-08-13 19:11:08 -0400 (Fri, 13 Aug 2010) | 1 line
-Changed paths:
-   M /cg_pipeline/trunk/scripts/run_prediction
 
-removed a return statement before RNAmmer was able to run, ie fixed it
-------------------------------------------------------------------------
-r85 | jhumphrey6 | 2010-08-25 11:47:09 -0400 (Wed, 25 Aug 2010) | 2 lines
-Changed paths:
-   M /cg_pipeline/trunk/conf/cgpipelinerc
-
-reverting conf/cgpipelinerc
-
-------------------------------------------------------------------------
-r86 | jhumphrey6 | 2010-08-25 12:07:42 -0400 (Wed, 25 Aug 2010) | 1 line
-Changed paths:
-   M /cg_pipeline/trunk/scripts/run_annotation_genbank.pl
-   M /cg_pipeline/trunk/scripts/run_pipeline
-
-Reverting mistaken or unnecessary revisions
-------------------------------------------------------------------------
-r87 | jhumphrey6 | 2010-08-25 12:20:11 -0400 (Wed, 25 Aug 2010) | 1 line
-Changed paths:
-   M /cg_pipeline/trunk/doc/AUTHORS
-   M /cg_pipeline/trunk/doc/VERSION
-
-VERSION, AUTHORS update
-------------------------------------------------------------------------
-r88 | jhumphrey6 | 2010-08-25 13:01:15 -0400 (Wed, 25 Aug 2010) | 1 line
-Changed paths:
-   M /cg_pipeline/trunk/lib/AKUtils.pm
-
-add -Q option to tRNAScanSE execution
 ------------------------------------------------------------------------
