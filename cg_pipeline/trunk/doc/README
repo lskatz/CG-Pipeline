@@ -2,8 +2,6 @@ SYNOPSIS
 
 run_pipeline [build|create|assemble|predict|annotate] [-p project] -i target.sff [-r reference.fasta] [-t tag_prefix]
 
-run_cg_pipeline input.sff -strain_name=name
-
 run_assembly input.sff [, input2.sff, ...] [-R references.mfa]
 
 run_prediction input.mfa [, input2.mfa, ...] -strain_name=name [-tag_prefix=prefix] [-classification=classification] [-R references.mfa] [-o=output_filename.gb]
@@ -27,8 +25,11 @@ Key configuration parameters for cg_pipeline are stored in the file cg_pipeline/
 
 AUTHORS
 
-Andrey Kislyuk <kislyuk@gatech.edu>
-Jay Humphrey <jhumphrey6@gatech.edu>
+Andrey Kislyuk
+Jay Humphrey
+Lee Katz
+
+Contact: nbase@biology.gatech.edu
 
 Georgia Institute of Technology:
 Computational Genomics Group (http://compgenomics.biology.gatech.edu/)

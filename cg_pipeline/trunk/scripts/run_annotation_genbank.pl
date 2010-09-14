@@ -355,10 +355,19 @@ print STDERR "parsing $sqlfile\n";
 						my @tags=$newftr->all_tags();
 					#fix merge newftr with prev, discard newftr, push prev
 						foreach my $tag (@tags){
+							if($tag eq "locus_tag"){next;}
 							if(!$prev->has_tag($tag)){next;}
-							my @values = map{$_,1} ($prev->get_tag_values($tag),$newftr->get_tag_values($tag));
+							my @values = $prev->get_tag_values($tag);
+							push(@values,$newftr->get_tag_values($tag));
+							my @uniquevalues;
+							foreach my $value(sort @values){
+								if(0<scalar @uniquevalues && $value ne $uniquevalues[-1]){push(@uniquevalues,$value);}
+								else{push(@uniquevalues,$value);}
+							}	
 							$prev->remove_tag($tag);
-							$prev->add_tag_value($tag,@values);
+							if(0<scalar @uniquevalues){
+								$ftr->add_tag_value($tag,@uniquevalues);
+							}
 						}
 						push(@finalfeatures,$prev);
 					}
@@ -449,14 +458,16 @@ sub replace_tags($){
 	foreach my $tag (@tags){
 		my @values = $ftr->get_tag_values($tag);
 		$ftr->remove_tag($tag);
+		if(0<scalar @values){next;}
 		$tag =~ s/^\s+//;
-		$ftr->add_tag_value($tag,@values);
 		#remove duplicate values
-		@values = $ftr->get_tag_values($tag);
-		if(@values){
-			my %uniquevalues = map { $_,1 } @values;
-			$ftr->remove_tag($tag);
-			$ftr->add_tag_value($tag,keys %uniquevalues);
+		my @uniquevalues=("uninitialized");
+		foreach my $value(sort @values){
+			if($value ne $uniquevalues[$#uniquevalues]){push(@uniquevalues,$value);}
+			else{push(@uniquevalues,$value);}
+		}	
+		if(0<scalar @uniquevalues){
+			$ftr->add_tag_value($tag,@uniquevalues);
 		}
 	}
 }
