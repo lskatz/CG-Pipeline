@@ -1,13 +1,9 @@
-------------------------------------------------------------------------
-r97 | jhumphrey6 | 2010-09-14 15:33:00 -0400 (Tue, 14 Sep 2010) | 1 line
-
-GenBank compiler locus_tag fix
-------------------------------------------------------------------------
-r95 | jhumphrey6 | 2010-08-31 11:31:31 -0400 (Tue, 31 Aug 2010) | 1 line
-
-Use Minimus2 instead of Minimus
-------------------------------------------------------------------------
-r94 | jhumphrey6 | 2010-08-25 13:22:05 -0400 (Wed, 25 Aug 2010) | 1 line
-
-
-------------------------------------------------------------------------
+Version 0.3.0 Changes
+>doc/INSTALL: moved to top directory
+>doc/README: moved to top directory
+>scripts/reconfigure.pl: new script for rewriting conf/cgpipelinerc
+>scripts/update_vfdb: modified wget and gunzip calls
+>scripts/update_cg_databases: removed update_swissprot and update_greengenes
+>scripts/update_uniprot: modified wget and gunzip calls
+>scripts/make_revise.pl: new script for updating an installed Makefile
+>Makefile: run reconfigure.pl and make_revise.pl when appropriate
