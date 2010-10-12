@@ -53,7 +53,7 @@ sub main() {
   my $final_seqs=bestAssemblySeqs(\@input_files,$settings);
   
   AKUtils::printSeqsToFile($final_seqs, $$settings{outfile}, {order_seqs_by_name => 1});
-  logmsg "Output is in $$settings{outfile}.";
+  logmsg "Output is in $$settings{outfile}";
 
   return 0;
 }
@@ -63,126 +63,89 @@ sub main() {
 # return seqs of best assembly
 sub bestAssemblySeqs($$){
   my($seqs,$settings)=@_;
-  my(@stats,@vote,$winningSeqIndex,$i,@seqsFilename);
+  my($i,%metrics,%vote);
 
+  # generate the metrics
+  @$seqs=sort{$a cmp $b} @$seqs;
   for($i=0;$i<@$seqs;$i++){
-	$seqsFilename[$i]=$$seqs[$i];
-    $$seqs[$i]=AKUtils::readMfa($$seqs[$i]);
+    my %seqMetric;
+    my $command="run_assembly_metrics.pl $$seqs[$i]";
+    $command.=" -e $$settings{expectedGenomeSize}" if($$settings{expectedGenomeSize});
+    logmsg "COMMAND $command";
+    my $seqMetric=`$command`;
+    my @seqMetric=split(/\n/,$seqMetric);
+    for my $line (@seqMetric){
+      my($key,$value)=split(/\t/,$line);
+      $seqMetric{$key}=$value;
+    }
+    $metrics{$seqMetric{File}}=\%seqMetric;
   }
 
-  # for each statistic give a point to the winner (BIGGEST number)
-  foreach my $statistic qw(N50 genomeLength longestContig){
-    my $largestStat=-1000; # this can be any very negative number that all assemblies will beat
-    $winningSeqIndex=0; # by default, the first assembly wins the vote
-    for($i=0;$i<@$seqs;$i++){
-      my $stat=&$statistic($$seqs[$i],$settings);
-      if($stat>$largestStat){
-        $winningSeqIndex=$i;
-        $largestStat=$stat;
-      }
+  # largest values give a vote
+  my @largestStats=qw(N50 genomeLength longestContig);
+  my @smallestStats=qw(numContigs);
+  foreach my $statistic (@largestStats,@smallestStats){
+    my $key="---";
+    # make a hash of this statistic
+    my %hash;
+    while(my ($assemblyFilename,$stats)=each(%metrics)){
+      $hash{$assemblyFilename}=$$stats{$statistic};
     }
-    logmsg "$seqsFilename[$winningSeqIndex] has the biggest $statistic with $largestStat.";
-    $vote[$winningSeqIndex]++;
-  }
-  # for each statistic give a point to the winner (LOWEST number)
-  foreach my $statistic qw(numContigs){
-    my $smallestStat=100000000000000; # this can be any very positive number that all assemblies will beat
-    $winningSeqIndex=0; # by default, the first assembly wins the vote
-    for($i=0;$i<@$seqs;$i++){
-      my $stat=&$statistic($$seqs[$i]);
-      if($stat<$smallestStat){
-        $winningSeqIndex=$i;
-        $smallestStat=$stat;
-      }
-    }
-    logmsg "$seqsFilename[$winningSeqIndex] has the fewest $statistic with $smallestStat.";
-    $vote[$winningSeqIndex]++;
+    $key=maxValueIndex(\%hash) if(in_array($statistic,\@largestStats));
+    $key=minValueIndex(\%hash) if(in_array($statistic,\@smallestStats));
+    $vote{$key}++;
   }
 
-  # Which has the most votes?  The most votes is the best assembly
-  # TODO  In the case of a tie for first place, run this subroutine one more time with the top two winners.
-  # TODO  In the case where the tiebreaker didn't work, introduce another metric
-  my $mostVotes=-1000;
-  $winningSeqIndex=0; # by default, the first assembly wins the vote
-  for(my $i=0;$i<@vote;$i++){
-    if($vote[$i]>$mostVotes){
-      $mostVotes=$vote[$i];
-      $winningSeqIndex=$i;
-    }
-  }
-  logmsg "The best assembly is $seqsFilename[$winningSeqIndex] with $vote[$winningSeqIndex] votes.";
+  my $bestAssemblyFilename=winner(\%vote);
 
-  return $$seqs[$winningSeqIndex];
+  return AKUtils::readMfa($bestAssemblyFilename);
 }
 
-# Find the longest contig of an assembly.
-# param: seqs in Andrey's format
-# return int The contig size, in bp
-sub longestContig($){
-  my($seqs)=@_;
-  my $longest=0;
-  foreach my $seqname (keys %$seqs){
-    my $contigLength=length($$seqs{$seqname});
-    if($contigLength>$longest){
-      $longest=$contigLength;
+# returns the key with the biggest value
+# There's probably a more optimal way to do this but it's not necessary especially since the number of assemblies will in the neighborhood of 1 to 5.  Even 100 assemblies would probably be negligable.
+sub winner{
+  my ($hash)=@_;
+  my $mostVotes=0;
+  my $winningKey="----";
+  while( my($key,$value)=each(%$hash)){
+    if($value>$mostVotes){
+      $mostVotes=$value;
+      $winningKey=$key;
     }
   }
-  return $longest;
+  return $winningKey;
 }
-
-# Find the N50 of an assembly.  The N50 is the size N such that 50% of the genome is contained in contigs of size N or greater.
-# param: fasta filename
-# optional param: $$settings
-# return int The N50 in bp.
-sub N50($;$){
-  my($seqs,$settings)=@_;
-  my($seqname,@seqs,$numSeqs,$N50);
-  # put the seqs into an array. No defline needed in this subroutine, so it can be discarded
-  foreach $seqname (keys %$seqs){
-    push(@seqs,$$seqs{$seqname});
-  }
-  $numSeqs=@seqs;
-  # order the contigs by size
-  # Largest contigs are towards $seqs[0], and smallest contigs are at the last elements
-  @seqs=sort{
-    length($a)<=>length($b);
-  } @seqs;
-  # if the size is not provided, assume the size of the assembly is the genome size
-  my $genomeSize = $$settings{expectedGenomeLength}||genomeLength($seqs);
-  my $halfGenomeSize=$genomeSize/2;
-  my $currentGenomeLength=0;
-  # find the contig that resides at (size/2)
-  for(my $i=0;$i<$numSeqs;$i++){
-    my $seqLength=length($seqs[$i]);
-    $currentGenomeLength+=$seqLength;
-    if($currentGenomeLength>$halfGenomeSize){
-      $N50=$seqLength;
-      last;
+# returns the index of the array with the lowest numerical value
+sub minValueIndex{
+  my($hash)=@_;
+  my $lowestValue=999999999; # some really large number
+  my $lowestKey=-1;
+  while( my($key,$value)=each(%$hash)){
+    if($value<$lowestValue){
+      $lowestValue=$value;
+      $lowestKey=$key;
     }
   }
-  # return the length of the contig
-  return $N50;
+  return $lowestKey;
 }
-
-# Find the length of a genome assembly
-# param: fasta filename
-# return int The size of the genome in bp
-sub genomeLength($){
-  my($seqs)=@_;
-  my ($seqname);
-  my $length=0;
-  foreach $seqname (keys %$seqs){
-    $length+=length($$seqs{$seqname});
+# largest value of an array
+sub maxValueIndex{
+  my($hash)=@_;
+  my $largestValue=-999999999; # some really negative number
+  my $largestKey=-1;
+  while( my($key,$value)=each(%$hash)){
+    if($value>$largestValue){
+      $largestValue=$value;
+      $largestKey=$key;
+    }
   }
-  return $length;
+  return $largestKey;
 }
 
-# Find the number of contigs in an assembly
-# param: fasta filename
-# return int The number of contigs
-sub numContigs($){
-  my($seqs)=@_;
-  my(@seqValue)=values %$seqs;
-  return scalar @seqValue;
+# http://www.go4expert.com/forums/showthread.php?t=8978
+sub in_array {
+     my ($search_for,$arr) = @_;
+     my %items = map {$_ => 1} @$arr; # create a hash out of the array values
+     return (exists($items{$search_for}))?1:0;
 }
 
