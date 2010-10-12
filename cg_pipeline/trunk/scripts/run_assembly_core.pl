@@ -25,6 +25,7 @@ use File::Copy;
 use File::Basename;
 use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
+use Data::Dumper;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
@@ -60,11 +61,13 @@ sub main() {
 		die("Input or reference file $file not found") unless -f $file;
 	}
 
-	my $final_seqs;
-	if (@ref_files) {
-		my $newbler_basename = runNewblerMapping(\@input_files, \@ref_files, $settings);
+  my $fastaqualfiles = sff2fastaqual(\@input_files, $settings);
 
-		my $fastaqualfiles = sff2fastaqual(\@input_files, $settings);
+	my $final_seqs;
+
+	if (@ref_files) {
+    # TODO multithread reference assemblies
+		my $newbler_basename = runNewblerMapping(\@input_files, \@ref_files, $settings);
 
 		my $amos_basename = runAMOSMapping($fastaqualfiles, \@ref_files, $settings);
 
@@ -72,10 +75,17 @@ sub main() {
 
 		$final_seqs = AKUtils::readMfa($combined_filename);
 	} else {
+    
+    # TODO multithread assemblies
 		my $newbler_basename = runNewblerAssembly(\@input_files, $settings);
 
+    my $velvet_basename = runVelvetAssembly($fastaqualfiles,$settings);
+
+    my $combined_filename=combineNewblerVelvetDeNovo($newbler_basename,$velvet_basename,$settings);
+
 		# TODO: reprocess repeat or long singleton reads
-		$final_seqs = AKUtils::readMfa("$newbler_basename/assembly/454AllContigs.fna");
+    # repeating the process might be moot if we use reconciliator -LK
+		$final_seqs = AKUtils::readMfa("$combined_filename");
 	}
 	
 	$$settings{min_out_contig_length} = 500;
@@ -97,7 +107,7 @@ sub main() {
 	return 0;
 }
 
-# creates qual and sequence fasta files for an SFF file
+# creates qual and sequence fasta files for an SFF file (basecalling)
 sub sff2fastaqual($$) {
 	my ($sff_files, $settings) = @_;
 	my @fastaqualfiles;
@@ -149,6 +159,44 @@ sub runNewblerAssembly($$) {
 	return $run_name;
 }
 
+# TODO multithread different hash lengths of Velveth
+# Heuristic: use hash lengths according to the formula in the Velvet manual, keeping in mind that 20x coverage is the goal. No more no less.
+# Use assembly stats to return the best assembly.
+# Ck=C*(L-k+1)/L, k is hash length (odd number, <32bp), L is read length, C is nucleotide coverage, Ck is k-mer coverage (20>Ck>10)
+sub runVelvetAssembly($$){
+  my($fastaqualfiles,$settings)=@_;
+  my $run_name = "$$settings{tempdir}/velvetAssembly";
+  mkdir($run_name) if(!-d $run_name);
+  logmsg "Executing Velvet assembly $run_name";
+  my $command="velveth $run_name 27 "; # higher value: lower num contigs but possibly overassembly
+  foreach my $fqFiles (@$fastaqualfiles){
+    #TODO detect the chemistry of each run and treat them differently (454, Illumina, etc)
+    #see if the reads are mate pairs (454)
+    my $isMatePairs=0;
+    #TODO find out if it's mate pairs somehow from Newbler, since linkers themselves aren't always standard
+    my $numLinkers=`grep -c 'GTTGGAACCGAAAGGGTTTGAATTCAAACCCTTTCGGTTCCAAC\\|TCGTATAACTTCGTATAATGTATGCTATACGAAGTTATTACG' $$fqFiles[0]`;
+    if($numLinkers>1000){ # arbitrary threshold; should be >25% of the reads according to the Newbler manual
+      $isMatePairs=1;
+    }
+    #TODO remove reads with an overall bad quality (about <20)
+    #TODO examine reads to see if the file overall belongs in "long" "short" etc: might just filter based on chemistry
+    my $readLength="long"; # per velvet docs
+    my $ins_length=0;
+    if($isMatePairs){
+      $readLength="longPaired";
+    }
+    $command.="-$readLength $$fqFiles[0] ";
+  }
+  logmsg "$command";
+  system($command); die if $?;
+  #TODO create dummy qual file (phred qual for each base is about 60-65). Or, if Velvet outputs it in the future, add in the qual parameter.
+  $command="velvetg $run_name -cov_cutoff auto -exp_cov auto -read_trkg yes -amos_file yes ";
+  $command.="-ins_length 2500 "; # per the 454 paired end kit protocol
+  logmsg "$command";
+  system($command); die if $?;
+  return $run_name;
+}
+
 sub runAMOSMapping($$$) {
 	my ($input_files, $ref_files, $settings) = @_;
 	my $run_name = "$$settings{tempdir}/amos_mapping";
@@ -171,6 +219,78 @@ sub runAMOSMapping($$$) {
 	return $run_name;
 }
 
+# combine newbler and velvet de novo assemblies
+sub combineNewblerVelvetDeNovo($$$) {
+	my ($newbler_basename, $velvet_basename, $settings) = @_;
+	logmsg "Running Newbler-Velvet combining on $newbler_basename, $velvet_basename";
+
+  # get accessions for the reads that won't be in the final assembly: Outlier Repeat Singleton TooShort
+	my (%outlier_reads, %repeat_reads,%singleton_reads,%tooShort_reads,$command);
+	open(IN, '<', "$newbler_basename/assembly/454ReadStatus.txt") or die("Could not open 454ReadStatus.txt file\n");
+	while (<IN>) {
+		chomp;
+		my ($read_id, $status) = split /\s+/;
+		$outlier_reads{$read_id} = 1 if $status eq 'Outlier'; # problematic reads (chimeras, contamination, etc)
+		$repeat_reads{$read_id} = 1 if $status eq 'Repeat'; # probably from repeat region, thus excluded from assembly
+		$singleton_reads{$read_id} = 1 if $status eq 'Singleton'; # no overlaps found
+		$tooShort_reads{$read_id} = 1 if $status eq 'TooShort'; # shorter than 50bp, or <15bp with paired end reads
+	}
+	close IN;
+
+  # print out the accessions to file
+	open(OUT, '>', "$$settings{tempdir}/newbler_outlier_acc") or die;
+	print OUT "$_\n" for keys %outlier_reads;
+	close OUT;
+	open(OUT, '>', "$$settings{tempdir}/newbler_repeat_acc") or die;
+	print OUT "$_\n" for keys %repeat_reads;
+	close OUT;
+	open(OUT, '>', "$$settings{tempdir}/newbler_singleton_acc") or die;
+	print OUT "$_\n" for keys %singleton_reads;
+	close OUT;
+	open(OUT, '>', "$$settings{tempdir}/newbler_tooShort_acc") or die;
+	print OUT "$_\n" for keys %tooShort_reads;
+	close OUT;
+
+  # create SFFs of the accessions not included in the assembly
+	system("sfffile -i '$$settings{tempdir}/newbler_outlier_acc' -o '$$settings{tempdir}/newbler_outlier.sff' '$newbler_basename'/sff/*.sff");
+	die if $?;
+	my $outlier_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_outlier.sff"], $settings);
+	system("sfffile -i '$$settings{tempdir}/newbler_repeat_acc' -o '$$settings{tempdir}/newbler_repeat.sff' '$newbler_basename'/sff/*.sff");
+	die if $?;
+	my $repeat_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_repeat.sff"], $settings);
+	system("sfffile -i '$$settings{tempdir}/newbler_singleton_acc' -o '$$settings{tempdir}/newbler_singleton.sff' '$newbler_basename'/sff/*.sff");
+	die if $?;
+	my $singleton_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_singleton.sff"], $settings);
+	system("sfffile -i '$$settings{tempdir}/newbler_tooShort_acc' -o '$$settings{tempdir}/newbler_tooShort.sff' '$newbler_basename'/sff/*.sff");
+	die if $?;
+	my $tooShort_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_tooShort.sff"], $settings);
+
+  # which newbler output should we use?
+  my $newblerAssembly="$newbler_basename/assembly/454AllContigs.fna";
+  $newblerAssembly="$newbler_basename/assembly/454Scaffolds.fna" if(-s "$newbler_basename/assembly/454Scaffolds.fna" > 0);
+  my $velvetAssembly="$velvet_basename/contigs.fa";
+  # begin the combining
+	my $newbler_contigs = count_contigs($newblerAssembly); # TODO use run_assembly_metrics.pl instead to streamline
+	my $velvet_contigs = count_contigs($velvetAssembly);
+	my $combined_fasta_file = "$$settings{tempdir}/combined_in.fasta";
+	my $numcontigs=0;
+	if($newbler_contigs < $velvet_contigs){
+		system("cat '$newblerAssembly' '$velvetAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
+		$numcontigs=$newbler_contigs;
+		logmsg("Newbler de novo assembly selected as reference for minimus2");
+	}
+	else{
+		system("cat '$velvetAssembly' '$newblerAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
+		$numcontigs=$velvet_contigs;
+		logmsg("Velvet de novo assembly selected as reference for minimus2");
+	}
+	die if $?;
+	system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
+	system("minimus2 -D REFCOUNT=$numcontigs '$$settings{tempdir}/minimus.combined'");
+
+	return "$$settings{tempdir}/minimus.combined.fasta";
+}
+# combine reference
 sub combineNewblerAMOS($$$) {
 	my ($newbler_basename, $amos_basename, $settings) = @_;
 	logmsg "Running Newbler-AMOS combining on $newbler_basename, $amos_basename";
@@ -221,7 +341,7 @@ sub combineNewblerAMOS($$$) {
 }
 sub count_contigs{
 	my $file=shift;
-	open(FH,"<$file")or die $!;
+	open(FH,"<$file")or die "Could not find $file because $!";
 	my @lines=<FH>;
 	close(FH);
 	my @contigs=grep /^>/,@lines;
