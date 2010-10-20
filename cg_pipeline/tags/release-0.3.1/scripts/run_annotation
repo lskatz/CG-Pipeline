@@ -1,0 +1,139 @@
+#!/usr/bin/env perl
+
+# run_annotation: Perform standard annotation protocol operations
+# Author: Andrey Kislyuk (kislyuk@gatech.edu)
+
+package PipelineRunner;
+my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
+
+my $settings = {
+	appname => 'cgpipeline',
+};
+my $stats;
+
+use strict;
+use FindBin;
+use lib "$FindBin::RealBin/../lib";
+$ENV{PATH} = "$FindBin::RealBin:".$ENV{PATH};
+
+use Getopt::Long;
+use File::Temp ('tempdir');
+use File::Path;
+use File::Spec;
+use File::Copy;
+use File::Basename;
+use List::Util qw(min max sum shuffle);
+use Bio::Seq;
+use Bio::SeqIO;
+use Bio::SeqFeature::Gene::GeneStructure;
+use Bio::SeqFeature::Generic;
+use Bio::Species;
+use Bio::Annotation::SimpleValue;
+use AKUtils;
+
+$0 = fileparse($0);
+local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
+sub logmsg {my $FH = $PipelineRunner::LOG || *STDOUT; print $FH "$0: ".(caller(1))[3].": @_\n";}
+
+exit(main());
+
+sub main() {
+	$settings = AKUtils::loadConfig($settings);
+	die("Usage: $0 input.gb") if @ARGV < 1;
+
+	$$settings{uniprot_db3} = $$settings{annotation_uniprot_db3};
+	$$settings{uniprot_evidence_db3} = $$settings{annotation_uniprot_evidence_db3};
+	$$settings{blast_db} = $$settings{annotation_blast_db};
+
+	my @cmd_options = ('ChangeDir=s', 'keep', 'blast_db=s', 'outdir=s', 'tempdir=s', 'uniprot_db3=s', 'uniprot_evidence_db3=s', 'reporting_email=s');
+	GetOptions($settings, @cmd_options) or die;
+	die("Option blast_db is required") unless $$settings{blast_db}; # TODO: more error checks
+	die("Option uniprot_db3 is required") unless $$settings{uniprot_db3}; # TODO: more error checks
+	die("Option uniprot_evidence_db3 is required") unless $$settings{uniprot_evidence_db3}; # TODO: more error checks
+	die("Option reporting_email is required") unless $$settings{reporting_email}; # TODO: more error checks
+	my $input_gbk = $ARGV[0];
+
+	$$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
+	$$settings{outdir} ||= $input_gbk."_annotation_sql";
+	unless (-d $$settings{outdir}) {
+		mkdir($$settings{outdir}) or die("Unable to create output directory $$settings{outdir}: $!");
+	}
+	
+	logmsg "Temporary directory is $$settings{tempdir}";
+	logmsg "Output directory is $$settings{outdir}";
+
+	my $genes = AKUtils::loadCDSFromGenbankFile($input_gbk);
+
+	my $aa_file = "$$settings{tempdir}/aa.fasta";
+	my $fasta_h = Bio::SeqIO->new(-file => '>'.$aa_file, -format => 'Fasta');
+	# die("Multiple organisms in GenBank input") if keys(%$genes) > 1; -- need better sanity checks
+	foreach my $org (keys %$genes) {
+		foreach my $gene (values %{$$genes{$org}}) {
+			$fasta_h->write_seq(Bio::Seq->new(-seq => $gene->seq->translate()->seq(),
+											  -display_id => ($gene->get_tag_values('locus_tag'))[0]));
+		}
+	}
+
+	# Verify presence of pipeline requirements (SignalP, TMHMM, Uniprot, Uniprot DB3, ...)
+
+
+	# Run SignalP on all proteins
+	system("run_annotation_signalp.pl $aa_file"); die if $?;
+	foreach my $file (glob "$$settings{tempdir}/*.sql") {
+		move($file, $$settings{outdir});
+	}
+
+	# Run TMHMM on all proteins
+	system("run_annotation_tmhmm.pl $aa_file"); die if $?;
+	foreach my $file (glob "$$settings{tempdir}/*.sql") {
+		move($file, $$settings{outdir});
+	}
+
+	# Check all proteins against VFDB
+	system("run_annotation_vfdb.pl $aa_file"); die if $?;
+	foreach my $file (glob "$$settings{tempdir}/*.sql") {
+		move($file, $$settings{outdir});
+	}
+
+	# Run BLAST on all proteins vs. Uniprot
+	my $invoke_string = "run_annotation_blast.pl $aa_file -blast_db=$$settings{blast_db}";
+	$invoke_string .= " -outfile='$$settings{tempdir}/blast.sql'";
+	$invoke_string .= " -keep" if $$settings{keep};
+	$invoke_string .= " -tempdir='$$settings{tempdir}'";
+	system($invoke_string); die if $?;
+	move("$$settings{tempdir}/blast.sql", $$settings{outdir});
+
+	# TODO: auto-build uniprot database (and VFDB database)
+
+	# Fetch Uniprot metadata for BLAST hits
+    $invoke_string = "run_annotation_uniprot2sql.pl '$$settings{outdir}/blast.sql'";
+	$invoke_string .= " -uniprot_db3='$$settings{uniprot_db3}'";
+	$invoke_string .= " -uniprot_evidence_db3='$$settings{uniprot_evidence_db3}'";
+	$invoke_string .= " -uniprot_sql_outfile='$$settings{tempdir}/uniprot.sql'";
+	$invoke_string .= " -uniprot_evidence_sql_outfile='$$settings{tempdir}/uniprot_evidence.sql'";
+	system($invoke_string); die if $?;
+	foreach my $file (glob "$$settings{tempdir}/*.sql") {
+		move($file, $$settings{outdir});
+	}
+
+	# Run InterProScan on all proteins
+	$invoke_string = "run_annotation_interpro.pl $aa_file";
+	system($invoke_string); die if $?;
+
+	foreach my $file (glob "$$settings{tempdir}/*.sql") {
+		move($file, $$settings{outdir});
+	}
+	logmsg "Output is in $$settings{outdir}";
+	# maybe perform the load of all the sql files
+
+	# TODO: export annotations in gbk
+}
+
+#	$invoke_string = "run_annotation_interpro_batch.py $aa_file";
+#	$invoke_string .= " --interpro_domain_sql_outfile='$$settings{tempdir}/interpro_domain.sql'";
+#	$invoke_string .= " --interpro_evidence_sql_outfile='$$settings{tempdir}/interpro_evidence.sql'";
+#	$invoke_string .= " --reporting_email=$$settings{reporting_email}";
+
+#	system("sort '$$settings{tempdir}/interpro_domain.sql' | uniq > '$$settings{tempdir}/interpro_domain_unique.sql'");
+	# Fetch InterPro metadata for InterProScan hits
+#	system("cd '$$settings{tempdir}'; run_annotation_interpro_dbfetch.py -f '$$settings{tempdir}/interpro_domain_unique.sql'"); die if $?;
