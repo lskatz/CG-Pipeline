@@ -1434,11 +1434,11 @@ sub getGlimmer3Predictions($;$) {
 	system("extract -t '$longorfs_infile' '$longorfs_infile.longorfs' > '$$settings{tempdir}/glimmer3.train'");
 	die("Error running extract: $!") if $?;
 	system("build-icm -r '$$settings{tempdir}/glimmer3.icm' < '$$settings{tempdir}/glimmer3.train'");
-	die("Error running build-icm: $!") if $?;
+	warn("Error running build-icm: $!") if $?;
 	logmsg "Running glimmer3 on $glimmer_infile...";
 	system("glimmer3 $glimmer_opts '$glimmer_infile' '$$settings{tempdir}/glimmer3.icm'"
 		. " '$$settings{tempdir}/glimmer3' 2>>'$$settings{tempdir}/glimmer3.log'");
-	die("Error running glimmer3: $!") if $?;
+	warn("Error running glimmer3: $!") if $?;
 
 	return loadGlimmer3Predictions("$$settings{tempdir}/glimmer3.predict", $seqs, \%seqname_working2orig);
 }
@@ -1769,6 +1769,12 @@ sub blastSeqs($$$) {
 
 	my $blast_qs = "blastall -p $mode -d $$settings{blast_db} -m 8 -a $$settings{num_cpus} -i $blast_infile -o $blast_outfile ";
 	$blast_qs .= $$settings{blast_xopts};
+
+	my $blast_plus=fullPathToExec("legacy_blast.pl");
+	if($blast_plus){
+		$blast_plus=dirname($blast_plus);
+		$blast_qs = "legacy_blast.pl $blast_qs --path=$blast_plus";
+	}
 
 	logmsg "Running $blast_qs" unless $$settings{quiet};
 	system($blast_qs);
