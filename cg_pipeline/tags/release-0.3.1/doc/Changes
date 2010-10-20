@@ -1,1 +1,27 @@
 Version 0.3.1 Changes
+------------------------------------------------------------------------
+r113 | jhumphrey6 | 2010-10-20 13:21:57 -0400 (Wed, 20 Oct 2010) | 2 lines
+
+0.3.1
+
+------------------------------------------------------------------------
+r112 | jhumphrey6 | 2010-10-20 13:21:23 -0400 (Wed, 20 Oct 2010) | 1 line
+
+prepping release 0.3.1
+------------------------------------------------------------------------
+r111 | jhumphrey6 | 2010-10-20 13:12:45 -0400 (Wed, 20 Oct 2010) | 1 line
+
+AKUtils.pm: compliant with latest BLAST (BLAST+) and tolerate empty sequence file in Glimmer3 harness
+------------------------------------------------------------------------
+r110 | lskatz | 2010-10-12 20:11:46 -0400 (Tue, 12 Oct 2010) | 1 line
+
+
+------------------------------------------------------------------------
+r109 | jhumphrey6 | 2010-10-12 19:28:28 -0400 (Tue, 12 Oct 2010) | 1 line
+
+rolling back to 102 for unintended changes
+------------------------------------------------------------------------
+r108 | lskatz | 2010-10-12 18:53:48 -0400 (Tue, 12 Oct 2010) | 1 line
+
+Teased apart assembly metrics from run_assembly_chooseBest so that metrics can be pulled out of any assembly (FASTA format).  Also incorporated Velvet.  CG-Pipeline can still only read SFF files right now though.
+------------------------------------------------------------------------
