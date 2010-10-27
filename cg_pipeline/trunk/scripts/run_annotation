@@ -94,6 +94,11 @@ sub main() {
 	foreach my $file (glob "$$settings{tempdir}/*.sql") {
 		move($file, $$settings{outdir});
 	}
+	# Check all proteins against COGs 
+	system("run_annotation_cogs.pl -tempdir=$$settings{tempdir} $aa_file"); die if $?;
+	foreach my $file (glob "$$settings{tempdir}/*.sql") {
+		move($file, $$settings{outdir});
+	}
 
 	# Run BLAST on all proteins vs. Uniprot
 	my $invoke_string = "run_annotation_blast.pl $aa_file -blast_db=$$settings{blast_db}";
