@@ -32,6 +32,7 @@ my $settings = {
 	my %map = (
 		blast => [qw/locus_tag uniprot_id length name rank score bits evalue identity positives/],
 		vfdb_hits => [qw/locus_tag target_id evalue coverage db_name identity/],
+		cogs_hits => [qw/locus_tag target_id evalue coverage db_name identity/],
 		ipr_matches => [qw/locus_tag accession_num product database_name start end evalue status evidence/],
 		signalp_hmm	=> [ qw/locus_tag prediction signal_peptide_probability max_cleavage_site_probability start end/],
 		signalp_nn => [ qw/locus_tag measure_type start end value cutoff is_signal_peptide/],
@@ -45,6 +46,18 @@ my $settings = {
 
 	$settings = AKUtils::loadConfig($settings);
 	GetOptions($settings,('organism=s','prediction=s','inputdir=s','gb=s','gff=s')) or die;
+######################
+# set up cogs mapping
+	my %prot2cogid;
+	open(CFH,"<$$settings{prot2cogid}") or die;
+	my @prot2cogid_map=<CFH>;
+	close (CFH);
+	foreach (@prot2cogid_map){
+		my ($prot,$cogid)=split(/\s+/);
+		$prot2cogid{$prot}=$cogid;
+	}
+	undef @prot2cogid_map;
+######################
 	my $organism="organism";
 	if(defined($$settings{'organism'})){
 		$organism=$$settings{'organism'};
@@ -53,7 +66,7 @@ my $settings = {
 	my $atndir;
 	opendir($atndir,$$settings{'inputdir'}) or die "unable to open directory $$settings{'inputdir'}:$!\n";
 	my @atnfiles=readdir($atndir);
-	foreach $type ((qw/uniprot blast ipr_matches signalp_hmm signalp_nn tmhmm.sql tmhmm_location vfdb_hits/)){
+	foreach $type ((qw/uniprot blast ipr_matches signalp_hmm signalp_nn tmhmm.sql tmhmm_location vfdb_hits cogs_hits/)){
 		my @files=grep(/$type/,@atnfiles);
 		if(@files){push(@sqlfiles,$$settings{'inputdir'} . "/" . $files[0]);}
 	}
@@ -213,6 +226,16 @@ print STDERR "parsing $sqlfile\n";
 					foreach my $each_ftr (@currentfeatures){
 						if ($each_ftr->primary_tag() eq 'CDS'){
 							$each_ftr->add_tag_value('vfdb_id',($newftr->get_tag_values('target_id'))[0]);
+						}
+					}
+				}
+				elsif($newftr->primary_tag eq 'cogs_hits'){
+					my @currentfeatures = $ftr->get_SeqFeatures();
+					foreach my $each_ftr (@currentfeatures){
+						if ($each_ftr->primary_tag() eq 'CDS'){
+							my ($cogs_protein)=$newftr->get_tag_values('target_id');
+							$each_ftr->add_tag_value('cogs_protein',$cogs_protein);
+							$each_ftr->add_tag_value('cogs_id',$prot2cogid{$cogs_protein});
 						}
 					}
 				}

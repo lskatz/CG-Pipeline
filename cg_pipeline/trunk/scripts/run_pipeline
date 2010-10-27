@@ -21,7 +21,6 @@ use AKUtils qw(logmsg);
 
 use Getopt::Long;
 use File::Temp ('tempdir');
-use File::Path;# qw(make_path remove_tree);
 use File::Path;
 use File::Spec;
 use File::Copy;
@@ -80,7 +79,7 @@ sub main(){
       #print __LINE__."\n";
     }
     case (/^build$|^create$/){
-      mkpath(["$project/annotation","$project/log","$project/build/assembly","$project/build/prediction","$project/build/annotation"]);
+      mkpath(["$project/annotation","$project/log","$project/build/assembly","$project/build/prediction","$project/build/annotation","$project/database"]);
       CGLog("$project/log/create.txt","Project created ".date());
       last if($command !~ /^build$/);
     }
@@ -172,9 +171,9 @@ sub main(){
       last if($command !~ /^build$|^annotate$/);
     }
     case (/^build$|^annotate$|^genbank$/){
-      my $logfile="$project/log/annotation.txt";
+      my $logfile="$project/log/genbank.txt";
       CGLog($logfile,"ANNOTIATION GENBANK START on $project ".date());
-			$invoke_string="run_annotation_genbank.pl --organism=$tag_prefix --prediction=$home/$project/prediction.gb --inputdir=$home/$project/annotation --gff=$home/$project/annotation.gff --gb=$home/$project/annotation.gb 2>&1 ";
+			$invoke_string="run_annotation_genbank.pl --organism=$tag_prefix --prediction=$home/$project/prediction.gb --inputdir=$home/$project/annotation --gb=$home/$project/annotation.gb 2>&1 ";
       if($verbose>1){
         $invoke_string.="|tee --append $logfile";
       }
@@ -184,6 +183,18 @@ sub main(){
       CGLog($logfile,"COMMAND\n  $invoke_string",'append');
       system($invoke_string);
       CGLog($logfile,"ANNOTATION GENBANK END on $project ".date(),'append');
+      last if($command !~ /^build$/);
+    }
+    case (/^build$|^annotate$|^genbank$|^makedb$/){
+      my $logfile="$project/log/database.txt";
+      CGLog($logfile,"ANNOTIATION DATABASE START on $project ".date());
+      $invoke_string="cg_pipeline_genbank2gff3.pl $project/annotation.gb > $project/database/$project.gff 2>$logfile";
+      CGLog($logfile,"COMMAND\n  $invoke_string",'append');
+      system($invoke_string);
+      $invoke_string="cg_pipeline_init_database.pl $project $project/database/$project.gff $project/database  2>>$logfile";
+      CGLog($logfile,"COMMAND\n $invoke_string",'append');
+      system($invoke_string);
+      CGLog($logfile,"ANNOTATION DATABASE END on $project ".date(),'append');
       last if($command !~ /^build$/);
     }
     else{
