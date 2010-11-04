@@ -146,6 +146,7 @@ sub runNewblerMapping($$$) {
 sub runNewblerAssembly($$) {
 	my ($input_files, $settings) = @_;
 	my $run_name = "$$settings{tempdir}/P__runAssembly";
+  # logmsg "Skipping newbler assembly for testing purposes";  return $run_name; #debugging
 	logmsg "Executing Newbler assembly project $run_name";
 
 	system("newAssembly '$run_name'"); die if $?;
@@ -166,9 +167,12 @@ sub runNewblerAssembly($$) {
 sub runVelvetAssembly($$){
   my($fastaqualfiles,$settings)=@_;
   my $run_name = "$$settings{tempdir}/velvetAssembly";
+  #logmsg "Skipping Velvet assembly"; return $run_name; # debugging
   mkdir($run_name) if(!-d $run_name);
   logmsg "Executing Velvet assembly $run_name";
-  my $command="velveth $run_name 27 "; # higher value: lower num contigs but possibly overassembly
+  my $velvetPrefix=File::Spec->abs2rel("$run_name/auto");
+  my $command="VelvetOptimiser.pl -a -v -p $velvetPrefix ";
+  $command.="-f '";
   foreach my $fqFiles (@$fastaqualfiles){
     #TODO detect the chemistry of each run and treat them differently (454, Illumina, etc)
     #see if the reads are mate pairs (454)
@@ -187,13 +191,17 @@ sub runVelvetAssembly($$){
     }
     $command.="-$readLength $$fqFiles[0] ";
   }
+  $command.="' ";
   logmsg "$command";
   system($command); die if $?;
-  #TODO create dummy qual file (phred qual for each base is about 60-65). Or, if Velvet outputs it in the future, add in the qual parameter.
-  $command="velvetg $run_name -cov_cutoff auto -exp_cov auto -read_trkg yes -amos_file yes ";
-  $command.="-ins_length 2500 "; # per the 454 paired end kit protocol
-  logmsg "$command";
-  system($command); die if $?;
+  #TODO create dummy qual file (phred qual for each base is probably about 60-65). Or, if Velvet outputs it in the future, add in the qual parameter.
+  #TODO incorporate ins_length parameter somehow (2500 for 454)
+
+  # cleanup
+  my @velvetTempDir=glob("$velvetPrefix*"); # find the output directory
+  system("mv $velvetTempDir[0]/* $run_name/"); # move the output directory contents to the actual directory
+  system("rmdir $velvetTempDir[0]");
+
   return $run_name;
 }
 
@@ -265,7 +273,7 @@ sub combineNewblerVelvetDeNovo($$$) {
 	die if $?;
 	my $tooShort_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_tooShort.sff"], $settings);
 
-  # which newbler output should we use?
+  # choose either Newbler contigs or scaffolds if they exist
   my $newblerAssembly="$newbler_basename/assembly/454AllContigs.fna";
   $newblerAssembly="$newbler_basename/assembly/454Scaffolds.fna" if(-s "$newbler_basename/assembly/454Scaffolds.fna" > 0);
   my $velvetAssembly="$velvet_basename/contigs.fa";
@@ -274,19 +282,24 @@ sub combineNewblerVelvetDeNovo($$$) {
 	my $velvet_contigs = count_contigs($velvetAssembly);
 	my $combined_fasta_file = "$$settings{tempdir}/combined_in.fasta";
 	my $numcontigs=0;
-	if($newbler_contigs < $velvet_contigs){
-		system("cat '$newblerAssembly' '$velvetAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
-		$numcontigs=$newbler_contigs;
-		logmsg("Newbler de novo assembly selected as reference for minimus2");
-	}
-	else{
-		system("cat '$velvetAssembly' '$newblerAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
-		$numcontigs=$velvet_contigs;
-		logmsg("Velvet de novo assembly selected as reference for minimus2");
-	}
-	die if $?;
-	system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
-	system("minimus2 -D REFCOUNT=$numcontigs '$$settings{tempdir}/minimus.combined'");
+  if($velvet_contigs>0 && $newbler_contigs>0){ # can't have 0 contigs
+    if($newbler_contigs < $velvet_contigs){
+      system("cat '$newblerAssembly' '$velvetAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
+      $numcontigs=$newbler_contigs;
+      logmsg("Newbler de novo assembly ($newbler_contigs contigs) selected as reference for minimus2");
+    }
+    else{
+      system("cat '$velvetAssembly' '$newblerAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
+      $numcontigs=$velvet_contigs;
+      logmsg("Velvet de novo assembly ($velvet_contigs contigs) selected as reference for minimus2");
+    }
+    die if $?;
+    system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
+    system("minimus2 -D REFCOUNT=$numcontigs '$$settings{tempdir}/minimus.combined'");
+  }
+  else{
+    system("run_assembly_chooseBest.pl $newblerAssembly $velvetAssembly --output $$settings{tempdir}/minimus.combined.fasta");
+  }
 
 	return "$$settings{tempdir}/minimus.combined.fasta";
 }
