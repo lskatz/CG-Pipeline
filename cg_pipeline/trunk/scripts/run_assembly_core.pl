@@ -194,6 +194,8 @@ sub runVelvetAssembly($$){
   $command.="' ";
   logmsg "$command";
   system($command); die if $?;
+  system("amos2ace $run_name/velvet_asm.afg"); die if $?; # make an ace file too
+
   #TODO create dummy qual file (phred qual for each base is probably about 60-65). Or, if Velvet outputs it in the future, add in the qual parameter.
   #TODO incorporate ins_length parameter somehow (2500 for 454)
 
@@ -278,7 +280,7 @@ sub combineNewblerVelvetDeNovo($$$) {
   $newblerAssembly="$newbler_basename/assembly/454Scaffolds.fna" if(-s "$newbler_basename/assembly/454Scaffolds.fna" > 0);
   my $velvetAssembly="$velvet_basename/contigs.fa";
   # begin the combining
-	my $newbler_contigs = count_contigs($newblerAssembly); # TODO use run_assembly_metrics.pl instead to streamline
+	my $newbler_contigs = count_contigs($newblerAssembly); 
 	my $velvet_contigs = count_contigs($velvetAssembly);
 	my $combined_fasta_file = "$$settings{tempdir}/combined_in.fasta";
 	my $numcontigs=0;
@@ -286,19 +288,23 @@ sub combineNewblerVelvetDeNovo($$$) {
     if($newbler_contigs < $velvet_contigs){
       system("cat '$newblerAssembly' '$velvetAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
       $numcontigs=$newbler_contigs;
-      logmsg("Newbler de novo assembly ($newbler_contigs contigs) selected as reference for minimus2");
+      logmsg("Newbler de novo assembly ($newbler_contigs contigs) selected as reference for Minimus2");
     }
     else{
       system("cat '$velvetAssembly' '$newblerAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
       $numcontigs=$velvet_contigs;
-      logmsg("Velvet de novo assembly ($velvet_contigs contigs) selected as reference for minimus2");
+      logmsg("Velvet de novo assembly ($velvet_contigs contigs) selected as reference for Minimus2");
     }
     die if $?;
     system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
     system("minimus2 -D REFCOUNT=$numcontigs '$$settings{tempdir}/minimus.combined'");
   }
+  # if only one has contigs in its assembly, use the assembly metrics to automatically put the right assembly into the output file
   else{
-    system("run_assembly_chooseBest.pl $newblerAssembly $velvetAssembly --output $$settings{tempdir}/minimus.combined.fasta");
+    #system("cat '$newblerAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
+    #$numcontigs=$newbler_contigs;
+    #logmsg("Attempting to use Minimus2 to assemble singletons");
+    system("run_assembly_chooseBest.pl $velvetAssembly $newblerAssembly --output $$settings{tempdir}/minimus.combined.fasta");
   }
 
 	return "$$settings{tempdir}/minimus.combined.fasta";
@@ -352,6 +358,7 @@ sub combineNewblerAMOS($$$) {
 
 	return "$$settings{tempdir}/minimus.combined.fasta";
 }
+# TODO use run_assembly_metrics.pl instead to streamline
 sub count_contigs{
 	my $file=shift;
 	open(FH,"<$file")or die "Could not find $file because $!";
