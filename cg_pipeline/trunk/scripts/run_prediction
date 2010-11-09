@@ -76,6 +76,10 @@ sub main() {
 	my $predictions = getGenePredictions(\@input_files, \@ref_files, $input_seqs, $ref_seqs, $settings);
 	my $gb_filename = generateGenBankFile($input_seqs, $predictions, $settings);
 	logmsg "Output is in $gb_filename";
+  logmsg "Prediction statistics are being generated:";
+  system("run_prediction_metrics.pl $gb_filename");
+
+  return 0;
 }
 
 sub loadInputs($$) {
