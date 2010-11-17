@@ -212,7 +212,7 @@ sub runAMOSMapping($$$) {
 	my @afg_files;
 	foreach my $input_file_pair (@$input_files) {
 		my ($input_fasta_file, $input_qual_file) = @$input_file_pair;
-		#system("toAmos -s '$input_fasta_file' -q '$input_qual_file' -o '$input_fasta_file.afg'"); die if $?;
+		system("toAmos -s '$input_fasta_file' -q '$input_qual_file' -o '$input_fasta_file.afg'"); die if $?;
 		push(@afg_files, "$input_fasta_file.afg");
 	}
   
