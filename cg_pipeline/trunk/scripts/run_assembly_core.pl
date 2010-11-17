@@ -146,7 +146,7 @@ sub runNewblerMapping($$$) {
 sub runNewblerAssembly($$) {
 	my ($input_files, $settings) = @_;
 	my $run_name = "$$settings{tempdir}/P__runAssembly";
-  # logmsg "Skipping newbler assembly for testing purposes";  return $run_name; #debugging
+  #logmsg "Skipping newbler assembly for testing purposes";  return $run_name; #debugging
 	logmsg "Executing Newbler assembly project $run_name";
 
 	system("newAssembly '$run_name'"); die if $?;
@@ -171,7 +171,7 @@ sub runVelvetAssembly($$){
   mkdir($run_name) if(!-d $run_name);
   logmsg "Executing Velvet assembly $run_name";
   my $velvetPrefix=File::Spec->abs2rel("$run_name/auto");
-  my $command="VelvetOptimiser.pl -a -v -p $velvetPrefix ";
+  my $command="VelvetOptimiser.pl -a -v -p $velvetPrefix -k 'n50*Lcon' -c 'n50*Lcon' ";
   $command.="-f '";
   foreach my $fqFiles (@$fastaqualfiles){
     #TODO detect the chemistry of each run and treat them differently (454, Illumina, etc)
@@ -191,8 +191,8 @@ sub runVelvetAssembly($$){
     }
     $command.="-$readLength $$fqFiles[0] ";
   }
-  $command.="' ";
-  logmsg "$command";
+  $command.="' 2>&1 ";
+  logmsg "VELVET COMMAND $command";
   system($command); die if $?;
   system("amos2ace $run_name/velvet_asm.afg"); die if $?; # make an ace file too
 
@@ -201,8 +201,8 @@ sub runVelvetAssembly($$){
 
   # cleanup
   my @velvetTempDir=glob("$velvetPrefix*"); # find the output directory
-  system("mv $velvetTempDir[0]/* $run_name/"); # move the output directory contents to the actual directory
-  system("rmdir $velvetTempDir[0]");
+  logmsg "Velvet directory(ies) found: ".join(", ",@velvetTempDir) ." . Assuming $velvetTempDir[0] is the best Velvet assembly.";
+  system("cp -r $velvetTempDir[0]/* $run_name/"); # copy the output directory contents to the actual directory
 
   return $run_name;
 }
@@ -218,7 +218,8 @@ sub runAMOSMapping($$$) {
 		system("toAmos -s '$input_fasta_file' -q '$input_qual_file' -o '$input_fasta_file.afg'"); die if $?;
 		push(@afg_files, "$input_fasta_file.afg");
 	}
-
+  
+  #TODO remove all AMOS files before starting, so that they can be overwritten. Individual scripts have the force option but I cannot find the option in AMOScmp itself
 	my $invoke_string = "AMOScmp";
 	$invoke_string .= " -D TGT='$_'" for @afg_files;
 	$invoke_string .= " -D REF='$_'" for @$ref_files;
@@ -226,6 +227,17 @@ sub runAMOSMapping($$$) {
 	logmsg "Running $invoke_string";
 	system($invoke_string); die if $?;
 
+  # get AFG and ACE file output too
+  logmsg "Generating CTG, AFG, and ACE files.";
+  $invoke_string="bank-report -b $$settings{tempdir}/amos_mapping.bnk CTG > $$settings{tempdir}/amos_mapping.ctg";
+  logmsg $invoke_string;
+  system($invoke_string);
+  $invoke_string="amos2ace ";
+  $invoke_string.="$_ " for @afg_files;
+  $invoke_string.="$$settings{tempdir}/amos_mapping.ctg";
+  logmsg $invoke_string;
+  system($invoke_string);
+  die "stopped at the end of amos";
 	return $run_name;
 }
 
