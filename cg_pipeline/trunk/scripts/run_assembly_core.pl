@@ -127,6 +127,7 @@ sub sff2fastaqual($$) {
 sub runNewblerMapping($$$) {
 	my ($input_files, $ref_files, $settings) = @_;
 	my $run_name = "$$settings{tempdir}/P__runMapping";
+  #return $run_name; #debugging;
 	logmsg "Executing Newbler mapping project $run_name";
 
 	system("newMapping '$run_name'"); die if $?;
@@ -160,10 +161,6 @@ sub runNewblerAssembly($$) {
 	return $run_name;
 }
 
-# TODO multithread different hash lengths of Velveth
-# Heuristic: use hash lengths according to the formula in the Velvet manual, keeping in mind that 20x coverage is the goal. No more no less.
-# Use assembly stats to return the best assembly.
-# Ck=C*(L-k+1)/L, k is hash length (odd number, <32bp), L is read length, C is nucleotide coverage, Ck is k-mer coverage (20>Ck>10)
 sub runVelvetAssembly($$){
   my($fastaqualfiles,$settings)=@_;
   my $run_name = "$$settings{tempdir}/velvetAssembly";
@@ -215,7 +212,7 @@ sub runAMOSMapping($$$) {
 	my @afg_files;
 	foreach my $input_file_pair (@$input_files) {
 		my ($input_fasta_file, $input_qual_file) = @$input_file_pair;
-		system("toAmos -s '$input_fasta_file' -q '$input_qual_file' -o '$input_fasta_file.afg'"); die if $?;
+		#system("toAmos -s '$input_fasta_file' -q '$input_qual_file' -o '$input_fasta_file.afg'"); die if $?;
 		push(@afg_files, "$input_fasta_file.afg");
 	}
   
@@ -227,17 +224,19 @@ sub runAMOSMapping($$$) {
 	logmsg "Running $invoke_string";
 	system($invoke_string); die if $?;
 
-  # get AFG and ACE file output too
+  # get CTG, AFG, and ACE file output too
   logmsg "Generating CTG, AFG, and ACE files.";
   $invoke_string="bank-report -b $$settings{tempdir}/amos_mapping.bnk CTG > $$settings{tempdir}/amos_mapping.ctg";
   logmsg $invoke_string;
   system($invoke_string);
-  $invoke_string="amos2ace ";
+  $invoke_string="amos2ace -o $$settings{tempdir}/amos_mapping.ace ";
   $invoke_string.="$_ " for @afg_files;
   $invoke_string.="$$settings{tempdir}/amos_mapping.ctg";
   logmsg $invoke_string;
   system($invoke_string);
-  die "stopped at the end of amos";
+  $invoke_string="toAmos -ace $$settings{tempdir}/amos_mapping.ace -o $$settings{tempdir}/amos_mapping.afg ";
+  logmsg $invoke_string;
+  system($invoke_string);
 	return $run_name;
 }
 
