@@ -61,7 +61,7 @@ sub main() {
 		die("Input or reference file $file not found") unless -f $file;
 	}
 
-  my $fastaqualfiles = sff2fastaqual(\@input_files, $settings);
+  my $fastaqualfiles=baseCall(\@input_files,$settings); #array of [0=>fna,1=>qual file] (array of arrays)
 
 	my $final_seqs;
 
@@ -105,6 +105,44 @@ sub main() {
 	}
 
 	return 0;
+}
+
+# determine file types
+sub ext($){ # return the extension of a filename
+  my($file)=@_;
+  my $ext=$file;
+  $ext=~s/^.+\.//;
+  return lc($ext);
+}
+sub is_sff($){
+  my($file)=@_;
+  return 1 if(ext($file) eq 'sff');
+  return 0;
+}
+sub is_fasta($){
+  my($file)=@_;
+  return 1 if(ext($file)=~/^(sff|fna|fasta|ffn)$/i);
+  return 0;
+}
+# wrapper for all base calling for input files
+sub baseCall($$){
+  my($input_files,$settings)=@_;
+  my $fastaqualfiles;
+  foreach my $file (@$input_files){
+    my $seqQualPair; # [0=>seq,1=>qual]
+    if(is_sff($file)){
+      $seqQualPair=sff2fastaqual([$file], $settings);
+      $seqQualPair=$$seqQualPair[0];
+    }
+    elsif(is_fasta($file)){
+      $seqQualPair=[$file,""];
+    }
+    else{
+      die "The format of $file is incompatible";
+    }
+    push(@$fastaqualfiles,$seqQualPair);
+  }
+  return $fastaqualfiles;
 }
 
 # creates qual and sequence fasta files for an SFF file (basecalling)
@@ -191,15 +229,16 @@ sub runVelvetAssembly($$){
   $command.="' 2>&1 ";
   logmsg "VELVET COMMAND $command";
   system($command); die if $?;
-  system("amos2ace $run_name/velvet_asm.afg"); die if $?; # make an ace file too
-
-  #TODO create dummy qual file (phred qual for each base is probably about 60-65). Or, if Velvet outputs it in the future, add in the qual parameter.
-  #TODO incorporate ins_length parameter somehow (2500 for 454)
 
   # cleanup
   my @velvetTempDir=glob("$velvetPrefix*"); # find the output directory
   logmsg "Velvet directory(ies) found: ".join(", ",@velvetTempDir) ." . Assuming $velvetTempDir[0] is the best Velvet assembly.";
   system("cp -r $velvetTempDir[0]/* $run_name/"); # copy the output directory contents to the actual directory
+
+  #TODO create dummy qual file (phred qual for each base is probably about 60-65). Or, if Velvet outputs it in the future, add in the qual parameter.
+  #TODO incorporate ins_length parameter somehow (2500 for 454)
+
+  system("amos2ace $run_name/velvet_asm.afg"); die if $?; # make an ace file too
 
   return $run_name;
 }
@@ -237,6 +276,9 @@ sub runAMOSMapping($$$) {
   $invoke_string="toAmos -ace $$settings{tempdir}/amos_mapping.ace -o $$settings{tempdir}/amos_mapping.afg ";
   logmsg $invoke_string;
   system($invoke_string);
+
+  #TODO sed 's/any trailing whitespace at the end of a line//' amos_mapping.ace
+
 	return $run_name;
 }
 
