@@ -36,7 +36,7 @@ exit(main());
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
 
-	die("Usage: $0 input.sff [, input2.sff, ...] [-R references.mfa] [-C workdir]") if @ARGV < 1;
+	die("Usage: $0 input.sff [, input2.sff, ...] [-R references.mfa] [-C workdir]\n  Input files can also be fasta files.  *.fasta.qual files are considered as the relevant quality files") if @ARGV < 1;
 
 	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'output=s');
 	GetOptions($settings, @cmd_options) or die;
@@ -135,6 +135,8 @@ sub baseCall($$){
       $seqQualPair=$$seqQualPair[0];
     }
     elsif(is_fasta($file)){
+      my $qualfile="";
+      $qualfile="$file.qual" if(-e "$file.qual");
       $seqQualPair=[$file,""];
     }
     else{
