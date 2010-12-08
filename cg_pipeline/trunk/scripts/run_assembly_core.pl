@@ -147,6 +147,20 @@ sub baseCall($$){
   return $fastaqualfiles;
 }
 
+# given a file containing one read accession per line and a pattern for all SFFs, extracts the reads and creates a new SFF
+# the pattern for all SFFs is to be used in glob(), e.g. "sff/*.sff"
+sub sffFastaQual($$$){
+  my($acc,$sff,$settings)=@_;
+  my $basename=$acc;
+  $basename=~s/_acc$//;
+
+  system("sfffile -i '$acc' -o '$basename.sff' $sff");
+  die if $?;
+  my $outlier_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_outlier.sff"], $settings);
+  
+  return $outlier_fastaqual;
+}
+
 # creates qual and sequence fasta files for an SFF file (basecalling)
 sub sff2fastaqual($$) {
 	my ($sff_files, $settings) = @_;
@@ -317,18 +331,19 @@ sub combineNewblerVelvetDeNovo($$$) {
 	close OUT;
 
   # create SFFs of the accessions not included in the assembly
-	system("sfffile -i '$$settings{tempdir}/newbler_outlier_acc' -o '$$settings{tempdir}/newbler_outlier.sff' '$newbler_basename'/sff/*.sff");
-	die if $?;
-	my $outlier_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_outlier.sff"], $settings);
-	system("sfffile -i '$$settings{tempdir}/newbler_repeat_acc' -o '$$settings{tempdir}/newbler_repeat.sff' '$newbler_basename'/sff/*.sff");
-	die if $?;
-	my $repeat_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_repeat.sff"], $settings);
-	system("sfffile -i '$$settings{tempdir}/newbler_singleton_acc' -o '$$settings{tempdir}/newbler_singleton.sff' '$newbler_basename'/sff/*.sff");
-	die if $?;
-	my $singleton_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_singleton.sff"], $settings);
-	system("sfffile -i '$$settings{tempdir}/newbler_tooShort_acc' -o '$$settings{tempdir}/newbler_tooShort.sff' '$newbler_basename'/sff/*.sff");
-	die if $?;
-	my $tooShort_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_tooShort.sff"], $settings);
+  my($outlier_fastaqual,$repeat_fastaqual,$singleton_fastaqual,$tooShort_fastaqual);
+  if(glob("$newbler_basename/sff/*.sff")){
+    $outlier_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_outlier_acc","$newbler_basename'/sff/*.sff",$settings);
+    $repeat_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_repeat_acc","$newbler_basename'/sff/*.sff",$settings);
+    $singleton_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_singleton_acc","$newbler_basename'/sff/*.sff",$settings);
+    $tooShort_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_tooShort_acc","$newbler_basename'/sff/*.sff",$settings);
+  }
+  # TODO if the input is a fasta file, then the SFF will not be present. Extract the relevant reads into fasta/qual files
+  else{
+    logmsg "Warning: SFF was not an input file.  Outlier, repeat, singleton, and tooShort reads will not be shown in their own files.";
+    system("touch $$settings{tempdir}/newbler_repeat.sff.fasta $$settings{tempdir}/newbler_repeat.sff.qual $$settings{tempdir}/newbler_singleton.sff.fasta $$settings{tempdir}/newbler_singleton.sff.qual $$settings{tempdir}/newbler_tooShort.sff.fasta $$settings{tempdir}/newbler_tooShort.sff.qual $$settings{tempdir}/newbler_tooShort.sff.fasta $$settings{tempdir}/newbler_tooShort.sff.qual");
+    die if $?;
+  }
 
   # choose either Newbler contigs or scaffolds if they exist
   my $newblerAssembly="$newbler_basename/assembly/454AllContigs.fna";
