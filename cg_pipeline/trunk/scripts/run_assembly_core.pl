@@ -154,7 +154,9 @@ sub sffFastaQual($$$){
   my $basename=$acc;
   $basename=~s/_acc$//;
 
-  system("sfffile -i '$acc' -o '$basename.sff' $sff");
+  my $command="sfffile -i '$acc' -o '$basename.sff' $sff";
+  logmsg "COMMAND $command";
+  system($command);
   die if $?;
   my $outlier_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_outlier.sff"], $settings);
   
@@ -218,7 +220,7 @@ sub runNewblerAssembly($$) {
 sub runVelvetAssembly($$){
   my($fastaqualfiles,$settings)=@_;
   my $run_name = "$$settings{tempdir}/velvetAssembly";
-  #logmsg "Skipping Velvet assembly"; return $run_name; # debugging
+  #logmsg "Skipping Velvet assembly for testing purposes"; return $run_name; # debugging
   mkdir($run_name) if(!-d $run_name);
   logmsg "Executing Velvet assembly $run_name";
   my $velvetPrefix=File::Spec->abs2rel("$run_name/auto");
@@ -333,10 +335,10 @@ sub combineNewblerVelvetDeNovo($$$) {
   # create SFFs of the accessions not included in the assembly
   my($outlier_fastaqual,$repeat_fastaqual,$singleton_fastaqual,$tooShort_fastaqual);
   if(glob("$newbler_basename/sff/*.sff")){
-    $outlier_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_outlier_acc","$newbler_basename'/sff/*.sff",$settings);
-    $repeat_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_repeat_acc","$newbler_basename'/sff/*.sff",$settings);
-    $singleton_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_singleton_acc","$newbler_basename'/sff/*.sff",$settings);
-    $tooShort_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_tooShort_acc","$newbler_basename'/sff/*.sff",$settings);
+    $outlier_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_outlier_acc","$newbler_basename/sff/*.sff",$settings);
+    $repeat_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_repeat_acc","$newbler_basename/sff/*.sff",$settings);
+    $singleton_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_singleton_acc","$newbler_basename/sff/*.sff",$settings);
+    $tooShort_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_tooShort_acc","$newbler_basename/sff/*.sff",$settings);
   }
   # TODO if the input is a fasta file, then the SFF will not be present. Extract the relevant reads into fasta/qual files
   else{
