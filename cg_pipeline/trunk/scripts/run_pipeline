@@ -60,7 +60,6 @@ sub main(){
   my $tag_prefix=$$settings{tag_prefix}||$project; # prediction tag prefixes
   my $target=$$settings{input}; # SFF file
 
-
   # Avoid creating a project that already exists, unless forcing with -f
   if(-e $$settings{project}){
     if(!$$settings{force}){
@@ -109,7 +108,9 @@ sub main(){
         }
         $sffarg.="$_ ";
       }
-      $invoke_string="time run_assembly $sffarg --tempdir=$home/$project/build/assembly --keep $refarg --output $home/$project/assembly.fasta 2>&1 ";
+      $invoke_string="time run_assembly $sffarg --tempdir=$home/$project/build/assembly --keep $refarg --output $home/$project/assembly.fasta ";
+      $invoke_string.="-d T " if($$settings{deNovo});
+      $invoke_string.=" 2>&1 ";
       if($verbose>1){
         $invoke_string.="|tee --append $logfile";
       }
@@ -167,12 +168,13 @@ sub main(){
       }
       CGLog($logfile,"COMMAND\n  $invoke_string",'append');
       system($invoke_string);
+      #last if($? || $@ || $!);
       CGLog($logfile,"ANNOTATION END on $project ".date(),'append');
       last if($command !~ /^build$|^annotate$/);
     }
     case (/^build$|^annotate$|^genbank$/){
       my $logfile="$project/log/genbank.txt";
-      CGLog($logfile,"ANNOTIATION GENBANK START on $project ".date());
+      CGLog($logfile,"ANNOTATION GENBANK FILE CREATION START on $project ".date());
 			$invoke_string="run_annotation_genbank.pl --organism=$tag_prefix --prediction=$home/$project/prediction.gb --inputdir=$home/$project/annotation --gb=$home/$project/annotation.gb 2>&1 ";
       if($verbose>1){
         $invoke_string.="|tee --append $logfile";
@@ -201,7 +203,26 @@ sub main(){
       die "Command $command not found.\n".usage();
     }
   }
+
+  # give final stats for the project
+  finalStats($project,$settings);
+
   return 0;
+}
+
+sub finalStats{
+  my($project,$settings)=@_;
+  my $logfile="$project/log/stats.txt"; # default log file
+  CGLog($logfile,"FINAL STATS - ".date(),'append');
+  my $invoke_string="run_pipeline_metrics.pl -p $project 2>&1 ";
+  if($verbose>1){
+    $invoke_string.="|tee --append $logfile";
+  }
+  else{
+    $invoke_string.=">>$logfile";
+  }
+  system($invoke_string);
+  return 1;
 }
 
 # returns a string to help redirect output, depending on the verbose setting
