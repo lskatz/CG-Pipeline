@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 package CGPBase;
 use Exporter qw(import);
-@EXPORT=qw(create_db sqlite2fasta makeblastdb);
+@EXPORT=qw(create_db sqlite2fastaprot sqlite2fasta makeblastdb);
 use Bio::SeqIO;
 use Bio::DB::SeqFeature::Store;
 sub create_db($$){
@@ -35,11 +35,32 @@ sub sqlite2fasta{
 	}
 	return $outfile;
 }
-sub makeblastdb($$$){
-#args: organism id, fasta file, output dir
-	my($organism,$file,$outdir)=@_;
-    my $cmd="formatdb -t $organism -i $file -p F -n $outdir/$organism";
+sub sqlite2fastaprot{
+	my ($sqlitedb,$outfile)=@_;
+	my $db = sqlite_connect($sqlitedb);
+	my $fasta=Bio::SeqIO->new(-file=>">$outfile",-format=>'fasta')or die $!;
+	my @features=$db->features(-type=>'CDS');
+	foreach my $ftr(@features){
+		my $seq2fasta=$ftr->seq;
+		my $locus_tag = ($ftr->get_tag_values('locus_tag'))[0];
+		my $defline = sprintf("lcl|%s|%s|%d|%d",$locus_tag,$ftr->primary_tag,$ftr->start,$ftr->end);
+		$seq2fasta->display_name($defline);
+		if($ftr->has_tag('gene')){$seq2fasta->desc(($ftr->get_tag_values('gene'))[0]);}
+		elsif($ftr->has_tag('product')){$seq2fasta->desc(($ftr->get_tag_values('product'))[0]);}
+		elsif($ftr->primary_tag =~ /gene/){}#skip it! avoids printing duplicate gene/CDS pairs.
+		else{$seq2fasta->desc("predicted cds");}
+		my $seq=$seq2fasta->translate->seq;
+		$seq=~s/-/N/g;
+		$seq2fasta->seq($seq);
+		$fasta->write_seq($seq2fasta) or die "$!\n";
+	}
+	return $outfile;
+}
+sub makeblastdb($$$$){
+#args: organism id, fasta file, protein(T/F), output dir
+	my($organism,$file,$prot,$outdir)=@_;
+    my $cmd="formatdb -t $organism -i $file -p $prot -n $outdir/$organism";
     system($cmd);
-    $cmd="formatdb -t $organism -i $file -p T -n $outdir/$organism";
-    system($cmd);
+ #   $cmd="formatdb -t $organism -i $file -p T -n $outdir/$organism";
+ #   system($cmd);
 }

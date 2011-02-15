@@ -4,7 +4,28 @@ This package and its dependencies and databases require approximately 100 GB of 
 
 The following packages (and their dependencies) are required for the operation of cg_pipeline.
 
-BioPerl (>= 1.6)
+Perl modules (many modules may already be installed by default; CPAN is the preferred installer)
+  BerkeleyDB
+  BioPerl (>= 1.6)
+  Cwd
+  Data::Dumper # just for debugging purposes
+  Date::Format
+  Exporter
+  File::Basename
+  File::Copy
+  File::Path
+  File::Spec
+  File::Temp
+  FindBin
+  Getopt::Long
+  IPC::Open2
+  List::Util
+  Storable
+  Switch
+  Sys::Hostname
+  XML::DOM
+  XML::DOM::XPath
+  XML::LibXML::Reader
 NCBI BLAST (ftp://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/)
 AMOS 2.0.8 (http://amos.sourceforge.net/)
 Glimmer3 (http://www.cbcb.umd.edu/software/glimmer/)
