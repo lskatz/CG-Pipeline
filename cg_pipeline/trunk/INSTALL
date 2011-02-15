@@ -4,7 +4,7 @@ This package and its dependencies and databases require approximately 100 GB of 
 
 The following packages (and their dependencies) are required for the operation of cg_pipeline.
 
-Perl modules (many modules may already be installed by default; CPAN is the preferred installer)
+Perl modules (many modules may already be installed by default; CPAN is the preferred installer) 
   BerkeleyDB
   BioPerl (>= 1.6)
   Cwd
