@@ -36,12 +36,12 @@ exit(main());
 
 sub main() {
   $settings = AKUtils::loadConfig($settings);
-  die("  Usage: $0 -p projectName\n") if @ARGV<1;
+  die("  Usage: $0 -p projectName\n") if (@ARGV<1);
 
   my @cmd_options=('output=s','project=s');
   GetOptions($settings, @cmd_options) or die;
 
-  my $project=$$settings{project};
+  my $project=$$settings{project} || die("Project not given (give it with a -p flag)");
   my $project=File::Spec->rel2abs($project);
   die("Project $project not found") unless -d $project;
 
