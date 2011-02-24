@@ -43,15 +43,14 @@ sub main(){
     chomp($home);
   
   # get options
-  my @cmd_options = ('help','deNovo=s','force','project=s','input=s@','tag_prefix=s','Reference=s','command=s','verbose=i');
+  my @cmd_options = ('help','deNovo=s','force','project=s','input=s@','tag_prefix=s','Reference=s','command=s','verbose=i','goto=s');
   GetOptions($settings,@cmd_options) or die;
-  $verbose=(defined($$settings{verbose}))?$$settings{verbose}:1;
+  $verbose =(defined($$settings{verbose}))?$$settings{verbose}:2;
   
   # if the user needs help, print out verbose help
   if($$settings{help}){
     print usage('v');
     exit;
-
   }
   # check out the arguments; see if it looks good or give defaults
   my $command=$ARGV[0]||$$settings{command}||die "Command not given\n".usage();
@@ -159,7 +158,8 @@ sub main(){
         $gbArg.="$_ ";
       }
       $gbArg=$gbArg||"$home/$project/prediction.gb";
-      $invoke_string="run_annotation $gbArg -tempdir=$home/$project/build/annotation --keep --outdir=$home/$project/annotation  2>&1 ";
+      my $gotoArg=($$settings{goto})?"--goto=$$settings{goto}":"";
+      $invoke_string="run_annotation $gbArg -tempdir=$home/$project/build/annotation --keep --outdir=$home/$project/annotation $gotoArg  2>&1 ";
       if($verbose>1){
         $invoke_string.="|tee --append $logfile";
       }
@@ -185,7 +185,7 @@ sub main(){
       CGLog($logfile,"COMMAND\n  $invoke_string",'append');
       system($invoke_string);
       CGLog($logfile,"ANNOTATION GENBANK END on $project ".date(),'append');
-      last if($command !~ /^build$/);
+      #last if($command !~ /^build$/);
     }
     case (/^build$|^annotate$|^genbank$|^makedb$/){
       my $logfile="$project/log/database.txt";
@@ -205,7 +205,7 @@ sub main(){
   }
 
   # give final stats for the project
-  finalStats($project,$settings);
+  finalStats($project,$settings) if($command ne 'create');
 
   return 0;
 }
@@ -262,10 +262,12 @@ sub usage($){
   
   $script=fileparse $0;
 
+  my $basicUsage="$script [build|create|assemble|predict|annotate|genbank|makedb] [-p project] -i target.sff [-r reference.fasta] [-t tag_prefix]";
+
   if($option eq 'v'){
-    $str="\n\tusage: $script [build|create|assemble|predict|annotate] [-p project] -i target.sff [-r reference.fasta] [-t tag_prefix]\n
+    $str="\n\tusage: $basicUsage\n
 Commands:
-  build create assemble predict annotate (see above)
+  build create assemble predict annotate genbank makedb (see above)
 
 Parameters:
   -h This help menu
@@ -273,9 +275,13 @@ Parameters:
   -i Input file
   -r Reference file
   -t Tag prefix
-  -d Force denovo assembly
+  -d Force denovo assembly (in addition to any reference assemblies)
   -f Force create a project when the command create fails
   -v Set the level of verbosity. 0 for no stdout, 1 for some stdout, 2 for all stdout
+    default: 2
+  -g Go to a particular stage in a particular phase. You should usually omit this.
+    current options: [TMHMM|COGS|VFDB|BLAST|INTERPRO]
+
 examples:
 
 $script build -i MyStrain.sff -r reference.fna
@@ -295,10 +301,18 @@ $script predict -p MyStrain [-i assembly-file]
   Runs prediction in project MyStrain against MyStrain/assembly.fasta, or an alternative file if specified. All messages are stored in MyStrain/log/prediction.txt. Output file is MyStrain/prediction.gb
 
 $script annotate -p MyStrain [-i prediction-file]
-  Runs prediction in project MyStrain against MyStrain/prediction.gb, or an alternative file if specified. All messages are stored in MyStrain/log/annotation.log. Output files will appear in MyStrain/annotation/*.sql\n\n";
+  Runs annotation in project MyStrain against MyStrain/prediction.gb, or an alternative file if specified. All messages are stored in MyStrain/log/annotation.txt. Output files will appear in MyStrain/annotation/*.sql.  Subsequent stages in CG-Pipeline will be run: genbank and makedb.
+
+$script genbank -p MyStrain
+  Creates a GenBank file using information stored in MyStrain/annotation/*.sql.  Messages are storred in MyStrain/log/genbank.txt.  Output will appear in MyStrain/annotation.gb. Subsequent stages are run.  For now that only includes makedb.
+
+$script makedb -p MyStrain
+  Creates a GFF file suitable for import into a genome database/browser such as GBrowse. The GFF file is a standard format and as such, it is portable to other applications.  Output will be stored in MyStrain.gff, and messages will be storred in MyStrain/log/database.txt
+
+\n\n";
   }
   else{
-    $str="\tusage: $script [build|create|assemble|predict|annotate] [-p project] -i target.sff [-r reference.fasta] [-t tag_prefix]
+    $str="\tusage: $basicUsage
     type \'$script -h\' for more information.\n";
   }
   return $str;
