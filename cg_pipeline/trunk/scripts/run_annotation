@@ -68,12 +68,20 @@ sub main() {
 	my $aa_file = "$$settings{tempdir}/aa.fasta";
 	my $fasta_h = Bio::SeqIO->new(-file => '>'.$aa_file, -format => 'Fasta');
 	# die("Multiple organisms in GenBank input") if keys(%$genes) > 1; -- need better sanity checks
+  my @genes=(); # array of genes to be sorted
 	foreach my $org (keys %$genes) {
-		foreach my $gene (values %{$$genes{$org}}) {
-			$fasta_h->write_seq(Bio::Seq->new(-seq => $gene->seq->translate()->seq(),
+    push(@genes,values(%{$$genes{$org}}));
+  }
+  my @sortedGenes=sort {
+    my($idA,$idB)=(($a->get_tag_values('locus_tag'))[0],($b->get_tag_values('locus_tag'))[0]);
+    $idA=~s/.+_0*(\d+)$/$1/;
+    $idB=~s/.+_0*(\d+)$/$1/;
+    $idA <=> $idB;
+  } @genes;
+  foreach my $gene (@sortedGenes){
+    $fasta_h->write_seq(Bio::Seq->new(-seq => $gene->seq->translate()->seq(),
 											  -display_id => ($gene->get_tag_values('locus_tag'))[0]));
-		}
-	}
+  }
 
 	# TODO Verify presence of pipeline requirements (SignalP, TMHMM, Uniprot, Uniprot DB3, ...)
   
@@ -86,7 +94,7 @@ sub main() {
       logmsg "Going straight to VFDB";goto VFDB;
     } elsif($goto eq 'COGS'){
       logmsg "Going straight to COGS";goto COGS;
-    } elsif($goto eq 'BLAST'){
+    } elsif($goto=~/BLAST|BLAST_VS_UNIPROT|UNIPROT/){
       logmsg "Going straight to BLAST_VS_UNIPROT";goto BLAST_VS_UNIPROT;
     } elsif($goto eq 'INTERPRO'){
       logmsg "Going straight to INTERPRO";goto INTERPRO;
