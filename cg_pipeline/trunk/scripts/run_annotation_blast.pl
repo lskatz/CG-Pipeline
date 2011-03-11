@@ -58,10 +58,11 @@ while (my $seq = $inseq->next_seq) {
   
   # perform the query
   if($$settings{blast_version} eq 'blast+'){
+    # TODO use BioPerl for this
     my $seqString=">".$seq->id."\n".$seq->seq;
-    my $blastCommand="echo '$seqString'|blastp -query -db $$settings{blast_db} -num_threads $$settings{num_cpus} -out $$settings{tempdir}/$0.$$.blast_out ";
+    my $blastCommand="echo '$seqString'|blastp -db $$settings{blast_db} -num_threads $$settings{num_cpus} -out $$settings{tempdir}/$0.$$.blast_out 2>&1";
     #$blastCommand.="-num_descriptions $$settings{blast_max_hits} -num_alignments $$settings{blast_max_hits} ";
-    system($blastCommand); die if $?;
+    system($blastCommand); die "Problem BLASTing ".$seq->id if $?;
     #system("echo $$settings{tempdir}/$0.$$.blast_out");exit;
     $report=new Bio::SearchIO(-format=>'blast',-file=>"$$settings{tempdir}/$0.$$.blast_out");
   }
