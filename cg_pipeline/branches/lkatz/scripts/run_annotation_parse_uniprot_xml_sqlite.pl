@@ -19,16 +19,28 @@ use Data::Dumper;
 
 # database IO
 use XML::LibXML::Reader;
-use BerkeleyDB;
 use DBI; # SQLite
+my ($dbfile, $evidence_dbfile) = ("cgpipeline.sqlite", "cgpipeline.evidence.sqlite");
 
 # threads
 use threads;
 use threads::shared;
 use Thread::Queue;
 my $numCpus=AKUtils::getNumCPUs();
-#$numCpus=10; #debugging
-my $stick : shared;
+$numCpus=1; #debugging
+
+# this gets you past a weird bug
+# http://ubuntuforums.org/showthread.php?t=175050
+##system("export MALLOC_CHECK_=0");
+#if(!defined($ENV{MALLOC_CHECK_})){
+  #die "Error: ENV variable MALLOC_CHECK_ must be 0\n";
+#}
+#$ENV{MALLOC_CHECK_}=0;
+
+# globals
+my $recordCount=0;
+my $stick : shared; # YOU MAY ONLY WRITE TO THE DB IF YOU HAVE THE STICK!!!
+my $dbh;
 
 $0=fileparse($0);
 exit(main());
@@ -38,20 +50,18 @@ sub main{
   my @infiles = @ARGV;
   for (@infiles) { die("File $_ not found") unless -f $_; }
 
-my (%uniprot_h,%uniprot_evidence_h); #LK
-my $recordCount=0; #LK
+  createDatabase();
 
-  #createDatabase();
-  
   # set up the queue and threads that read from the queue
   my $queue=Thread::Queue->new;
   my @thr;
+  my @dbh;
   for my $t(0 .. $numCpus-1){
-    push(@thr,threads->create(\&xmlReaderThread,$queue));
+    $dbh[$t]=connectToDatabase();
+    push(@thr,threads->create(\&xmlReaderThread,$queue,$dbh[$t]));
   }
 
   # read the XML, send data to the queue for the threads
-  # TODO (maybe) multithread reading the XML
   INFILE:
   foreach my $infile (@infiles) {
     logmsg "Processing XML in file $infile with $numCpus CPUs";
@@ -73,14 +83,14 @@ my $recordCount=0; #LK
 
           # queue update
           if($i % 10000 == 0){
-            $status.=" (jobs still pending: ".$queue->pending.", $numCpus cpus)";
+            $status.=" (jobs still pending: ".$queue->pending.")";
             # wait if the queue is really large
             sleep(1) while($queue->pending>10000);
           }
           logmsg($status);
 
           # debug
-          if($i>10000){ logmsg "DEBUGGING, skipping rest of the file";next INFILE;}
+          if($i>2000){ logmsg "DEBUGGING, skipping rest of the file";next INFILE;}
         }
         # enqueue the data we want to look at; one thread will dequeue the data
         $queue->enqueue($reader->readOuterXml);
@@ -97,29 +107,22 @@ my $recordCount=0; #LK
     logmsg "$numPending more left..";
     sleep 1;
   }
-
-  my($db,$db_evidence)=createDatabase("cgpipeline");
-  logmsg("Creating final database");
-  # terminate the threads
-  $queue->enqueue(undef) for(0..$numCpus-1); # send TERM signals
-  for(my $t=0;$t<$numCpus;$t++){
-    logmsg("Joining tmp database ".$thr[$t]->tid);
-    my ($tmpDb,$tmpDb_evidence)=$thr[$t]->join;
-    logmsg("Merging uniprot db");
-    print Dumper $tmpDb;
-    foreach my $accession(keys %$tmpDb){
-      print ".";
-      $$db{$accession}=$$tmpDb{$accession};
-    }
-    logmsg("Merging evidence db");
-    foreach my $accession(keys(%$tmpDb_evidence)){
-      $$db_evidence{$accession}=$$tmpDb_evidence{$accession};
-    }
-  }
+  # the queue is finished; let the threads finish off what they have
+  # This can be accomplished by grabbing the stick, indicating that no one else has the stick
+  { lock($stick); } 
 
   # close off the database
-  closeDatabase("cgpipeline");
+  # TODO close db
   logmsg "All records are now in the DB!";
+
+  # terminate the threads
+  $queue->enqueue(undef) for(0..$numCpus-1); # send TERM signals
+  while(my $t=shift @thr){
+    if($t->is_joinable){
+      $t->join;
+    }
+    else{push(@thr,$t);}
+  }
 
   return 0;
 }
@@ -127,43 +130,17 @@ my $recordCount=0; #LK
 # This is the subroutine of each thread.
 # It waits for a queued item and then processes it
 sub xmlReaderThread{
-  my($queue)=@_;
-  my $basename="tmp".threads->tid();
-  my($db,$db_evidence)=createDatabase($basename);
-  my($tmpDb,$tmpDb_evidence);
-  my $numTempRecords=0;
+  my($queue,$dbh)=@_;
   while(my $data=$queue->dequeue){
-    my($accession,$uniprot,$evidence)=processUniprotXMLEntry($data);
-    $$tmpDb{$accession}=join("|",@$uniprot);
-    for my $line(@$evidence){
-      $$tmpDb_evidence{accession}=$line; # isn't this overwriting the previous value though???
-    }
-    $numTempRecords++;
-
-    # clear the temp hash if it gets past a certain point
-    # and write them to the db
-    if($numTempRecords>1000){
-      lock($stick);
-      logmsg("Writing to DB $basename");
-      while( my($accession,$value)=each(%$db) ){
-        $$db{$accession}=$$tmpDb{$accession}
-      }
-      while( my($accession,$value)=each(%$tmpDb_evidence) ){
-        $$db_evidence{$accession}=$$tmpDb_evidence{$accession}   
-      }
-      $tmpDb_evidence={};
-      $tmpDb={};
-      $numTempRecords=0;
-    }
+    processUniprotXMLEntry($data,$dbh);
   }
-  # TODO write the tmpDb to the DB once more before returning
 
-  return ($db,$db_evidence);
+  return 1;
 }
 
 # processes an XML entry
 sub processUniprotXMLEntry($) {
-	my ($xml_string) = @_;
+	my ($xml_string,$dbh) = @_;
 	my $parser = XML::LibXML->new();
 	my $entry = $parser->parse_string($xml_string);
 
@@ -223,41 +200,52 @@ sub processUniprotXMLEntry($) {
   # clear out any undef values
   $info{$_}||="" for @infoKeys;
 
-  # escape any pipes
-	s/\|/\\|/g for values(%info);
-
   # prep the records for the database; put the keys in the right order
   my @line; # for %uniprot_h
   my @line_evidence; # for uniprot_evidence_h
   push(@line, $info{$_}) for @infoKeys;
   foreach my $ref (@db_refs) {
-    s/\|/\\|/g for values(%$ref);
-    my @line; 
-    push(@line, $$ref{$_}) for qw(accession dbRefId dbRefType dbRefName);
-    push(@line_evidence,join('|',@line));
+    my @line_ev; 
+    push(@line_ev, $$ref{$_}) for qw(accession dbRefId dbRefType dbRefName);
+    push(@line_evidence,\@line_ev);
   }
+  # store the record in the database
+  # but first lock the database to just this thread
+  {
+    lock($stick);
+    #my $dbh=connectToDatabase();
+    $_=$dbh->quote($_) for (@line);
+    my $sql="INSERT INTO uniprot VALUES (".join(",",@line).")";
+    print "$sql\n";
+    $dbh->do($sql) or die("FAILED:\n$sql\n$!");
 
-  return ($info{accession},\@line,\@line_evidence);
+    foreach my $line (@line_evidence){
+      $_=$dbh->quote($_) for (@$line);
+      my $sql="INSERT INTO uniprot_evidence VALUES (".join(",",@$line).")";
+      print "$sql\n";
+      $dbh->do($sql);
+    }
+  }
+  return 1;
 }
 
-# create a BerkeleyDB::Hash database
 sub createDatabase{
-  lock($stick); # one db created at a time
-  my ($basename)=@_;
-  my ($dbfile, $evidence_dbfile) = ("$basename.db3", "$basename.evidence.db3");
-  unlink $dbfile while(-f $dbfile);
-  unlink $evidence_dbfile while(-f $evidence_dbfile);
+  unlink $dbfile; unlink $evidence_dbfile;
+  
+  my $dbh=connectToDatabase();
+  
+  $dbh->do("CREATE TABLE uniprot (accession,name,dataset,proteinName,proteinType,geneType,geneName,dbRefId)");
+  $dbh->do("CREATE TABLE uniprot_evidence (accession,dbRefId,dbRefType,dbRefName)");
 
-  my(%uniprot_h,%uniprot_evidence_h);
-  tie(%uniprot_h, "BerkeleyDB::Hash", -Filename => $dbfile, -Flags => DB_CREATE, -Property => DB_DUP)
-    or die "Cannot open file $dbfile: $! $BerkeleyDB::Error\n";
-  tie(%uniprot_evidence_h, "BerkeleyDB::Hash", -Filename => $evidence_dbfile, -Flags => DB_CREATE, -Property => DB_DUP)
-    or die "Cannot open file $evidence_dbfile: $! $BerkeleyDB::Error\n";
-  return(\%uniprot_h,\%uniprot_evidence_h);
+  return 1;
 }
-sub closeDatabase{
-  lock($stick); # one db closed at a time
-  my($uniprot_h,$uniprot_evidence_h)=@_;
-  untie %$uniprot_h;
-  untie %$uniprot_evidence_h;
+sub connectToDatabase{
+  my $dbh;
+  my $dbOptions={
+    RaiseError=>1,
+    sqlite_unicode=>1,
+  };
+  $dbh=DBI->connect("dbi:SQLite:dbname=$dbfile","","",$dbOptions);
+  return $dbh;
 }
+

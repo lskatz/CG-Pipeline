@@ -2,18 +2,15 @@
 
 # (optional) fsfind database
 
-# prediction stage - BLAST database
-update_swissprot
-if (( $? )); then exit $?; fi
-
 # annotation stage - VFDB
 update_vfdb
-if (( $? )); then exit $?; fi
+if [ $? -gt 0 ]; then exit $?; fi
+
+# annotation stage - VFDB
+update_cogs
+if [ $? -gt 0 ]; then exit $?; fi
 
 # annotation stage - uniprot+sprot
 update_uniprot
-if (( $? )); then exit $?; fi
+if [ $? -gt 0 ]; then exit $?; fi
 
-# annotation stage - rRNA db (greengenes)
-update_greengenes
-if (( $? )); then exit $?; fi
