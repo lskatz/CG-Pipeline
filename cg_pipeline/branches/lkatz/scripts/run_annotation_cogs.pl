@@ -27,7 +27,7 @@ use File::Basename;
 use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
 use Bio::SeqIO;
-use Bio::Tools::Run::StandAloneBlast;     # older versions of BLAST
+use Bio::Tools::Run::StandAloneBlast;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
@@ -37,16 +37,16 @@ exit(main());
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
 
-	my @cmd_options = ('outfile=s',);
+	my @cmd_options = ('outfile=s','tempdir=s');
 	GetOptions($settings, @cmd_options) or die;
 
 	die("Usage: $0 input.mfa") if @ARGV != 1;
-	for (qw(vfdb_blast_db min_vfdb_aa_coverage min_vfdb_aa_identity)) {
+	for (qw(cogs_blast_db min_vfdb_aa_coverage min_vfdb_aa_identity)) {
 		die("Argument $_ must be supplied") unless $$settings{$_};
 	}
 	$$settings{query_mfa} = $ARGV[0];
 	die("File $$settings{query_mfa} does not exist") unless -f $$settings{query_mfa};
-	$$settings{outfile} ||= "$$settings{query_mfa}.vfdb_hits.sql";
+	$$settings{outfile} ||= "$$settings{query_mfa}.cogs_hits.sql";
 
 	$$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
 	logmsg "Temporary directory is $$settings{tempdir}";
@@ -54,31 +54,20 @@ sub main() {
   whichBlast($settings); # which blast? blast+?  Modify the settings.
   $$settings{num_cpus}=AKUtils::getNumCPUs();
 
-	$ENV{BLASTDB} = (fileparse($$settings{vfdb_blast_db}))[1];
-	my $bf = Bio::Tools::Run::StandAloneBlast->new(database => $$settings{vfdb_blast_db},
+	$ENV{BLASTDB} = (fileparse($$settings{cogs_blast_db}))[1];
+	my $bf = Bio::Tools::Run::StandAloneBlast->new(database => $$settings{cogs_blast_db},
 		outfile => "$$settings{tempdir}/$0.$$.blast_out",
 		program => 'blastp',
-		a => $$settings{num_cpus});
-  # TODO use BLASTPLUS module when it gets into bioperl
-  if($$settings{blast_version} eq 'blast+'){
-    #eval "use Bio::Tools::Run::StandAloneBlastPlus;"; # newer versions of BLAST
-    #$bf=Bio::Tools::Run::StandAloneBlastPlus->new(
-    #  -db_name=>$$settings{vfdb_blast_db},
-    #  -outfile=>"$$settings{tempdir}/$0.$$.blast_out",
-    #  -num_threads=>AKUtils::getNumCPUs()
-    #);
-  }
-	logmsg "Running BLAST on $$settings{query_mfa} vs. $$settings{vfdb_blast_db}...";
-  
-	my $report;
+		a => AKUtils::getNumCPUs());
 
+	logmsg "Running BLAST on $$settings{query_mfa} vs. $$settings{cogs_blast_db}...";
   # blast+ query
-  if($$settings{blast_version} eq 'blast+'){  
-    my $blastCommand="blastp -query $$settings{query_mfa} -db $$settings{vfdb_blast_db} -num_threads $$settings{num_cpus} -out $$settings{tempdir}/$0.$$.blast_out";
-    #print "\n$blastCommand\n";
+  my $report;
+  if($$settings{blast_version} eq 'blast+'){
+    my $blastCommand="blastp -query $$settings{query_mfa} -db $$settings{cogs_blast_db} -num_threads $$settings{num_cpus} -out $$settings{tempdir}/$0.$$.blast_out";
     system($blastCommand); die if $?;
     $report=new Bio::SearchIO(-format=>'blast',-file=>"$$settings{tempdir}/$0.$$.blast_out");
-  } 
+  }
   # regular blast query
   else {
     $report=$bf->blastall($$settings{query_mfa});
@@ -105,7 +94,7 @@ sub main() {
 #					and $t_coverage > $$settings{min_vfdb_aa_coverage}
 					and $hsp->percent_identity >= $$settings{min_vfdb_aa_identity} * 100) {
                     $reported_hits{$id2}->{$id1} = {query_id => $id2, target_id => $id1, evalue => $hsp->evalue,
-													query_coverage => sprintf("%.2f", $q_coverage), db_name => $$settings{vfdb_blast_db},
+													query_coverage => sprintf("%.2f", $q_coverage), db_name => $$settings{cogs_blast_db},
 													percent_identity => sprintf("%.2f", $hsp->percent_identity)};
 				}
 			}
@@ -128,7 +117,7 @@ sub main() {
 }
 
 # modify settings to figure out which version of blast we are dealing with
-# TODO if need be, put this into AKUtils 
+# TODO if need be, put this into AKUtils
 # TODO allow for whichBlast to pick up on the other four flavors of blast
 sub whichBlast{
   my($settings)=@_;
@@ -141,3 +130,4 @@ sub whichBlast{
     $$settings{blast_version}="blast+";
   }
 }
+

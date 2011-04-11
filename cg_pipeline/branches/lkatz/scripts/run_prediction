@@ -34,6 +34,7 @@ use Bio::Species;
 use Bio::Annotation::SimpleValue;
 use AKUtils;
 use CGPipeline::TagFactory;
+use Data::Dumper;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
@@ -75,6 +76,10 @@ sub main() {
 	my $predictions = getGenePredictions(\@input_files, \@ref_files, $input_seqs, $ref_seqs, $settings);
 	my $gb_filename = generateGenBankFile($input_seqs, $predictions, $settings);
 	logmsg "Output is in $gb_filename";
+  logmsg "Prediction statistics are being generated:";
+  system("run_prediction_metrics.pl $gb_filename");
+
+  return 0;
 }
 
 sub loadInputs($$) {
@@ -107,12 +112,16 @@ sub getGenePredictions($$$$$) {
 # FIXME: workaround for gibbs sampler bug - turn off RBS motif finding in GeneMark
 $$settings{gm_trainer_xopts} .= " --motif=0";
 
+#logmsg "Skipping to RNA";goto RNA;
+#logmsg "Skipping to BLAST"; goto BLAST;
 	# Obtain ab initio predictions
 	my $genemark_predictions;
 	if ($$settings{prediction_use_genemark}) {
 		$genemark_predictions = AKUtils::getGenemarkPredictions($input_seqs, $settings);
 	}
 	my $glimmer_predictions = AKUtils::getGlimmer3Predictions($input_seqs, $settings);
+
+BLAST:
 	my $blast_predictions = AKUtils::getBLASTGenePredictions($input_seqs, $settings);
 
 	# Combine and index predictions by strand, stop
@@ -203,6 +212,7 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 		close MR;
 	}
 
+RNA:
 	my $trna_predictions = AKUtils::gettRNAscanSEPredictions($input_seqs, $settings);
 	foreach my $seqname (keys %$trna_predictions) {
 		foreach my $pred (@{$$trna_predictions{$seqname}}) {
@@ -210,6 +220,15 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 			$unified_predictions{$seqname}->{$$pred{strand}}->{$$pred{stop}} = $pred;
 		}
 	}
+
+  my $rrna_predictions = getRRnaPredictions($input_files,$settings);
+  foreach my $seqname (keys %$rrna_predictions){
+    foreach my $pred (@{$$rrna_predictions{$seqname}}) {
+      $unified_predictions{$seqname}->{$$pred{strand}}->{$$pred{stop}} = $pred;
+    }
+  }
+
+  #logmsg scalar(keys(%unified_predictions))." predictions made."; #LK
 
 	return \%unified_predictions;
 }
@@ -292,9 +311,11 @@ sub generateGenBankFile($$$) {
 				my $locus_tag = $rrna_tag_factory->nextTag();
 				$pred_gene_feature->add_tag_value('locus_tag', $locus_tag);
 				$pred_feature->add_tag_value('locus_tag', $locus_tag);
-#				$pred_feature->add_tag_value('product', '23S ribosomal RNA');
+				$pred_feature->add_tag_value('evidence', 'predicted');
+				$pred_feature->add_tag_value('note', 'Predictors: '.join(', ', @{$$pred{predictor}}));
+				$pred_feature->add_tag_value('product', $$pred{rrna_type});
 				# TODO: Finish me
-			} else { die "Internal error" }
+			} else { logmsg "Internal error"; die "Internal error: cannot determine feature type" }
 
 			$gbseq->add_SeqFeature($pred_gene_feature);
 			$gbseq->add_SeqFeature($pred_feature);
@@ -303,4 +324,79 @@ sub generateGenBankFile($$$) {
 	}
 	
 	return $$settings{outfile};
+}
+
+
+############
+# rRNA prediction subroutines
+# ##########
+sub getRRnaPredictions($$){
+  my($input_files,$settings)=@_;
+  my($predictions);
+
+  $predictions=rnammer($input_files,$settings);
+  
+  # bring together all rRNA predictions here
+  # TODO reconcile different predictors
+  foreach my $seqname (keys %$predictions) {
+    foreach my $pred (@{$$predictions{$seqname}}) {
+      $$pred{predictor}=[$$pred{source}];
+      #$$pred{predictor} = ['tRNAscanSE'];
+    }
+  }
+  return $predictions;
+}
+
+sub rnammer($$){
+  # usage(): rnammer -S arc/bac/euk (-multi) (-m tsu,lsu,ssu) (-f) (-k) (-gff [gff file]) (-xml [xml file]) (-f [fasta file]) (-h [HMM report]) [sequence]
+  my($input_files,$settings)=@_;
+  my($predictions,$domain);
+  $domain='bac'; # TODO from $settings, gather which it should be: arc/bac/euk
+  $$settings{rnammer_exec} ||= AKUtils::fullPathToExec('rnammer');
+  ## possible solution to not finding the right directory... could be buggy
+  $$settings{rnammer_exec}="$$settings{rnammer_exec}/rnammer" if(-d $$settings{rnammer_exec} && -x "$$settings{rnammer_exec}/rnammer"); 
+  die("RNAmmer executable not found") unless -x $$settings{rnammer_exec};
+
+  foreach my $i (@$input_files){
+    my $command="$$settings{rnammer_exec} -S $domain -multi -m tsu,lsu,ssu -gff $$settings{tempdir}/rnammer.gff -xml $$settings{tempdir}/rnammer.xml -f $$settings{tempdir}/rnammer.ffn < $i";
+    logmsg "Running RNAmmer.\nCOMMAND\n  $command";
+    system($command);
+    die if $?;
+  }
+  logmsg "RNAmmer output files are in $$settings{tempdir}\n";
+  $predictions=loadRnammerPredictions("$$settings{tempdir}/rnammer.gff",$settings);
+  return $predictions;
+}
+
+sub loadRnammerPredictions($$){
+  my($input_file,$settings)=@_;
+  my($gffVersion,%predictions);
+
+  # version 2
+  open(RNAGFF,$input_file) or die("Cannot open RNAmmer output file $input_file because $!\n");
+  while(<RNAGFF>){
+    chomp;
+    # comments
+    if(/^\s*#/){
+      # directives
+      if(/^\s*##/){
+        if(/gff-version(\d+)/){
+          $gffVersion=$1;
+        }
+      }
+      next;
+    }
+    my($rrna_type);
+    my($seqname,$source,$feature,$start,$stop,$score,$strand,$frame,$attribute)=split /\t/;
+    if($attribute=~/(\d+[sS])/){
+      $rrna_type=uc($1);
+    }
+    push(@{$predictions{$seqname}}, {type=>'rRNA',seqname=>$seqname, source=>$source,
+      lo=>min($start,$stop), hi=>max($start,$stop), start=>$start, stop=>$stop,
+      strand=>$strand, score=>$score, frame=>$frame, attribute=>$attribute,
+      rrna_type=>$rrna_type
+    });
+  }
+  close RNAGFF;
+  return \%predictions;
 }

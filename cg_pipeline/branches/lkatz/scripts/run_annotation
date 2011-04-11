@@ -30,6 +30,7 @@ use Bio::SeqFeature::Generic;
 use Bio::Species;
 use Bio::Annotation::SimpleValue;
 use AKUtils;
+use Data::Dumper;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
@@ -39,13 +40,13 @@ exit(main());
 
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
-	die("Usage: $0 input.gb") if @ARGV < 1;
+	die("Usage: $0 input.gb \nOptional switches\n --goto=[TMHMM|COGS|VFDB|BLAST|INTERPRO] : skips steps until this annotation step is reached") if @ARGV < 1;
 
 	$$settings{uniprot_db3} = $$settings{annotation_uniprot_db3};
 	$$settings{uniprot_evidence_db3} = $$settings{annotation_uniprot_evidence_db3};
 	$$settings{blast_db} = $$settings{annotation_blast_db};
 
-	my @cmd_options = ('ChangeDir=s', 'keep', 'blast_db=s', 'outdir=s', 'tempdir=s', 'uniprot_db3=s', 'uniprot_evidence_db3=s', 'reporting_email=s');
+	my @cmd_options = ('ChangeDir=s', 'keep', 'blast_db=s', 'outdir=s', 'tempdir=s', 'uniprot_db3=s', 'uniprot_evidence_db3=s', 'reporting_email=s', 'goto=s');
 	GetOptions($settings, @cmd_options) or die;
 	die("Option blast_db is required") unless $$settings{blast_db}; # TODO: more error checks
 	die("Option uniprot_db3 is required") unless $$settings{uniprot_db3}; # TODO: more error checks
@@ -67,58 +68,98 @@ sub main() {
 	my $aa_file = "$$settings{tempdir}/aa.fasta";
 	my $fasta_h = Bio::SeqIO->new(-file => '>'.$aa_file, -format => 'Fasta');
 	# die("Multiple organisms in GenBank input") if keys(%$genes) > 1; -- need better sanity checks
+  my @genes=(); # array of genes to be sorted
 	foreach my $org (keys %$genes) {
-		foreach my $gene (values %{$$genes{$org}}) {
-			$fasta_h->write_seq(Bio::Seq->new(-seq => $gene->seq->translate()->seq(),
+    push(@genes,values(%{$$genes{$org}}));
+  }
+  my @sortedGenes=sort {
+    my($idA,$idB)=(($a->get_tag_values('locus_tag'))[0],($b->get_tag_values('locus_tag'))[0]);
+    $idA=~s/.+_0*(\d+)$/$1/;
+    $idB=~s/.+_0*(\d+)$/$1/;
+    $idA <=> $idB;
+  } @genes;
+  foreach my $gene (@sortedGenes){
+    $fasta_h->write_seq(Bio::Seq->new(-seq => $gene->seq->translate()->seq(),
 											  -display_id => ($gene->get_tag_values('locus_tag'))[0]));
-		}
-	}
+  }
 
-	# Verify presence of pipeline requirements (SignalP, TMHMM, Uniprot, Uniprot DB3, ...)
-
+	# TODO Verify presence of pipeline requirements (SignalP, TMHMM, Uniprot, Uniprot DB3, ...)
+  
+  # skip to any particular part of annotation
+  if(my $goto=$$settings{goto}){
+    $goto=uc($goto); # case insensitive
+    if($goto eq 'TMHMM'){
+      logmsg "Going straight to TMHMM";goto TMHMM;
+    } elsif($goto eq 'VFDB'){
+      logmsg "Going straight to VFDB";goto VFDB;
+    } elsif($goto eq 'COGS'){
+      logmsg "Going straight to COGS";goto COGS;
+    } elsif($goto=~/BLAST|BLAST_VS_UNIPROT|UNIPROT/){
+      logmsg "Going straight to BLAST_VS_UNIPROT";goto BLAST_VS_UNIPROT;
+    } elsif($goto eq 'INTERPRO'){
+      logmsg "Going straight to INTERPRO";goto INTERPRO;
+    } else{
+      warn "Warning: Argument goto was given as $$settings{goto} but it is not one of the accepted arguments. $0 --help for more info. Not skipping any annotation steps";
+    }
+  }
 
 	# Run SignalP on all proteins
-	system("run_annotation_signalp.pl $aa_file"); die if $?;
+	system("run_annotation_signalp.pl $aa_file"); die "Error with SignalP" if $?;
 	foreach my $file (glob "$$settings{tempdir}/*.sql") {
 		move($file, $$settings{outdir});
 	}
+  logmsg "Output files have been moved to $$settings{outdir}";
 
 	# Run TMHMM on all proteins
-	system("run_annotation_tmhmm.pl $aa_file"); die if $?;
+  TMHMM:
+	system("run_annotation_tmhmm.pl $aa_file"); die "Error with TMHMM" if $?;
 	foreach my $file (glob "$$settings{tempdir}/*.sql") {
 		move($file, $$settings{outdir});
 	}
+  logmsg "Output files have been moved to $$settings{outdir}";
 
 	# Check all proteins against VFDB
-	system("run_annotation_vfdb.pl $aa_file"); die if $?;
+  VFDB:
+	system("run_annotation_vfdb.pl $aa_file"); die "Error with VFDB" if $?;
 	foreach my $file (glob "$$settings{tempdir}/*.sql") {
 		move($file, $$settings{outdir});
 	}
+  logmsg "Output files have been moved to $$settings{outdir}";
+
+	# Check all proteins against COGs 
+  COGS:
+	system("run_annotation_cogs.pl -tempdir=$$settings{tempdir} $aa_file"); die "Error with COGs" if $?;
+	foreach my $file (glob "$$settings{tempdir}/*.sql") {
+		move($file, $$settings{outdir});
+	}
+  logmsg "Output files have been moved to $$settings{outdir}";
 
 	# Run BLAST on all proteins vs. Uniprot
+  BLAST_VS_UNIPROT:
 	my $invoke_string = "run_annotation_blast.pl $aa_file -blast_db=$$settings{blast_db}";
 	$invoke_string .= " -outfile='$$settings{tempdir}/blast.sql'";
 	$invoke_string .= " -keep" if $$settings{keep};
 	$invoke_string .= " -tempdir='$$settings{tempdir}'";
-	system($invoke_string); die if $?;
+	system($invoke_string); die "Error with BLAST vs UniProt" if $?;
 	move("$$settings{tempdir}/blast.sql", $$settings{outdir});
 
 	# TODO: auto-build uniprot database (and VFDB database)
 
 	# Fetch Uniprot metadata for BLAST hits
-    $invoke_string = "run_annotation_uniprot2sql.pl '$$settings{outdir}/blast.sql'";
+  $invoke_string = "run_annotation_uniprot2sql.pl '$$settings{outdir}/blast.sql'";
 	$invoke_string .= " -uniprot_db3='$$settings{uniprot_db3}'";
 	$invoke_string .= " -uniprot_evidence_db3='$$settings{uniprot_evidence_db3}'";
 	$invoke_string .= " -uniprot_sql_outfile='$$settings{tempdir}/uniprot.sql'";
 	$invoke_string .= " -uniprot_evidence_sql_outfile='$$settings{tempdir}/uniprot_evidence.sql'";
-	system($invoke_string); die if $?;
+	system($invoke_string); die "Error with BLAST vs UniProt processing" if $?;
 	foreach my $file (glob "$$settings{tempdir}/*.sql") {
 		move($file, $$settings{outdir});
 	}
 
+  INTERPRO:
 	# Run InterProScan on all proteins
 	$invoke_string = "run_annotation_interpro.pl $aa_file";
-	system($invoke_string); die if $?;
+	system($invoke_string); die "Error with InterProScan" if $?;
 
 	foreach my $file (glob "$$settings{tempdir}/*.sql") {
 		move($file, $$settings{outdir});
@@ -126,7 +167,7 @@ sub main() {
 	logmsg "Output is in $$settings{outdir}";
 	# maybe perform the load of all the sql files
 
-	# TODO: export annotations in gbk
+  return 0;
 }
 
 #	$invoke_string = "run_annotation_interpro_batch.py $aa_file";

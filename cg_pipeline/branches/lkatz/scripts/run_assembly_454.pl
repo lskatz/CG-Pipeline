@@ -46,6 +46,8 @@ sub main() {
 	$$settings{outfile} = $$settings{output};
 	$$settings{outfile} ||= "$0.out.fasta";
 	$$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
+  my($outfile,$outdir)=fileparse($$settings{outfile});
+  system("mkdir -p $outdir");
 	open(FH, '>', $$settings{outfile}) or die("Error writing to output file $$settings{outfile}");
 	close FH;
 	logmsg "Output file is " . $$settings{outfile} . "\n";
@@ -77,28 +79,19 @@ sub main() {
 
 		$final_seqs = AKUtils::readMfa($combined_filename);
 	} else {
-    my($velvet_basename,$combined_filename);
+    my($combined_filename);
 
     # TODO multithread assemblies
 		my $newbler_basename = runNewblerAssembly(\@input_files, $settings);
     my $newbler_assembly="$newbler_basename/assembly/454AllContigs.fna";
+    $newbler_assembly="$newbler_basename/assembly/454Scaffolds.fna" if(-s "$newbler_basename/assembly/454Scaffolds.fna" > 0);
 
-    # Velvet does not seem to be working so well with 454.
-    # However, save the subroutines for when Illumina is implemented
-    # Velvet
-    $$settings{input_type}{velvet}=1;  # TODO put the input types into config
-    if($$settings{input_type}{velvet}){
-      $velvet_basename = runVelvetAssembly($fastaqualfiles,$settings);
-      $combined_filename=combineNewblerVelvetDeNovo($newbler_basename,$velvet_basename,$settings);
-    } else {
-      $combined_filename=$newbler_assembly;
-    }
+    $combined_filename=$newbler_assembly;
 
 		# TODO: reprocess repeat or long singleton reads
     # repeating the process might be moot if we use reconciliator -LK
 		$final_seqs = AKUtils::readMfa("$combined_filename");
 
-    $newbler_assembly="$newbler_basename/assembly/454Scaffolds.fna" if(-s "$newbler_basename/assembly/454Scaffolds.fna" > 0);
     $final_seqs=AKUtils::readMfa($newbler_assembly);
 	}
 
@@ -133,12 +126,8 @@ sub is_sff($){
 }
 sub is_fasta($){
   my($file)=@_;
-  return 1 if(ext($file)=~/^(sff|fna|fasta|ffn)$/i);
+  return 1 if(ext($file)=~/^(sff|fna|fasta|ffn|fa)$/i);
   return 0;
-}
-sub is_fastq($){
-  my($file)=@_;
-  return 1 if(ext($file)=~/^fastq|fq$/i);
 }
 # wrapper for all base calling for input files
 sub baseCall($$){
@@ -150,17 +139,13 @@ sub baseCall($$){
       $seqQualPair=sff2fastaqual([$file], $settings);
       $seqQualPair=$$seqQualPair[0];
     }
-    elsif(is_fastq($file)){
-      $seqQualPair=fastq2fastaqual([$file],$settings);
-      $seqQualPair=$$seqQualPair[0];
-    }
     elsif(is_fasta($file)){
       my $qualfile="";
       $qualfile="$file.qual" if(-e "$file.qual");
       $seqQualPair=[$file,$qualfile];
     }
     else{
-      die "The format of $file is incompatible";
+      die "The format of $file is incompatible. Acceptable formats are SFF and FASTA/QUAL";
     }
     push(@$fastaqualfiles,$seqQualPair);
   }
@@ -171,16 +156,18 @@ sub baseCall($$){
 # the pattern for all SFFs is to be used in glob(), e.g. "sff/*.sff"
 sub sffFastaQual($$$){
   my($acc,$sff,$settings)=@_;
+  my $dir;
+  ($acc,$dir)=fileparse($acc);
   my $basename=$acc;
   $basename=~s/_acc$//;
 
-  my $command="sfffile -i '$acc' -o '$basename.sff' $sff";
+  my $command="sfffile -i '$$settings{tempdir}/$acc' -o '$$settings{tempdir}/$basename.sff' $sff";
   logmsg "COMMAND $command";
   system($command);
   die if $?;
-  my $outlier_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_outlier.sff"], $settings);
+  my $fastaqual = sff2fastaqual(["$$settings{tempdir}/$basename.sff"], $settings);
   
-  return $outlier_fastaqual;
+  return $fastaqual;
 }
 
 # creates qual and sequence fasta files for an SFF file (basecalling)
@@ -191,7 +178,7 @@ sub sff2fastaqual($$) {
 		my ($sff_file, $sff_dir) = fileparse($input_file);
 		my $invoke_string = "sffinfo -seq '$sff_dir/$sff_file' > '$$settings{tempdir}/$sff_file.fasta'";
 		logmsg "Running $invoke_string";
-		system($invoke_string); die if $?;
+		system($invoke_string); die "Failed when running\n  $invoke_string" if $?;
 		$invoke_string = "sffinfo -qual '$sff_dir/$sff_file' > '$$settings{tempdir}/$sff_file.qual'";
 		logmsg "Running $invoke_string";
 		system($invoke_string); die if $?;
@@ -199,28 +186,9 @@ sub sff2fastaqual($$) {
 	}
 	return \@fastaqualfiles;
 }
-# creates qual and sequence fasta files for FASTQ illumina file (basecalling)
-sub fastq2fastaqual($$) {
-	my ($fastq_files, $settings) = @_;
-	my @fastaqualfiles;
-	foreach my $input_file (@$fastq_files) {
-    logmsg "Converting $input_file to fasta/qual files via BioPerl";
-		my ($fastq_file, $fastq_dir) = fileparse($input_file);
-    my $seqin=Bio::SeqIO->new(-file=>"$fastq_dir/$fastq_file",-format=>"fastq-illumina");
-    my $seqout=Bio::SeqIO->new(-file=>">$$settings{tempdir}/$fastq_file.fasta",-format=>"fasta");
-    my $qualout=Bio::SeqIO->new(-file=>">$$settings{tempdir}/$fastq_file.qual",-format=>"qual");
-    while(my $seq=$seqin->next_seq){
-      $seqout->write_seq($seq);
-      $qualout->write_seq($seq);
-    }
-		push(@fastaqualfiles, ["$$settings{tempdir}/$fastq_file.fasta", "$$settings{tempdir}/$fastq_file.qual"]);
-	}
-	return \@fastaqualfiles;
-}
 sub runNewblerMapping($$$) {
 	my ($input_files, $ref_files, $settings) = @_;
 	my $run_name = "$$settings{tempdir}/P__runMapping";
-  #return $run_name; #debugging;
 	logmsg "Executing Newbler mapping project $run_name";
 
 	system("newMapping '$run_name'"); die if $?;
@@ -230,72 +198,23 @@ sub runNewblerMapping($$$) {
 	foreach my $sff_file (@$input_files) {
 		system("addRun '$run_name' '$sff_file'"); die if $?;
 	}
-#sed -i -e 's|\(<overlapMinMatchLength>\)40\(</overlapMinMatchLength>\)|\125\2|' \
-#               -e 's|\(<overlapMinMatchIdentity>\)90\(</overlapMinMatchIdentity>\)|\175\2|' \
-#               $runName/mapping/454MappingProject.xml
 	system("runProject '$run_name'"); die if $?;
+  makeSpecialSffs($run_name,$settings);
 	return $run_name;
 }
 
 sub runNewblerAssembly($$) {
 	my ($input_files, $settings) = @_;
 	my $run_name = "$$settings{tempdir}/P__runAssembly";
-  #logmsg "Skipping newbler assembly for testing purposes";  return $run_name; #debugging
 	logmsg "Executing Newbler assembly project $run_name";
 
 	system("newAssembly '$run_name'"); die if $?;
 	foreach my $sff_file (@$input_files) {
 		system("addRun '$run_name' '$sff_file'"); die if $?;
 	}
-#sed -i -e 's|\(<overlapMinMatchLength>\)40\(</overlapMinMatchLength>\)|\125\2|' \
-#               -e 's|\(<overlapMinMatchIdentity>\)90\(</overlapMinMatchIdentity>\)|\175\2|' \
-#               $runName/mapping/454MappingProject.xml
 	system("runProject '$run_name'"); die if $?;
+  makeSpecialSffs($run_name,$settings);
 	return $run_name;
-}
-
-sub runVelvetAssembly($$){
-  my($fastaqualfiles,$settings)=@_;
-  my $run_name = "$$settings{tempdir}/velvetAssembly";
-  #logmsg "Skipping Velvet assembly for testing purposes"; return $run_name; # debugging
-  mkdir($run_name) if(!-d $run_name);
-  logmsg "Executing Velvet assembly $run_name";
-  my $velvetPrefix=File::Spec->abs2rel("$run_name/auto");
-  my $command="VelvetOptimiser.pl -a -v -p $velvetPrefix -k 'n50*Lcon' -c 'n50*Lcon' ";
-  $command.="-f '";
-  foreach my $fqFiles (@$fastaqualfiles){
-    #TODO detect the chemistry of each run and treat them differently (454, Illumina, etc)
-    #see if the reads are mate pairs (454)
-    my $isMatePairs=0;
-    #TODO find out if it's mate pairs somehow from Newbler, since linkers themselves aren't always standard
-    my $numLinkers=`grep -c 'GTTGGAACCGAAAGGGTTTGAATTCAAACCCTTTCGGTTCCAAC\\|TCGTATAACTTCGTATAATGTATGCTATACGAAGTTATTACG' $$fqFiles[0]`;
-    if($numLinkers>1000){ # arbitrary threshold; should be >25% of the reads according to the Newbler manual
-      $isMatePairs=1;
-    }
-    #TODO remove reads with an overall bad quality (about <20)
-    #TODO examine reads to see if the file overall belongs in "long" "short" etc: might just filter based on chemistry
-    my $readLength="long"; # per velvet docs
-    my $ins_length=0;
-    if($isMatePairs){
-      $readLength="longPaired";
-    }
-    $command.="-$readLength $$fqFiles[0] ";
-  }
-  $command.="' 2>&1 ";
-  logmsg "VELVET COMMAND $command";
-  system($command); die if $?;
-
-  # cleanup
-  my @velvetTempDir=glob("$velvetPrefix*"); # find the output directory
-  logmsg "Velvet directory(ies) found: ".join(", ",@velvetTempDir) ." . Assuming $velvetTempDir[0] is the best Velvet assembly.";
-  system("cp -r $velvetTempDir[0]/* $run_name/"); # copy the output directory contents to the actual directory
-
-  #TODO create dummy qual file (phred qual for each base is probably about 60-65). Or, if Velvet outputs it in the future, add in the qual parameter.
-  #TODO incorporate ins_length parameter somehow (2500 for 454)
-
-  system("amos2ace $run_name/velvet_asm.afg"); die if $?; # make an ace file too
-
-  return $run_name;
 }
 
 sub runAMOSMapping($$$) {
@@ -337,86 +256,44 @@ sub runAMOSMapping($$$) {
 	return $run_name;
 }
 
-# combine newbler and velvet de novo assemblies
-sub combineNewblerVelvetDeNovo($$$) {
-	my ($newbler_basename, $velvet_basename, $settings) = @_;
-	logmsg "Running Newbler-Velvet combining on $newbler_basename, $velvet_basename";
+sub makeSpecialSffs{
+  my($newbler_basename,$settings)=@_;
 
-  # get accessions for the reads that won't be in the final assembly: Outlier Repeat Singleton TooShort
-	my (%outlier_reads, %repeat_reads,%singleton_reads,%tooShort_reads,$command);
-	open(IN, '<', "$newbler_basename/assembly/454ReadStatus.txt") or die("Could not open 454ReadStatus.txt file\n");
-	while (<IN>) {
-		chomp;
-		my ($read_id, $status) = split /\s+/;
-		$outlier_reads{$read_id} = 1 if $status eq 'Outlier'; # problematic reads (chimeras, contamination, etc)
-		$repeat_reads{$read_id} = 1 if $status eq 'Repeat'; # probably from repeat region, thus excluded from assembly
-		$singleton_reads{$read_id} = 1 if $status eq 'Singleton'; # no overlaps found
-		$tooShort_reads{$read_id} = 1 if $status eq 'TooShort'; # shorter than 50bp, or <15bp with paired end reads
-	}
-	close IN;
-
-  # print out the accessions to file
-	open(OUT, '>', "$$settings{tempdir}/newbler_outlier_acc") or die;
-	print OUT "$_\n" for keys %outlier_reads;
-	close OUT;
-	open(OUT, '>', "$$settings{tempdir}/newbler_repeat_acc") or die;
-	print OUT "$_\n" for keys %repeat_reads;
-	close OUT;
-	open(OUT, '>', "$$settings{tempdir}/newbler_singleton_acc") or die;
-	print OUT "$_\n" for keys %singleton_reads;
-	close OUT;
-	open(OUT, '>', "$$settings{tempdir}/newbler_tooShort_acc") or die;
-	print OUT "$_\n" for keys %tooShort_reads;
-	close OUT;
-
-  # create SFFs of the accessions not included in the assembly
-  my($outlier_fastaqual,$repeat_fastaqual,$singleton_fastaqual,$tooShort_fastaqual);
-  if(glob("$newbler_basename/sff/*.sff")){
-    $outlier_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_outlier_acc","$newbler_basename/sff/*.sff",$settings);
-    $repeat_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_repeat_acc","$newbler_basename/sff/*.sff",$settings);
-    $singleton_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_singleton_acc","$newbler_basename/sff/*.sff",$settings);
-    $tooShort_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_tooShort_acc","$newbler_basename/sff/*.sff",$settings);
+  # make a hash of each read with its status
+  my %reads;
+  my $readStatus="$newbler_basename/assembly/454ReadStatus.txt";
+  $readStatus="$newbler_basename/mapping/454ReadStatus.txt" if(!-e $readStatus);
+  open(IN, '<', $readStatus) or die("Could not open $readStatus");
+  while (<IN>) {
+    chomp;
+    my ($read_id, $status) = split /\s+/;
+    $reads{$status}{$read_id}=1;
   }
-  # TODO if the input is a fasta file, then the SFF will not be present. Extract the relevant reads into fasta/qual files
-  else{
+  close IN;
+  
+  # print out the read IDs to files pertaining to their classification
+  my @status=keys(%reads);
+  for my $status (@status){
+    my %specialReads=%{ $reads{$status} };
+    open(OUT,'>',"$$settings{tempdir}/newbler_".$status."_acc") or die;
+    print OUT "$_\n" for keys %specialReads;
+    close OUT;
+  }
+
+  # create the SFF files
+  if(glob("$newbler_basename/sff/*.sff")){
+    for my $status (@status){
+      sffFastaQual("$$settings{tempdir}/newbler_".$status."_acc","$newbler_basename/sff/*.sff",$settings);
+    }
+  } else {
     logmsg "Warning: SFF was not an input file.  Outlier, repeat, singleton, and tooShort reads will not be shown in their own files.";
     system("touch $$settings{tempdir}/newbler_repeat.sff.fasta $$settings{tempdir}/newbler_repeat.sff.qual $$settings{tempdir}/newbler_singleton.sff.fasta $$settings{tempdir}/newbler_singleton.sff.qual $$settings{tempdir}/newbler_tooShort.sff.fasta $$settings{tempdir}/newbler_tooShort.sff.qual $$settings{tempdir}/newbler_tooShort.sff.fasta $$settings{tempdir}/newbler_tooShort.sff.qual");
     die if $?;
   }
 
-  # choose either Newbler contigs or scaffolds if they exist
-  my $newblerAssembly="$newbler_basename/assembly/454AllContigs.fna";
-  $newblerAssembly="$newbler_basename/assembly/454Scaffolds.fna" if(-s "$newbler_basename/assembly/454Scaffolds.fna" > 0);
-  my $velvetAssembly="$velvet_basename/contigs.fa";
-  # begin the combining
-	my $newbler_contigs = count_contigs($newblerAssembly); 
-	my $velvet_contigs = count_contigs($velvetAssembly);
-	my $combined_fasta_file = "$$settings{tempdir}/combined_in.fasta";
-	my $numcontigs=0;
-  if($velvet_contigs>0 && $newbler_contigs>0){ # can't have 0 contigs
-    if($newbler_contigs < $velvet_contigs){
-      system("cat '$newblerAssembly' '$velvetAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
-      $numcontigs=$newbler_contigs;
-      logmsg("Newbler de novo assembly ($newbler_contigs contigs) selected as reference for Minimus2");
-    }
-    else{
-      system("cat '$velvetAssembly' '$newblerAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
-      $numcontigs=$velvet_contigs;
-      logmsg("Velvet de novo assembly ($velvet_contigs contigs) selected as reference for Minimus2");
-    }
-    die if $?;
-    system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
-    system("minimus2 -D REFCOUNT=$numcontigs '$$settings{tempdir}/minimus.combined'");
-  }
-  # if only one has contigs in its assembly, use the assembly metrics to automatically put the right assembly into the output file
-  else{
-    #system("cat '$newblerAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
-    #$numcontigs=$newbler_contigs;
-    system("run_assembly_chooseBest.pl $velvetAssembly $newblerAssembly --output $$settings{tempdir}/minimus.combined.fasta");
-  }
-
-	return "$$settings{tempdir}/minimus.combined.fasta";
+  return 1;
 }
+
 # combine reference
 sub combineNewblerAMOS($$$) {
 	my ($newbler_basename, $amos_basename, $settings) = @_;
