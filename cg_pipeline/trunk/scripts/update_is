@@ -1,0 +1,130 @@
+#!/usr/bin/env perl
+
+# update_is: update IS element database from www-is.biotoul.fr
+# Author: Lee Katz (lskatz@gatech.edu)
+
+package PipelineRunner;
+my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
+
+my $settings = {
+  appname => 'cgpipeline',
+  url=>"http://www-is.biotoul.fr/is/IS_infos/Current_names.html",
+};
+
+use strict;
+use FindBin;
+use lib "$FindBin::RealBin/../lib";
+$ENV{PATH} = "$FindBin::RealBin:".$ENV{PATH};
+use AKUtils qw(logmsg);
+
+use Getopt::Long;
+use File::Temp ('tempdir');
+use File::Path;
+use File::Spec;
+use File::Copy;
+use File::Basename;
+use List::Util qw(min max sum shuffle);
+use CGPipelineUtils;
+use Data::Dumper;
+use Switch 'fallthrough';
+use LWP::Simple;
+
+my $verbose;
+
+$0 = fileparse($0);
+local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
+sub logmsg {my $FH = $FSFind::LOG || *STDOUT; print $FH "$0: ".(caller(1))[3].": @_\n";}
+
+exit(main());
+sub main(){
+  $settings = AKUtils::loadConfig($settings);
+  
+  # get options
+  my @cmd_options = qw(help outfile=s);
+  GetOptions($settings,@cmd_options) or die;
+  die usage() if($$settings{help});
+  my $outfile=$$settings{outfile} or die "Missing outfile parameter:\n".usage();
+  $$settings{order_seqs_by_name}=1;
+ 
+  my $isElementUrlList=isElementUrlList($settings);
+  my ($isFna,$isFaa)=isElementFasta($isElementUrlList,$outfile,$settings);
+  
+  logmsg "Output files are $outfile.fna and $outfile.faa";
+
+  return 1;
+}
+
+sub isElementFasta{
+  my($isElementUrlList,$outfile,$settings)=@_;
+  my(%fna,%faa);
+
+  logmsg "Downloading IS sequences; " .scalar(@$isElementUrlList)." sequences to download";
+  my $isCount=0;
+  for my $url(@$isElementUrlList){
+    my %is=(fna=>"NNN",faa=>"XXX",family=>"unknown",group=>"unknown");
+    my $isPage=get($url);
+    
+    $is{name}=$url;
+    $is{name}=~s/.+name=(.+)/$1/;
+
+    if($isPage=~/IS_SEQ:\s*.+?<tt>(.+?)<\/tt>/){
+      $is{fna}=$1;
+      $is{fna}=~s/<.*?br.*?>//g; # remove html
+    }
+    if($isPage=~/IS_PEP:\s*.+?<tt>(.+?)<\/tt>/){
+      $is{faa}=$1;
+      $is{faa}=~s/<.*?br.*?>//g;
+    }
+    # family, group
+    if($isPage=~/<td>((?:IS|Tn).+?)<\/td>\s*<td>(IS.+?|\-|)<\/td>/){
+      $is{family}=$1;
+      $is{group}=$2;
+      $is{name}="$is{family} name=$is{name} family=$is{family} group=$is{group}";
+    }
+
+    $is{name}="lcl|$is{name}";
+    $fna{$is{name}}=$is{fna};
+    $faa{$is{name}}=$is{faa};
+
+
+    $isCount++;
+    if($isCount % 50 == 0){
+      logmsg "$isCount IS elements downloaded";
+      #logmsg "debugging...";last;
+    }
+  }
+  logmsg "$isCount IS elements downloaded (done downloading).";
+
+  AKUtils::printSeqsToFile(\%fna,"$outfile.fna",$settings);
+  AKUtils::printSeqsToFile(\%faa,"$outfile.faa",$settings);
+
+  # make the blast dbs and move them here
+  my $formatdbOpts={formatdb_protein_db=>0,formatdb_in_place=>1};
+  AKUtils::formatBLASTdb("$outfile.fna",$formatdbOpts);
+  $$formatdbOpts{formatdb_protein_db}=1;
+  AKUtils::formatBLASTdb("$outfile.faa",$formatdbOpts);
+
+  return("$outfile.fna","$outfile.faa");
+}
+
+sub isElementUrlList{
+  my($settings)=@_;
+  my @URL; # URL list for where IS element pages are
+  my $mainPage=get($$settings{url});
+  logmsg "Downloading list of IS elements";
+  while($mainPage=~/<a href="(http:.+?)"/g){
+    my $url=$1;
+    $url=~s/.+(name=.+)/$1/;
+    $url="http://www-is.biotoul.fr/is/scripts/is_spec.php?$url";
+    push(@URL,$url);
+  }
+  return \@URL;
+}
+
+sub usage{
+  "Download the database of IS elements
+  usage: $0
+  -h this help menu
+  -o outfile basename (.fna and .faa will be appended)
+  "
+}
