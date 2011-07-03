@@ -26,7 +26,6 @@ use File::Basename;
 use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
 use Data::Dumper;
-use Switch 'fallthrough';
 use LWP::Simple;
 
 my $verbose;
@@ -51,7 +50,7 @@ sub main(){
   
   logmsg "Output files are $outfile.fna and $outfile.faa";
 
-  return 1;
+  return 0;
 }
 
 sub isElementFasta{
