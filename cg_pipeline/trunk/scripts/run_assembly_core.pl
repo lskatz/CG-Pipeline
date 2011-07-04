@@ -79,9 +79,7 @@ sub main() {
     # TODO multithread assemblies
 		my $newbler_basename = runNewblerAssembly(\@input_files, $settings);
 
-    my $velvet_basename = runVelvetAssembly($fastaqualfiles,$settings);
-
-    my $combined_filename=combineNewblerVelvetDeNovo($newbler_basename,$velvet_basename,$settings);
+    my $combined_filename=combineNewblerDeNovo($newbler_basename,$settings);
 
 		# TODO: reprocess repeat or long singleton reads
     # repeating the process might be moot if we use reconciliator -LK
@@ -217,50 +215,6 @@ sub runNewblerAssembly($$) {
 	return $run_name;
 }
 
-sub runVelvetAssembly($$){
-  my($fastaqualfiles,$settings)=@_;
-  my $run_name = "$$settings{tempdir}/velvetAssembly";
-  #logmsg "Skipping Velvet assembly for testing purposes"; return $run_name; # debugging
-  mkdir($run_name) if(!-d $run_name);
-  logmsg "Executing Velvet assembly $run_name";
-  my $velvetPrefix=File::Spec->abs2rel("$run_name/auto");
-  my $command="VelvetOptimiser.pl -a -v -p $velvetPrefix -k 'n50*Lcon' -c 'n50*Lcon' ";
-  $command.="-f '";
-  foreach my $fqFiles (@$fastaqualfiles){
-    #TODO detect the chemistry of each run and treat them differently (454, Illumina, etc)
-    #see if the reads are mate pairs (454)
-    my $isMatePairs=0;
-    #TODO find out if it's mate pairs somehow from Newbler, since linkers themselves aren't always standard
-    my $numLinkers=`grep -c 'GTTGGAACCGAAAGGGTTTGAATTCAAACCCTTTCGGTTCCAAC\\|TCGTATAACTTCGTATAATGTATGCTATACGAAGTTATTACG' $$fqFiles[0]`;
-    if($numLinkers>1000){ # arbitrary threshold; should be >25% of the reads according to the Newbler manual
-      $isMatePairs=1;
-    }
-    #TODO remove reads with an overall bad quality (about <20)
-    #TODO examine reads to see if the file overall belongs in "long" "short" etc: might just filter based on chemistry
-    my $readLength="long"; # per velvet docs
-    my $ins_length=0;
-    if($isMatePairs){
-      $readLength="longPaired";
-    }
-    $command.="-$readLength $$fqFiles[0] ";
-  }
-  $command.="' 2>&1 ";
-  logmsg "VELVET COMMAND $command";
-  system($command); die if $?;
-
-  # cleanup
-  my @velvetTempDir=glob("$velvetPrefix*"); # find the output directory
-  logmsg "Velvet directory(ies) found: ".join(", ",@velvetTempDir) ." . Assuming $velvetTempDir[0] is the best Velvet assembly.";
-  system("cp -r $velvetTempDir[0]/* $run_name/"); # copy the output directory contents to the actual directory
-
-  #TODO create dummy qual file (phred qual for each base is probably about 60-65). Or, if Velvet outputs it in the future, add in the qual parameter.
-  #TODO incorporate ins_length parameter somehow (2500 for 454)
-
-  system("amos2ace $run_name/velvet_asm.afg"); die if $?; # make an ace file too
-
-  return $run_name;
-}
-
 sub runAMOSMapping($$$) {
 	my ($input_files, $ref_files, $settings) = @_;
 	my $run_name = "$$settings{tempdir}/amos_mapping";
@@ -301,9 +255,9 @@ sub runAMOSMapping($$$) {
 }
 
 # combine newbler and velvet de novo assemblies
-sub combineNewblerVelvetDeNovo($$$) {
-	my ($newbler_basename, $velvet_basename, $settings) = @_;
-	logmsg "Running Newbler-Velvet combining on $newbler_basename, $velvet_basename";
+sub combineNewblerDeNovo($$$) {
+	my ($newbler_basename, $settings) = @_;
+	logmsg "Running Newbler combining on $newbler_basename";
 
   # get accessions for the reads that won't be in the final assembly: Outlier Repeat Singleton TooShort
 	my (%outlier_reads, %repeat_reads,%singleton_reads,%tooShort_reads,$command);
@@ -350,34 +304,14 @@ sub combineNewblerVelvetDeNovo($$$) {
   # choose either Newbler contigs or scaffolds if they exist
   my $newblerAssembly="$newbler_basename/assembly/454AllContigs.fna";
   $newblerAssembly="$newbler_basename/assembly/454Scaffolds.fna" if(-s "$newbler_basename/assembly/454Scaffolds.fna" > 0);
-  my $velvetAssembly="$velvet_basename/contigs.fa";
   # begin the combining
 	my $newbler_contigs = count_contigs($newblerAssembly); 
-	my $velvet_contigs = count_contigs($velvetAssembly);
 	my $combined_fasta_file = "$$settings{tempdir}/combined_in.fasta";
 	my $numcontigs=0;
-  if($velvet_contigs>0 && $newbler_contigs>0){ # can't have 0 contigs
-    if($newbler_contigs < $velvet_contigs){
-      system("cat '$newblerAssembly' '$velvetAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
-      $numcontigs=$newbler_contigs;
-      logmsg("Newbler de novo assembly ($newbler_contigs contigs) selected as reference for Minimus2");
-    }
-    else{
-      system("cat '$velvetAssembly' '$newblerAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
-      $numcontigs=$velvet_contigs;
-      logmsg("Velvet de novo assembly ($velvet_contigs contigs) selected as reference for Minimus2");
-    }
-    die if $?;
-    system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
-    system("minimus2 -D REFCOUNT=$numcontigs '$$settings{tempdir}/minimus.combined'");
-  }
-  # if only one has contigs in its assembly, use the assembly metrics to automatically put the right assembly into the output file
-  else{
-    #system("cat '$newblerAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
-    #$numcontigs=$newbler_contigs;
-    #logmsg("Attempting to use Minimus2 to assemble singletons");
-    system("run_assembly_chooseBest.pl $velvetAssembly $newblerAssembly --output $$settings{tempdir}/minimus.combined.fasta");
-  }
+  system("cat '$newblerAssembly' '$$singleton_fastaqual[0]->[0]' > $combined_fasta_file");
+  die if $?;
+  system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
+  system("minimus2 -D REFCOUNT=$numcontigs '$$settings{tempdir}/minimus.combined'");
 
 	return "$$settings{tempdir}/minimus.combined.fasta";
 }
