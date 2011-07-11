@@ -81,7 +81,7 @@ sub isElementFasta{
       $is{name}="$is{family} name=$is{name} family=$is{family} group=$is{group}";
     }
 
-    $is{name}="lcl|$is{name}";
+    #$is{name}="lcl|$is{name}";
     $fna{$is{name}}=$is{fna};
     $faa{$is{name}}=$is{faa};
 
