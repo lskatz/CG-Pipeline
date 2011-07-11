@@ -18,7 +18,7 @@ use File::Temp ('tempdir');
 use Sys::Hostname;
 use Storable ('dclone'); # for deep copying
 #use Bit::Vector;
-#use Data::Dumper; # useful for printing deep structures, e.g. to print %hash: print Data::Dumper->new([\%hash],[qw(hash)])->Indent(3)->Quotekeys(0)->Dump;
+use Data::Dumper; # useful for printing deep structures, e.g. to print %hash: print Data::Dumper->new([\%hash],[qw(hash)])->Indent(3)->Quotekeys(0)->Dump;
 #use Fatal qw(:void open);
 # Useful modules to look at:
 # FindBin DynaLoader IO::Poll IO::Select IO::Socket Math::* Net::*
@@ -376,7 +376,7 @@ sub fullPathToExec($) {
 	for ("", split(/:/, $ENV{PATH})) {
 		if (-x $_."/".$executable) { $fullpath = File::Spec->rel2abs($_."/".$executable); last; }
 	}
-	warn("Error finding full path to file ($executable)") unless -x $fullpath;
+	warn("Error finding full path to file ($executable)") unless -x $fullpath; 
 	return $fullpath;
 }
 
@@ -1526,11 +1526,13 @@ sub trainGenemarkModel($$) {
 
 	logmsg "Running $$settings{gm_trainer} on $input_file_full...";
 	my $gm_trainer_opts = "--combine --gm $$settings{gm_trainer_xopts}";
-	my $invoke_string = "cd $$settings{tempdir}; $$settings{gm_trainer} $gm_trainer_opts '$input_file_full' >/dev/null 2>&1";
+	my $invoke_string = "cd $$settings{tempdir}; $$settings{gm_trainer} $gm_trainer_opts '$input_file_full' ";
+  $invoke_string.=">/dev/null 2>&1 ";
 	system($invoke_string);
-	die("Error running $$settings{gm_trainer}: $!") if $?;
+	die("Error running $$settings{gm_trainer}: $!\nUsing command $invoke_string") if $?;
 	$$settings{gmhmm_model} = "$$settings{tempdir}/GeneMark_hmm_combined.mod";
 	die("Error running $$settings{gm_trainer}: no model generated") unless -f $$settings{gmhmm_model};
+  #die "here";
 	return $$settings{gmhmm_model};
 }
 
@@ -1695,6 +1697,24 @@ sub printSeqsToFile($$;$) {
 	return $outfile;
 }
 
+# instead of printing to a file, return the string representation of the seqs
+sub seqsToString($;$){ #LK
+	my ($seqs, $settings) = @_;
+	my $str="";
+	my @seqnames = keys %$seqs;
+	@seqnames = sort alnum @seqnames
+		if $$settings{order_seqs_by_name};
+	@seqnames = sort {length($$seqs{$a}) <=> length($$seqs{$b})} @seqnames
+		if $$settings{order_seqs_by_length};
+	foreach my $seqname (@seqnames) {
+		my $seq = $$seqs{$seqname};
+		$seq =~ s/(.{80})/$1\n/g;
+		$seq .= "\n" unless $seq =~ /\n$/;
+		$str.= ">$seqname\n$seq";
+	}
+	return $str;
+}
+
 sub getNumCPUs() {
 	my $num_cpus;
 	open(IN, '<', '/proc/cpuinfo'); while (<IN>) { /processor\s*\:\s*\d+/ or next; $num_cpus++; } close IN;
@@ -1725,6 +1745,7 @@ Create a BLAST database. Return the database location.
 Settings:
 	formatdb_protein_db: set to true if protein sequence, false/undef if nucleotide.
 	formatdb_in_place: create database in the given location, not in temporary space
+  formatdb_noparse: do not use the -o T option. ie do not parse indexes
 =cut
 sub formatBLASTdb($;$) {
 	my ($input_fasta_file, $settings) = @_;
@@ -1732,6 +1753,7 @@ sub formatBLASTdb($;$) {
 	my ($input_file, $input_dir) = fileparse($input_file_full);
 
 	my $formatdb_opts = ($$settings{formatdb_protein_db} ? "-p T" : "-p F");
+  $formatdb_opts=.=" -o T" unless($$settings{formatdb_noparse});
 	$formatdb_opts .= " -t $$settings{formatdb_db_title}" if defined $$settings{formatdb_db_title};
 	$formatdb_opts .= " -n $$settings{formatdb_db_name}" if defined $$settings{formatdb_db_name};
 	my ($invoke_string, $db_loc);
@@ -1758,34 +1780,45 @@ sub blastSeqs($$$) {
 
 	die("Internal error: invalid mode") if $mode !~ /^(blastp|blastn|blastx|psitblastn|tblastn|tblastx)$/;
 	die("No BLAST database name supplied") unless $$settings{blast_db};
+  die "No path was given for BLAST" if(!$$settings{path_to_blast});
+  die "The BLAST executable is not defined" if(!$$settings{blast_version});
 
 	$$settings{tempdir} ||= AKUtils::mktempdir($settings);
-
 	$$settings{num_cpus} ||= getNumCPUs();
-
-	my $blast_infile = "$$settings{tempdir}/blastseqs.in";
-	my $blast_outfile = "$$settings{tempdir}/blastseqs.out";
-	printSeqsToFile($seqs, $blast_infile);
-
-	my $blast_qs = "blastall -p $mode -d $$settings{blast_db} -m 8 -a $$settings{num_cpus} -i $blast_infile -o $blast_outfile ";
-	$blast_qs .= $$settings{blast_xopts};
-
-	my $blast_plus=fullPathToExec("legacy_blast.pl");
-	if($blast_plus){
-		$blast_plus=dirname($blast_plus);
-		$blast_qs = "legacy_blast.pl $blast_qs --path=$blast_plus";
-	}
-
-	logmsg "Running $blast_qs" unless $$settings{quiet};
-	system($blast_qs);
+  
+  my $fastaString=seqsToString($seqs);
+  my $executable=$$settings{path_to_blast};
+  my $blast_qs = "echo '$fastaString'|$executable -p blastp -d $$settings{blast_db} -m 8 -a $$settings{num_cpus} -e $$settings{min_default_db_evalue}";
+  if($$settings{blast_version} eq 'blast+'){
+    $blast_qs="echo '$fastaString'|$executable -db $$settings{blast_db} -outfmt 6 -num_threads $$settings{num_cpus} -evalue $$settings{min_default_db_evalue} ";
+  }
+  my $blast_result=`$blast_qs`;
 	if ($?) {
-		my $er_str = "Error running \"$blast_qs\": $!";
-		$$settings{ignore_blast_errors} ? warn($er_str) : die($er_str);
+		my $er_str = "Error running \"$blast_qs\": $! \n(error code: $?)\n";
+		$$settings{ignore_blast_errors} ? warn("Warning: ".$er_str) : die($er_str);
 	}
-#	open(BLAST_OUT, "$blast_qs |") or die "Unable to run \"$blast_qs\": $!";
-	return loadBLAST8($blast_outfile);
+  return loadBLAST8String($blast_result);
+
 }
 
+# load a BLAST output from a string instead of from a file
+sub loadBLAST8String($) { #LK
+	my ($blast_string) = @_;
+	my @hits;
+  my @blast_line=split(/\n/,$blast_string);
+	for(@blast_line){
+		chomp;
+		my @line = split /\t/;
+		my %hit;
+		for (qw(name1 name2 percent_id al_len mismatch_bp gap_openings start1 end1 start2 end2 Evalue bitscore)) {
+			$hit{$_} = shift @line;
+		}
+		push(@hits, \%hit);
+	}
+  return \@hits;
+}
+
+# load a BLAST output from a file
 sub loadBLAST8($) {
 	my ($blast_outfile) = @_;
 	my @hits;
@@ -1808,21 +1841,37 @@ sub getBLASTGenePredictions($$) {
 	my ($input_seqs, $settings) = @_;
 	my $orfs = AKUtils::findOrfs2($input_seqs, {orftype=>'start2stop', need_seq=>1, need_aa_seq=>1});
 
-	$$settings{min_default_db_coverage} ||= 0.7;
-	$$settings{min_reference_coverage} ||= 0.85;
-	$$settings{ignore_blast_errors} ||= 1;
-	$$settings{min_default_db_evalue} ||= 1e-8;
-	$$settings{min_default_db_identity} ||= 0;
-	my ($total, $good_cov, $rc_best); my %cov_hist;
+  # if using BLAST+, there are different settings
+  logmsg "Finding which version of blast to use. You may get a warning about not being able to find blastall, which is fine if you have installed BLAST+";
+  $$settings{path_to_blast}=AKUtils::fullPathToExec("blastall")||AKUtils::fullPathToExec("blastp")||"";
 
+  $$settings{min_default_db_coverage} ||= 0.7;
+  $$settings{min_reference_coverage} ||= 0.85;
+  $$settings{ignore_blast_errors} ||= 1;
+  $$settings{min_default_db_evalue} ||= 1e-8;
+  $$settings{min_default_db_identity} ||= 0;
 	$$settings{blast_db} ||= $$settings{prediction_blast_db};
-#	$$settings{blast_db} ||= $$settings{default_blast_db};
-	$$settings{blast_xopts} = " -e $$settings{min_default_db_evalue}";
 	$$settings{quiet} = 1;
+  $$settings{blast_version}='before2009';
+  $$settings{blast_xopts} = " -e $$settings{min_default_db_evalue}";
+
+  # overwrite settings for blastall if using "blastp" instead of blastall
+  if($$settings{path_to_blast}=~/blastp/){
+    $$settings{blast_xopts} = " -evalue $$settings{min_default_db_evalue}";
+    $$settings{blast_version}='blast+';
+  }
+  elsif($$settings{path_to_blast}=~/blastall/){
+  }
+  else{
+    die "Could not find the blast executable ($$settings{path_to_blast})";
+  }
+
+	my ($total, $good_cov, $rc_best); my %cov_hist;
 
 	my %blast_preds;
 
 	logmsg "Using database $$settings{blast_db}";
+  logmsg "BLAST executable is $$settings{path_to_blast}";
 	logmsg "Running BLAST gene prediction on ".keys(%$input_seqs)." sequences...";
 	foreach my $seqname (sort keys %$orfs) {
 		foreach my $frame (sort keys %{$$orfs{$seqname}}) {
