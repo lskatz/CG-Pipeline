@@ -1753,7 +1753,7 @@ sub formatBLASTdb($;$) {
 	my ($input_file, $input_dir) = fileparse($input_file_full);
 
 	my $formatdb_opts = ($$settings{formatdb_protein_db} ? "-p T" : "-p F");
-  $formatdb_opts=.=" -o T" unless($$settings{formatdb_noparse});
+  $formatdb_opts.=" -o T" unless($$settings{formatdb_noparse});
 	$formatdb_opts .= " -t $$settings{formatdb_db_title}" if defined $$settings{formatdb_db_title};
 	$formatdb_opts .= " -n $$settings{formatdb_db_name}" if defined $$settings{formatdb_db_name};
 	my ($invoke_string, $db_loc);
