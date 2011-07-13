@@ -8,46 +8,63 @@ use FindBin;
 use lib "$FindBin::RealBin/../lib";
 $ENV{PATH} = "$FindBin::RealBin:".$ENV{PATH};
 use AKUtils qw(logmsg);
+use Getopt::Long;
 
 use XML::LibXML::Reader;
 use BerkeleyDB;
-#use threads;
-#use Thread::Queue;
 
-die("Usage: $0 uniprot_sprot.xml uniprot_trembl.xml") if @ARGV < 1;
-my @infiles = @ARGV;
-for (@infiles) { die("File $_ not found") unless -f $_; }
+my $settings={};
+my (%uniprot_h, %uniprot_evidence_h); # need to be global
 
-my (%uniprot_h, %uniprot_evidence_h);
-my ($dbfile, $evidence_dbfile) = ("cgpipeline.db3", "cgpipeline.evidence.db3");
-unlink $dbfile; unlink $evidence_dbfile;
-tie(%uniprot_h, "BerkeleyDB::Hash", -Filename => $dbfile, -Flags => DB_CREATE, -Property => DB_DUP)
-	or die "Cannot open file $dbfile: $! $BerkeleyDB::Error\n";
-tie(%uniprot_evidence_h, "BerkeleyDB::Hash", -Filename => $evidence_dbfile, -Flags => DB_CREATE, -Property => DB_DUP)
-	or die "Cannot open file $evidence_dbfile: $! $BerkeleyDB::Error\n";
+exit(main());
 
-my $j;
-foreach my $infile (@infiles) {
-	logmsg "Processing XML in file $infile...";
+sub main{
 
-	my $file_size = (stat $infile)[7];
+  my @infiles;
+  for(@ARGV){
+    last if(/^\-/);
+    die("File $_ not found") unless -f $_;
+    push(@infiles,$_);
+  }
+  if(!@infiles){
+    @infiles=glob("*.xml") or die "No filenames supplied and no XML files found.";
+    logmsg "Filenames not supplied.  Defaulting to @infiles";
+  }
+  GetOptions($settings,qw(continue! help!));
+  die(usage()) if $$settings{help};
 
-	my $reader = new XML::LibXML::Reader(location => $infile) or die "cannot read $infile\n";	
+  my ($dbfile, $evidence_dbfile) = ("cgpipeline.db3", "cgpipeline.evidence.db3");
+  unlink $dbfile; unlink $evidence_dbfile;
+  tie(%uniprot_h, "BerkeleyDB::Hash", -Filename => $dbfile, -Flags => DB_CREATE, -Property => DB_DUP)
+    or die "Cannot open file $dbfile: $! $BerkeleyDB::Error\n";
+  tie(%uniprot_evidence_h, "BerkeleyDB::Hash", -Filename => $evidence_dbfile, -Flags => DB_CREATE, -Property => DB_DUP)
+    or die "Cannot open file $evidence_dbfile: $! $BerkeleyDB::Error\n";
 
-	my $i;
-	while ($reader->read) {
-		if ($reader->name eq 'entry' and $reader->nodeType != XML_READER_TYPE_END_ELEMENT) {
-			$i++; $j++; logmsg("[".int(100*$reader->byteConsumed/$file_size)."%] Processed $i records...") if $i % 1000 == 0;
-			processUniprotXMLEntry($reader->readOuterXml);
-			$reader->next; # skip subtree
-		}
-	}
-	logmsg "Processed $i records, done with file $infile";
+  my $j;
+  foreach my $infile (@infiles) {
+    logmsg "Processing XML in file $infile...";
+
+    my $file_size = (stat $infile)[7];
+
+    my $reader = new XML::LibXML::Reader(location => $infile) or die "cannot read $infile\n";	
+
+    my $i;
+    while ($reader->read) {
+      if ($reader->name eq 'entry' and $reader->nodeType != XML_READER_TYPE_END_ELEMENT) {
+        $i++; $j++; logmsg("[".int(100*$reader->byteConsumed/$file_size)."%] Processed $i records...") if $i % 1000 == 0;
+        processUniprotXMLEntry($reader->readOuterXml);
+        $reader->next; # skip subtree
+      }
+    }
+    logmsg "Processed $i records, done with file $infile";
+  }
+  logmsg "Processed $j records, done";
+
+  untie %uniprot_h;
+  untie %uniprot_evidence_h;
+
+  return 0;
 }
-logmsg "Processed $j records, done";
-
-untie %uniprot_h;
-untie %uniprot_evidence_h;
 
 sub processUniprotXMLEntry($) {
 	my ($xml_string) = @_;
@@ -113,5 +130,14 @@ sub processUniprotXMLEntry($) {
 		my @l; push(@l, $$ref{$_}) for qw(accession dbRefId dbRefType dbRefName);
 		$uniprot_evidence_h{$info{accession}} = join('|', @l);
 	}
-#print "Entry:\n"; print "\t$_\t\"$info{$_}\"\n" for keys %info; print "\tRefs:\n\t\t"; foreach my $r (@db_refs) { print "$_=$$r{$_}; " for keys %$r; print "\n\t\t"; } print "\n";
+}
+
+sub usage{
+  "
+  Usage: $0 uniprot_sprot.xml uniprot_trembl.xml
+  -h for help (this text)
+  -c for continue a database
+    Use this to preserve the previous database and add onto it.
+    Otherwise, the database will be deleted
+  ";
 }
