@@ -2,6 +2,8 @@
 
 # Parse uniprot XML file and output DB3 file with concise information that we need.
 # Author: Andrey Kislyuk
+# Author: Lee Katz (lkatz@cdc.gov)
+# 2012-7-12 Added ability to interrupt and continue the indexing 
 
 use strict;
 use FindBin;
@@ -34,7 +36,7 @@ sub main{
   die(usage()) if $$settings{help};
 
   my ($dbfile, $evidence_dbfile) = ("cgpipeline.db3", "cgpipeline.evidence.db3");
-  unlink $dbfile; unlink $evidence_dbfile;
+  unlink ($dbfile, $evidence_dbfile) if(!$$settings{continue});
   tie(%uniprot_h, "BerkeleyDB::Hash", -Filename => $dbfile, -Flags => DB_CREATE, -Property => DB_DUP)
     or die "Cannot open file $dbfile: $! $BerkeleyDB::Error\n";
   tie(%uniprot_evidence_h, "BerkeleyDB::Hash", -Filename => $evidence_dbfile, -Flags => DB_CREATE, -Property => DB_DUP)
@@ -51,10 +53,13 @@ sub main{
     my $i;
     while ($reader->read) {
       if ($reader->name eq 'entry' and $reader->nodeType != XML_READER_TYPE_END_ELEMENT) {
-        $i++; $j++; logmsg("[".int(100*$reader->byteConsumed/$file_size)."%] Processed $i records...") if $i % 1000 == 0;
+        $i++; $j++; 
+        logmsg("[".int(100*$reader->byteConsumed/$file_size)."%] Processed $i records...") if $i % 1000 == 0;
         processUniprotXMLEntry($reader->readOuterXml);
         $reader->next; # skip subtree
       }
+
+      #last if($j>10000); # debug
     }
     logmsg "Processed $i records, done with file $infile";
   }
@@ -73,6 +78,9 @@ sub processUniprotXMLEntry($) {
 
 	my %info;
 	$info{accession} = $entry->getElementsByTagName('accession')->[0]->firstChild->nodeValue;
+
+  # don't remake this entry if it exists
+  return if($uniprot_h{$info{accession}}); 
 
 	$info{dataset} = $entry->getElementsByTagName('entry')->[0]->attributes->getNamedItem('dataset')->nodeValue;
 	$info{name} = $entry->getElementsByTagName('name')->[0]->firstChild->nodeValue;
@@ -134,10 +142,12 @@ sub processUniprotXMLEntry($) {
 
 sub usage{
   "
+  Parses uniprot XML file and outputs DB3 file with concise information
   Usage: $0 uniprot_sprot.xml uniprot_trembl.xml
+  If no xml files are supplied, then ./*.xml will be used
   -h for help (this text)
   -c for continue a database
     Use this to preserve the previous database and add onto it.
-    Otherwise, the database will be deleted
+    Otherwise, the database will be deleted.
   ";
 }
