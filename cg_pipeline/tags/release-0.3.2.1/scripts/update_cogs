@@ -1,0 +1,10 @@
+#!/bin/sh
+
+wget --continue ftp://ftp.ncbi.nih.gov/pub/COG/COG/myva
+wget --continue ftp://ftp.ncbi.nih.gov/pub/COG/COG/whog
+
+echo "Making COGs BLAST database..."
+formatdb -p T -t cogs -n cogs -i myva 
+
+echo "Making Protein to COGs IDs..."
+cg_pipeline_map_cogs.pl whog > prot2cogid.tsv 
