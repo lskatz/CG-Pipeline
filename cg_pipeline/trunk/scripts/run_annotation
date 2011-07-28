@@ -104,7 +104,7 @@ sub main() {
   }
 
   # IS elements
-  system("run_annotation_isElements.pl -i $aa_file -o $aa_file.isElements"); die if$?;
+  system("run_annotation_isElements.pl -i $aa_file -o $aa_file.is_hits.sql"); die if$?;
 
 	# Run SignalP on all proteins
 	system("run_annotation_signalp.pl $aa_file"); die if $?;
