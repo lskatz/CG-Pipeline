@@ -27,40 +27,31 @@ sub new{
   my $class = shift;
   my %params = @_;
   die "new or existing sqlite database file must be defined\n" unless defined $params{'file'};
-  $paramsverbose=0 unless defined $paramsverbose;
   my $object = bless({
     file=>$params{'file'},
-    verbose=>$paramsverbose,
-    volatile=>$paramsvolatile || 0,
-    db=>undef
+    verbose=>$params{'verbose'} || 0,
+    volatile=>$params{'volatile'} || 0,
+    database=>undef
   },$class);
   $object->_connect;
   return $object;
 }
 sub logmsg{
   my $self = shift;
-#if(! $self->verbose ){return;}
+#if(! $self->{verbose} ){return;}
   my $msg = shift;
   printf STDERR "$msg";
 }
 sub db{
   my $self = shift;
-  return $self->{'db'};
-}
-sub verbose{
-  my $self = shift;
-  return $self->verbose;
-}
-sub volatile{
-  my $self = shift;
-  return $self->volatile;
+  return $self->{'database'};
 }
 sub _connect{
   my $self=shift;
   my $is_new = 0;
   my $sqlitedb = $self->{'file'};
   if( ! -e $sqlitedb){$is_new=1;}
-  $self->{'db'} = Bio::DB::SeqFeature::Store->new( -adaptor=>'DBI::SQLite',-dsn=>"$sqlitedb", -create=>$is_new);
+  $self->{'database'} = Bio::DB::SeqFeature::Store->new( -adaptor=>'DBI::SQLite',-dsn=>"$sqlitedb", -create=>$is_new);
 }
 sub sane_id{
   my ($self,$seq_id)=@_;
@@ -74,32 +65,33 @@ sub sane_id{
   
 sub add_seq{
   my ($self,$seq)=@_;
-  if( my $stored_seq = $self->get_seq_by_id($seq->{'seq_id'})){
-    logmsg(sprintf("Warning:%s already exists\n",$seq->{'seq_id'}));
-    return $stored_seq unless $self->volatile;
+  if( $self->seq_exists($seq->{'seq_id'})){
+    $self->logmsg(sprintf("Warning:%s already exists\n",$seq->{'seq_id'}));
+    return 0 unless $self->{volatile};
+    $self->logmsg("Volatile mode!\n");
   }
-  if( ! $self->sane_id($seq->{'seq_id'}){
-    logmsg(sprintf("Failed:%s is unsafe\n",$seq->{'seq_id'}));
+  if( ! $self->sane_id($seq->{'seq_id'})){
+    $self->logmsg(sprintf("Failed:seq_id %s is unsafe\n",$seq->{'seq_id'}));
     return 0;
   }
   return $self->db->insert_sequence($seq->{'seq_id'},$seq->{'seq'},0);
 }
-sub get_seq_by_id{
+sub seq_exists{ # in certain cases it could read a cached list of ids
   my ($self,$seqid)=@_;
-  return $self->db->fetch_sequence(-seq_id=>$seqid,-bioseq=>1);
+  my @ids = $self->db->seq_ids();
+  return scalar grep(/^$seqid$/,@ids);
 }
 sub add_locus{ #belongs in CGPipeline::SQLiteDB::Predict ?
   my ($self,$params)=@_; #feature should be a Bio::SeqFeatureI
   my $seq_id = $params->{seq_id};
   my $name = $params->{name};
-  my $seq=$self->get_seq_by_id($seq_id, -bioseq=>1);
-  if(!$seq){
-    logmsg("Warning:sequence $seq_id does not exist\n");
+  if(!$self->seq_exists($seq_id)){
+    $self->logmsg("Warning:sequence $seq_id does not exist\n");
   }
   my ($feature) = $self->db->features(-name=>$name,-seq_id=>$seq_id);
   if($feature){
-    if($self->volatile){
-      logmsg("Replacing feature $seq_id:$name\n");
+    if($self->{volatile}){
+      $self->logmsg("Replacing feature $seq_id:$name\n");
       $self->db->delete(($feature));
     }
     else{return $feature;}
@@ -153,8 +145,8 @@ sub load_fasta{
   my $count = 0;
   while (my $seq = $fasta->next_seq){
    #$self->db->insert_sequence($seq->primary_id,$seq->seq,0);
-    next unless $self->add_seq(-seq_id=>$seq->primary_id,-seq=>$seq->seq);
-    if($count%1000 == 0){$self->logmsg("$count sequences loaded\r");}
+    next unless $self->add_seq({ seq_id=>$seq->primary_id, seq=>$seq->seq});
+    if($count%50 == 0){$self->logmsg("$count sequences loaded\r");}
     $count++;
   }
   $self->logmsg("$count sequences loaded\n");
