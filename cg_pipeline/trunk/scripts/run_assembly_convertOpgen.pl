@@ -28,6 +28,7 @@ use CGPipelineUtils;
 use Data::Dumper;
 use XML::LibXML::Reader;
 use Bio::Perl;
+use Math::Round qw(round nearest);
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
@@ -47,12 +48,12 @@ sub main() {
   my $restrictionSequence=$$settings{restrictionSequence} or die "Error: missing restriction enzyme sequence\n".usage();
   $$settings{tempdir} ||= tempdir($$settings{tempdir} or File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
   $$settings{qualScore}||=60;
+  $$settings{insertIncrement}||=1000; # in bp
 
-  my @restrictionFragmentLength=readMap($restrictionMapDocument,$settings);
-  logmsg "Found ".scalar(@restrictionFragmentLength)." sites";
+  my @restrictionPos=readMap($restrictionMapDocument,$settings);
   
   # make a raw reads file
-  my $reads=writeReads($restrictionSequence,\@restrictionFragmentLength,$settings);
+  my $reads=writeReads($restrictionSequence,\@restrictionPos,$settings);
 
   move($reads,$outfile);
   logmsg "reads are in $outfile";
@@ -61,26 +62,34 @@ sub main() {
 }
 
 sub writeReads{
-  my($restrictionSequence,$restrictionFragmentLength,$settings)=@_;
+  my($restrictionSequence,$rPos,$settings)=@_;
   #die "TODO: make pair of files with the distance between the reads encoded in the filename. Consequently, make a directory of files";
-  
+
   my $dir=$$settings{tempdir};
   my %outseq;
   my $restrictionQual="$$settings{qualScore} " x length($restrictionSequence);
   chomp($restrictionQual);
 
-  my $i=0;
-  for my $rLength(@$restrictionFragmentLength){
-    if(!$outseq{'f'.$rLength}){
-      $outseq{'f'.$rLength}=Bio::SeqIO->new(-format=>"fastq-illumina",-file=>">$dir/f$rLength.fastq");
-      $outseq{'r'.$rLength}=Bio::SeqIO->new(-format=>"fastq-illumina",-file=>">$dir/r$rLength.fastq");
+  # Make a forward read for each position, matching with the next position up.
+  # Make a reverse read for each position, matching with the previous position.
+  # Transitively, there will be reads going back to this site too.
+  for(my $c=0;$c<@$rPos;$c++){
+    my $rPos=$$rPos[$c];
+    for(my $p=0;$p<@$rPos;$p++){
+      my $insLength=nearest($$settings{insertIncrement},$$rPos[$p]);
+      if(!$outseq{$insLength}){
+        $outseq{$insLength}=Bio::SeqIO->new(-format=>"fastq-illumina",-file=>">$dir/$insLength.fastq");
+      }
+      my $fid=join("","read",$p,"#$c",'/1');
+      my $rid=join("","read",$p,"#$c",'/2');
+      my $fSeq=Bio::Seq::Quality->new(-id=>$fid,-seq=>$restrictionSequence,-qual=>$restrictionQual);
+      my $rSeq=Bio::Seq::Quality->new(-id=>$rid,-seq=>$restrictionSequence,-qual=>$restrictionQual);
+      $outseq{$insLength}->write_seq($fSeq,$rSeq);
     }
-    #die "TODO make 20 reads per site to ensure confidence during the assembly";
-    my $readid="restrictionsite".$i++;
-    my $seq=Bio::Seq::Quality->new(-id=>$readid,-seq=>$restrictionSequence,-qual=>$restrictionQual);
-    $outseq{'f'.$rLength}->write_seq($seq);
-    $outseq{'r'.$rLength}->write_seq($seq);
   }
+
+  logmsg "Created ".scalar(keys(%outseq))." paired end files";
+    
   return $dir;
 }
 
@@ -92,17 +101,36 @@ sub readMap{
   my $reader = new XML::LibXML::Reader(location => $map) or die "cannot read $map\n";
   while($reader->read){
     if($reader->name eq 'RESTRICTION_MAP' && $reader->getAttribute('INSILICO') eq 'false'){
+      my $chrRMap=[];
       while($reader->read){
-        last if($reader->name eq 'RESTRICTION_MAP'); # break out at the closing tag
+        if($reader->name eq 'RESTRICTION_MAP'){ # break out at the closing tag
+          push(@rLength,$chrRMap);
+          last;
+        }
         next if($reader->name ne 'F'); # F for fragment
-        push(@rLength,$reader->getAttribute('S'));
+        push(@$chrRMap,($reader->getAttribute('S')+0));
       }
     }
   }
 
-  return @rLength;
+  my @rLocation;
+  my $siteCounter=0;
+  my $c=0; # chromosome counter
+  for my $chrRMap(@rLength){
+    my $chrLocation=[0];
+    for(my $r=1;$r<@$chrRMap;$r++){
+      $$chrLocation[$r]=$rLength[$c][$r]+$$chrLocation[$r-1];
+      $siteCounter++;
+    }
+    $rLocation[$c++]=$chrLocation;
+  }
+  logmsg "Found $siteCounter sites";
+
+  logmsg "Returning lengths";return @rLength;
+  return @rLocation;
 }
 
+# debugs an XML node
 sub processNode {
       my $reader = shift;
       printf "%d %d %s %d\n", ($reader->depth,
