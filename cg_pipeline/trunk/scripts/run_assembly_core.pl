@@ -135,7 +135,7 @@ sub baseCall($$){
     elsif(is_fasta($file)){
       my $qualfile="";
       $qualfile="$file.qual" if(-e "$file.qual");
-      $seqQualPair=[$file,""];
+      $seqQualPair=[$file,$qualfile];
     }
     else{
       die "The format of $file is incompatible";
