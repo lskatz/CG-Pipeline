@@ -7,7 +7,7 @@ package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 
 my $settings = {
-	appname => 'cgpipeline',
+  appname => 'cgpipeline',
 };
 my $stats;
 
@@ -25,59 +25,101 @@ use File::Copy;
 use File::Basename;
 use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
-use CGPipeline::Reconciliator;
 use Data::Dumper;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
-sub logmsg {my $FH = $FSFind::LOG || *STDOUT; print $FH "$0: ".(caller(1))[3].": @_\n";}
+sub logmsg {my $FH = *STDOUT; print $FH "$0: ".(caller(1))[3].": @_\n";}
 
 exit(main());
 
 sub main() {
-	$settings = AKUtils::loadConfig($settings);
+  $settings = AKUtils::loadConfig($settings);
 
-	die("Usage: $0 --readsfilename=path/to/reads.fasta --newblerDir someDirectory1 --newblerDir someDirectory2 --velvetDir someDirectory3 --output=outputDirectory [--tempdir temporaryDirectory] [--force]") if @ARGV < 1;
+  die(usage()) if @ARGV < 1;
 
-	my @cmd_options = ('ChangeDir=s', , 'keep', 'tempdir=s', 'output=s', 'newblerDir=s@', 'velvetDir=s@', 'amoscmpDir=s@', 'readsfilename=s','force');
-	GetOptions($settings, @cmd_options) or die;
+  my @cmd_options = qw(keep tempdir=s outfile=s force assembly=s@);
+  GetOptions($settings, @cmd_options) or die;
 
-	$$settings{outfile} = $$settings{output};
-	$$settings{outfile} ||= "$0.out.fasta";
-	$$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
-	open(FH, '>', $$settings{outfile}) or die("Error writing to output file $$settings{outfile}");
-	close FH;
-	logmsg "Output file is " . $$settings{outfile};
+  $$settings{cpus}=AKUtils::getNumCPUs();
 
-	$$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
-	logmsg "Temporary directory is $$settings{tempdir}";
+  my @assembly=@{ $$settings{assembly} } or die "Need assemblies:\n".usage();
+  $$settings{outfile} ||= "$0.out.fasta"; # TODO determine if an ace should be the output
+  $$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
+  open(FH, '>', $$settings{outfile}) or die("Error writing to output file $$settings{outfile}: $!");
+  close FH;
 
-  # add all assemblies to the reconciliator
-  # TODO do not add an assembly if it already has been converted, unless there is the force command
-  my $reconciliator=CGPipeline::Reconciliator->new({outputDir=>$$settings{tempdir}});
-  for my $amoscmpDir (@{ $$settings{amoscmpDir} }){
-    $reconciliator->addAmoscmpAssembly({amoscmpDir=>$amoscmpDir,readsfasta=>$$settings{readsfilename},force=>$$settings{force}});
-  }
-  for my $velvetDir (@{ $$settings{velvetDir} }){
-    $reconciliator->addVelvetAssembly({velvetDir=>$velvetDir,force=>$$settings{force}});
-  }
-  for my $newblerDir (@{ $$settings{newblerDir} }){
-    $reconciliator->addNewblerAssembly({newblerDir=>$newblerDir,force=>$$settings{force}});
-  }
-  die "Ending right after reconciliator format conversions\n";
-  exit;
-  print Dumper $reconciliator;
+  $$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
+  logmsg "Temporary directory is $$settings{tempdir}";
 
-	#AKUtils::printSeqsToFile($final_seqs, $$settings{outfile}, {order_seqs_by_name => 1});
+  my $combinedAssembly=combineAllAssemblies(\@assembly,$settings);
+  system("cp $combinedAssembly $$settings{outfile}"); 
+  die "Could not copy final file $combinedAssembly to $$settings{outfile}" if $?;
 
-	#logmsg "Output is in $$settings{outfile}";
+  logmsg "Output file is " . $$settings{outfile};
 
-	#if ($$settings{keep}) {
-	#	my ($out_filename, $out_dirname) = fileparse($$settings{outfile});
-#		logmsg "Saving assembly working directory $$settings{tempdir} to $out_dirname";
-#		move($$settings{tempdir}, $out_dirname) or die "Error moving output directory $$settings{tempdir} to $out_dirname: $!";
-#	}
-
-	return 0;
+  return 0;
 }
 
+sub combineAllAssemblies{
+  my($assembly,$settings)=@_;
+  my $combinedAssembly=shift(@$assembly);
+  for(my $i=0;$i<@$assembly;$i++){
+    my $otherAssembly=$$assembly[$i];
+    $combinedAssembly=combine2Assemblies($combinedAssembly,$otherAssembly,$settings);
+  }
+  return $combinedAssembly;
+}
+
+sub combine2Assemblies{
+  my($a1,$a2,$settings)=@_;
+  my %metrics1=assembly_metrics($a1,$settings);
+  my %metrics2=assembly_metrics($a2,$settings);
+  my($numContigs1,$numContigs2)=($metrics1{numContigs},$metrics2{numContigs});
+  my $combined_fasta_file = "$$settings{tempdir}/combined_in.fasta";
+
+  my $numContigs=$numContigs1;
+  my $refGenome=$a1;
+  system("cat '$a1' '$a2' > $combined_fasta_file");
+  die "Problem with creating input file" if $?;
+  if($numContigs2>$numContigs1){
+    $numContigs=$numContigs2;
+    $refGenome=$a2;
+    system("cat '$a2' '$a1' > $combined_fasta_file");
+    die "Problem with creating input file" if $?;
+  }
+  logmsg "Running Minimus2 with reference genome $refGenome";
+  system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
+  die "Problem with toAmos with command\n  toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'" if $?;
+  system("minimus2 -D REFCOUNT=$numContigs '$$settings{tempdir}/minimus.combined'");
+  die "Problem with Minimus2" if $?;
+  return "$$settings{tempdir}/minimus.combined.fasta";
+}
+
+sub assembly_metrics{
+  my($a,$settings)=@_;
+  my %seqMetric;
+  my $metrics=`run_assembly_metrics.pl '$a'`;
+  for my $line(split(/\n/,$metrics)){
+    my($key,$value)=split(/\t/,$line);
+    $seqMetric{$key}=$value;
+  }
+  return %seqMetric;
+}
+
+sub usage{
+  "Combines two or more assemblies into one assembly, using Minimus2
+  Usage: $0 -a assembly1 -a assembly2 [-a ...] -o output.assembly.fasta
+    -a assembly file
+      at least two assembly files are needed.  You can also decide to use a reads file at your own risk.
+    -o outputfile
+      assembly output fasta file
+    optional parameters:
+    -t tempdir
+    -f
+      force
+    -k
+      keep temp files
+
+  "
+}
