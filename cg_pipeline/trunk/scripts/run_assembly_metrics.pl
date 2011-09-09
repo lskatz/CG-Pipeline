@@ -59,12 +59,23 @@ sub assemblyMetrics($$){
   my($result);
   $seqs=AKUtils::readMfa($seqs);
 
-  foreach my $statistic qw(N50 genomeLength longestContig numContigs){
+  foreach my $statistic qw(N50 genomeLength longestContig numContigs avgContigLength){
     my $stat=&$statistic($seqs,$settings);
     $result.=join("\t",$statistic,$stat)."\n";
   }
   chomp($result);
   return $result;
+}
+
+sub avgContigLength{
+  my($seqs)=@_;
+  my $length=0;
+  my $numContigs=0;
+  foreach my $seqname (keys %$seqs){
+    $length+=length($$seqs{$seqname});
+    $numContigs++;
+  }
+  return int(($length/$numContigs));
 }
 
 # Find the longest contig of an assembly.
