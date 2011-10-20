@@ -80,15 +80,17 @@ sub combine2Assemblies{
 
   my $numContigs=$numContigs1;
   my $refGenome=$a1;
+  my $queryGenome=$a2;
   system("cat '$a1' '$a2' > $combined_fasta_file");
   die "Problem with creating input file" if $?;
   if($numContigs2>$numContigs1){
     $numContigs=$numContigs2;
     $refGenome=$a2;
+    $queryGenome=$a1;
     system("cat '$a2' '$a1' > $combined_fasta_file");
     die "Problem with creating input file" if $?;
   }
-  logmsg "Running Minimus2 with reference genome $refGenome";
+  logmsg "Running Minimus2 with reference genome $refGenome and query genome $queryGenome";
   system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
   die "Problem with toAmos with command\n  toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'" if $?;
   system("minimus2 -D REFCOUNT=$numContigs '$$settings{tempdir}/minimus.combined'");
