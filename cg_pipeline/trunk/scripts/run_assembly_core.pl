@@ -38,9 +38,10 @@ sub main() {
 
 	die("Usage: $0 input.sff [, input2.sff, ...] [-R references.mfa] [-C workdir]\n  Input files can also be fasta files.  *.fasta.qual files are considered as the relevant quality files") if @ARGV < 1;
 
-	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'output=s');
+	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'output=s', 'min_out_contig_length=i');
 	GetOptions($settings, @cmd_options) or die;
 
+	$$settings{min_out_contig_length} ||= 500;
 	$$settings{outfile} = $$settings{output};
 	$$settings{outfile} ||= "$0.out.fasta";
 	$$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
@@ -86,8 +87,6 @@ sub main() {
 		$final_seqs = AKUtils::readMfa("$combined_filename");
 	}
 	
-	$$settings{min_out_contig_length} = 500;
-
 	foreach my $seq (keys %$final_seqs) {
 		delete $$final_seqs{$seq} if length($$final_seqs{$seq}) < $$settings{min_out_contig_length};
 	}
@@ -119,7 +118,7 @@ sub is_sff($){
 }
 sub is_fasta($){
   my($file)=@_;
-  return 1 if(ext($file)=~/^(sff|fna|fasta|ffn)$/i);
+  return 1 if(ext($file)=~/^(sff|fna|fasta|ffn|fa|fas)$/i);
   return 0;
 }
 # wrapper for all base calling for input files
@@ -152,11 +151,13 @@ sub sffFastaQual($$$){
   my $basename=$acc;
   $basename=~s/_acc$//;
 
+  my $which=fileparse($basename); # newbler_outlier, newbler_singletons, etc
+
   my $command="sfffile -i '$acc' -o '$basename.sff' $sff";
   logmsg "COMMAND $command";
   system($command);
   die if $?;
-  my $outlier_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_outlier.sff"], $settings);
+  my $outlier_fastaqual = sff2fastaqual(["$$settings{tempdir}/$which.sff"], $settings);
   
   return $outlier_fastaqual;
 }
@@ -169,10 +170,10 @@ sub sff2fastaqual($$) {
 		my ($sff_file, $sff_dir) = fileparse($input_file);
 		my $invoke_string = "sffinfo -seq '$sff_dir/$sff_file' > '$$settings{tempdir}/$sff_file.fasta'";
 		logmsg "Running $invoke_string";
-		system($invoke_string); die if $?;
+		system($invoke_string) if(!-e "$$settings{tempdir}/$sff_file.fasta"); die if $?;
 		$invoke_string = "sffinfo -qual '$sff_dir/$sff_file' > '$$settings{tempdir}/$sff_file.qual'";
 		logmsg "Running $invoke_string";
-		system($invoke_string); die if $?;
+		system($invoke_string) if(!-e "$$settings{tempdir}/$sff_file.qual"); die if $?;
 		push(@fastaqualfiles, ["$$settings{tempdir}/$sff_file.fasta", "$$settings{tempdir}/$sff_file.qual"]);
 	}
 	return \@fastaqualfiles;
@@ -201,7 +202,7 @@ sub runNewblerMapping($$$) {
 sub runNewblerAssembly($$) {
 	my ($input_files, $settings) = @_;
 	my $run_name = "$$settings{tempdir}/P__runAssembly";
-  #logmsg "Skipping newbler assembly for testing purposes";  return $run_name; #debugging
+  # logmsg "Skipping newbler assembly for testing purposes";  return $run_name; #debugging
 	logmsg "Executing Newbler assembly project $run_name";
 
 	system("newAssembly '$run_name'"); die if $?;
@@ -289,10 +290,11 @@ sub combineNewblerDeNovo($$$) {
   # create SFFs of the accessions not included in the assembly
   my($outlier_fastaqual,$repeat_fastaqual,$singleton_fastaqual,$tooShort_fastaqual);
   if(glob("$newbler_basename/sff/*.sff")){
-    $outlier_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_outlier_acc","$newbler_basename/sff/*.sff",$settings);
-    $repeat_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_repeat_acc","$newbler_basename/sff/*.sff",$settings);
-    $singleton_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_singleton_acc","$newbler_basename/sff/*.sff",$settings);
-    $tooShort_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_tooShort_acc","$newbler_basename/sff/*.sff",$settings);
+    my $originalSff=join(" ",glob("$newbler_basename/sff/*.sff"));
+    $outlier_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_outlier_acc",$originalSff,$settings);
+    $repeat_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_repeat_acc",$originalSff,$settings);
+    $singleton_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_singleton_acc",$originalSff,$settings);
+    $tooShort_fastaqual=sffFastaQual("$$settings{tempdir}/newbler_tooShort_acc",$originalSff,$settings);
   }
   # TODO if the input is a fasta file, then the SFF will not be present. Extract the relevant reads into fasta/qual files
   else{
