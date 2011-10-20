@@ -36,10 +36,11 @@ exit(main());
 
 sub main() {
   $settings = AKUtils::loadConfig($settings);
-  die("  Usage: $0 assembly1.fasta [-e expectedGenomeLength]\n") if @ARGV<1;
+  die("  Usage: $0 assembly1.fasta [-e expectedGenomeLength] [-m minContigLength]\n") if @ARGV<1;
 
-  my @cmd_options=('output=s','expectedGenomeLength=i');
+  my @cmd_options=('output=s','expectedGenomeLength=i','minContigLength=i');
   GetOptions($settings, @cmd_options) or die;
+  $$settings{minContigLength}||=500;
 
   my $input_file=$ARGV[0];
   my $file=File::Spec->rel2abs($input_file);
@@ -49,6 +50,7 @@ sub main() {
   # TODO print metrics in an understandable and parsable way
   print "File\t$file\n";
   print "ExpectedGenomeLength\t$$settings{expectedGenomeLength}\n" if($$settings{expectedGenomeLength});
+  print join("\t","minContigLength",$$settings{minContigLength})."\n";
   print "$metrics\n";
 
   return 0;
@@ -59,12 +61,24 @@ sub assemblyMetrics($$){
   my($result);
   $seqs=AKUtils::readMfa($seqs);
 
+  $seqs=filterSeqs($seqs,$settings);
+
   foreach my $statistic qw(N50 genomeLength longestContig numContigs avgContigLength){
     my $stat=&$statistic($seqs,$settings);
     $result.=join("\t",$statistic,$stat)."\n";
   }
   chomp($result);
   return $result;
+}
+
+sub filterSeqs{
+  my($seqs,$settings)=@_;
+  my $newSeqs={};
+  while(my ($id,$seq)=each(%$seqs)){
+    next if($$settings{minContigLength} > 0 && length($seq) < $$settings{minContigLength});
+    $$newSeqs{$id}=$seq;
+  }
+  return $newSeqs;
 }
 
 sub avgContigLength{
