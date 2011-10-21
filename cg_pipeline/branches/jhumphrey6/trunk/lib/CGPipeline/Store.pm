@@ -19,10 +19,13 @@ finish perldoc...
 =cut
 
 package CGPipeline::Store; 
+use base qw/CGPipeline/;
 use Bio::SeqIO;
 use Data::Dumper;
 use Bio::DB::SeqFeature::Store;
 use Bio::Tools::GFF;
+use Bio::DB::GFF::Util::Rearrange 'rearrange';
+
 sub new{
   my $class = shift;
   my %params = @_;
@@ -34,6 +37,7 @@ sub new{
     database=>undef
   },$class);
   $object->_connect;
+  $object->load_config;#load the default config file or an alternative
   return $object;
 }
 sub logmsg{
@@ -50,8 +54,8 @@ sub _connect{
   my $self=shift;
   my $is_new = 0;
   my $sqlitedb = $self->{'file'};
-  if( ! -e $sqlitedb){$is_new=1;}
-  $self->{'database'} = Bio::DB::SeqFeature::Store->new( -adaptor=>'DBI::SQLite',-dsn=>"$sqlitedb", -create=>$is_new);
+  if( ! -e $sqlitedb){$is_new=1;logmsg("creating new $sqlitedb\n");}
+  $self->{'database'} = Bio::DB::SeqFeature::Store->new( -adaptor=>'DBI::SQLite',-dsn=>"$sqlitedb", -create=>$is_new, -autoindex=>1, -write=>1);
 }
 sub sane_id{
   my ($self,$seq_id)=@_;
@@ -62,7 +66,6 @@ sub sane_id{
   return $ok;
 }
  
-  
 sub add_seq{
   my ($self,$seq)=@_;
   if( $self->seq_exists($seq->{'seq_id'})){
@@ -81,26 +84,23 @@ sub seq_exists{ # in certain cases it could read a cached list of ids
   my @ids = $self->db->seq_ids();
   return scalar grep(/^$seqid$/,@ids);
 }
-sub add_locus{ #belongs in CGPipeline::SQLiteDB::Predict ?
-  my ($self,$params)=@_; #feature should be a Bio::SeqFeatureI
-  my $seq_id = $params->{seq_id};
-  my $name = $params->{name};
+sub add_feature{
+  my $self=shift; #feature should be a Bio::SeqFeatureI
+  my $feat=shift;
+  my $seq_id = $feat->seq_id;
+  my ($locus_id) = $feat->get_tag_values('locus_id');
   if(!$self->seq_exists($seq_id)){
     $self->logmsg("Warning:sequence $seq_id does not exist\n");
   }
-  my ($feature) = $self->db->features(-name=>$name,-seq_id=>$seq_id);
+  my ($feature) = $self->db->features(-attributes=>{'locus_id'=>$locus_id});#,-seq_id=>$seq_id);
   if($feature){
     if($self->{volatile}){
-      $self->logmsg("Replacing feature $seq_id:$name\n");
+      $self->logmsg("Replacing feature $seq_id:$locus_id\n");
       $self->db->delete(($feature));
     }
-    else{return $feature;}
+    else{logmsg ("skipping $locus_id (exists)\n");return $feature;}
   }
-  my $feature = Bio::SeqFeature::Generic->new(@$params);
-  return $self->db->store($feature);
-}
-sub add_feature{ # all features will be children of loci
-  
+  return $self->db->store($feat);
 }
 sub write_gff{
   my ($self,$gfffile)=@_;
@@ -131,9 +131,9 @@ sub load_gff{
   my $count = 0;
   $self->logmsg("Loading $gfffile\n");
   while (my $feat = $gff->next_feature){
-    $self->db->store($feat);
+printf "Try to add feature %d:%d-%d\n",$count,$feat->start,$feat->end;
+    $count++ if $self->add_feature($feat);
     if($count%1000 == 0){$self->logmsg("$count features loaded\r");}
-    $count++;
   }
   $self->logmsg("$count features loaded\n");
 }
@@ -150,53 +150,5 @@ sub load_fasta{
     $count++;
   }
   $self->logmsg("$count sequences loaded\n");
-}
-sub get_contigs{
-  my ($self,$outfile)=@_;
-  my $fasta=Bio::SeqIO->new(-file=>">$outfile",-format=>'fasta')or die $!;
-  my $seqio = $self->db->get_seq_stream;
-  while (my $seq = $seqio->next_seq ){
-    $fasta->write_seq($seq->seq);
-  }
-}
-sub get_fasta{
-  my ($self,$outfile)=@_;
-  my $fasta=Bio::SeqIO->new(-file=>">$outfile",-format=>'fasta')or die $!;
-  my @features=$self->db->features(-type=>'CDS');
-  foreach my $ftr(@features){
-    my $seq2fasta=$ftr->seq;
-    my $locus_tag = ($ftr->get_tag_values('locus_tag'))[0];
-    my $defline = sprintf("lcl|%s|%s|%d|%d",$locus_tag,$ftr->primary_tag,$ftr->start,$ftr->end);
-    $seq2fasta->display_name($defline);
-    if($ftr->has_tag('gene')){$seq2fasta->desc(($ftr->get_tag_values('gene'))[0]);}
-    elsif($ftr->has_tag('product')){$seq2fasta->desc(($ftr->get_tag_values('product'))[0]);}
-    elsif($ftr->primary_tag =~ /gene/){}#skip it! avoids printing duplicate gene/CDS pairs.
-    else{$seq2fasta->desc("predicted cds");}
-    my $seq=$seq2fasta->seq;
-    $seq=~s/-/N/g;
-    $seq2fasta->seq($seq);
-    $fasta->write_seq($seq2fasta) or die "$!\n";
-  }
-  return $outfile;
-}
-sub get_fastaprot{
-  my ($self,$outfile)=@_;
-  my $fasta=Bio::SeqIO->new(-file=>">$outfile",-format=>'fasta')or die $!;
-  my @features=$self->db->features(-type=>'CDS');
-  foreach my $ftr(@features){
-    my $seq2fasta=$ftr->seq;
-    my $locus_tag = ($ftr->get_tag_values('locus_tag'))[0];
-    my $defline = sprintf("lcl|%s|%s|%d|%d",$locus_tag,$ftr->primary_tag,$ftr->start,$ftr->end);
-    $seq2fasta->display_name($defline);
-    if($ftr->has_tag('gene')){$seq2fasta->desc(($ftr->get_tag_values('gene'))[0]);}
-    elsif($ftr->has_tag('product')){$seq2fasta->desc(($ftr->get_tag_values('product'))[0]);}
-    elsif($ftr->primary_tag =~ /gene/){}#skip it! avoids printing duplicate gene/CDS pairs.
-    else{$seq2fasta->desc("predicted cds");}
-    my $seq=$seq2fasta->translate->seq;
-    $seq=~s/-/N/g;
-    $seq2fasta->seq($seq);
-    $fasta->write_seq($seq2fasta) or die "$!\n";
-  }
-  return $outfile;
 }
 1;
