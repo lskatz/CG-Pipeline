@@ -38,15 +38,19 @@ exit(main());
 sub main(){
   $settings = AKUtils::loadConfig($settings);
   die usage() if(@ARGV<1);
-  GetOptions($settings,qw(help! genbank=s tempdir=s keep!));
+  GetOptions($settings,qw(help! genbank=s tempdir=s keep! force! asnTemplate=s));
   die usage() if($$settings{help});
-  $$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
+  $$settings{tempdir} = File::Spec->rel2abs($$settings{tempdir}) || tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
 
   # check for required files
   my $genbank=$$settings{genbank} or die "Error: missing genbank parameter\n".usage();
   $genbank=File::Spec->rel2abs($genbank);
+  my $asnTemplate=$$settings{asnTemplate} or die "Error: missing asn template parameter\n".usage();
+  $asnTemplate="$$settings{tempdir}/genome.sbt";
+  copy($$settings{asnTemplate},$asnTemplate) or die "Could not copy from $$settings{asnTemplate} to $asnTemplate because $!";
+  $asnTemplate=File::Spec->rel2abs($asnTemplate);
 
-  # add on anything necessary for the defline, etc
+  logmsg "Creating the temporary assembly file";
   my $assembly=defineAssembly($genbank,$settings);
   logmsg "Tagged assembly file has been printed to $assembly";
 
@@ -54,16 +58,82 @@ sub main(){
   # http://biostar.stackexchange.com/questions/10748/read-writer-for-asn
   #my $template=createTemplate($settings);
 
+  logmsg "Creating the tbl file";
   my $tbl=createTbl($genbank,$settings);
+  logmsg "Tbl file has been printed to $tbl";
+
+  logmsg "Running tbl2asn";
+  my $asn=tbl2asn($assembly,$asnTemplate,$tbl,$settings);
+  logmsg "Asn file is $asn and discrepancy report is $$settings{tempdir}/genome.disc.rpt";
 
   return 0;
 }
 
+sub tbl2asn{
+  my($assembly,$asnTemplate,$tbl,$settings)=@_;
+  my $outfile="$$settings{tempdir}/genome.asn";
+  $$settings{tbl2asn}=AKUtils::fullPathToExec("tbl2asn");
+  my $discRpt="$$settings{tempdir}/genome.disc.rpt";
+  my $command="$$settings{tbl2asn} -i $assembly -a s -V v -k m -t $asnTemplate -Z $discRpt";
+  system($command);
+  return $outfile;
+}
 
 # See: http://www.ncbi.nlm.nih.gov/Sequin/table.html#Table Layout
 sub createTbl{
   my($genbank,$settings)=@_;
-  die "TODO: this subroutine";
+  my $outfile="$$settings{tempdir}/genome.tbl";
+  if( (-s $outfile > 0) && !$$settings{force}){
+    logmsg "$outfile already exists; skipping. Use -f to not force its creation";
+    return $outfile;
+  }
+
+  my %tblFeat;
+  my $gb=Bio::SeqIO->new(-file=>$genbank);
+  while(my $seq=$gb->next_seq){
+    print TBL ">Feature ".$seq->id."\n";
+    for my $feat($seq->get_SeqFeatures){
+      my $tArr=_feat2tbl($feat,$settings);
+      for my $t(@$tArr){
+        my $geneid=join("_",$$t{start},$$t{end},$$t{primary});
+        push(@{ $tblFeat{$seq->id}{$geneid} },$t);
+      }
+    }
+  }
+  
+  # resolve any duplicated features before printing to file
+  open(TBL,">$outfile") or die "Could not open $outfile for writing because $!";
+  while(my($seqid,$seqFeatures)=each(%tblFeat)){
+    print TBL ">Feature $seqid\n";
+    while(my($geneid,$feats)=each(%$seqFeatures)){
+      my($start,$end,$primary)=split(/_/,$geneid);
+      print TBL join("\t",$start,$end,$primary)."\n";
+      for my $f(@$feats){
+        print TBL join("\t","","",$$f{tag},$$f{value})."\n";
+      }
+    }
+  }
+  close TBL;
+  return $outfile;
+}
+
+# alters one bioperl feature a tbl entry
+sub _feat2tbl{
+  my($feat,$settings)=@_;
+
+  my $tblArray;
+
+  my $loc=$feat->location;
+  my($start,$end)=($loc->start,$loc->end);
+  ($start,$end)=($end,$start) if($loc->strand == -1);
+  my $tbl=join("\t",$start,$end,$feat->primary_tag);
+  $tbl.="\n";
+  for my $tag($feat->get_all_tags){
+    for my $value($feat->get_tag_values($tag)){
+      push(@$tblArray,{start=>$start,end=>$end,primary=>$feat->primary_tag,tag=>$tag,value=>$value});
+    }
+  }
+  return $tblArray;
 }
 
 # Creates an NCBI template file http://www.ncbi.nlm.nih.gov/genbank/tbl2asn2.html#Template
@@ -97,7 +167,11 @@ sub createTemplate{
 # TODO just grab the assembly from the genbank file to reduce the number of necessary files, to keep consistency, and to promote modularity/portability of CG-Pipeline
 sub defineAssembly{
   my($genbank,$settings)=@_;
-  my $outfile="$$settings{tempdir}/assembly.fasta";
+  my $outfile="$$settings{tempdir}/genome.fasta";
+  if( (-s $outfile > 0) && !$$settings{force} ){
+    logmsg "Assembly file $outfile already exists. Skipping its creation. Use -f to force its re-creation";
+    return $outfile;
+  }
   my $seqin=Bio::SeqIO->new(-file=>$genbank,-format=>"genbank");
   my $seqout=Bio::SeqIO->new(-file=>">$outfile");
 
@@ -112,7 +186,6 @@ sub defineAssembly{
     my $strain=join("_",@f);
 
     $seq->desc("[organism=$scientificName] [strain=$strain]");
-    $seq->id($seqid);
 
     $seqout->write_seq($seq);
 
@@ -128,14 +201,19 @@ sub defineAssembly{
 
 sub usage{
   "Turns your genome project directory into something that you can submit to NCBI
-  Usage: perl $0 -g genbank.gbk
+  Usage: perl $0 -g genbank.gbk -a asn-file
   Arguments
-    -g genbank annotated file
     -h (no arguments) this help menu
+    -g genbank annotated file
+    -a ASN-formmated template file name
     -k (no arguments) to keep temporary directory around. 
       It will be kept without specifying if the temp dir name is given.
     -t temp directory name
       This is the directory where temporary files are stored. If specified,
       the temp directory will not be deleted.
+    -f (no arguments) Force the entire script
+      Files that have already been created in the temp directory will be deleted and re-created.
+      Without -f, files will not be re-created
+  See also: http://www.ncbi.nlm.nih.gov/genbank/tbl2asn2.html
   ";
 }

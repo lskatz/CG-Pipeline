@@ -51,9 +51,6 @@ sub main() {
 	$$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
 	logmsg "Temporary directory is $$settings{tempdir}";
 
-  whichBlast($settings); # which blast? blast+?  Modify the settings.
-  $$settings{num_cpus}=AKUtils::getNumCPUs();
-
 	$ENV{BLASTDB} = (fileparse($$settings{cogs_blast_db}))[1];
 	my $bf = Bio::Tools::Run::StandAloneBlast->new(database => $$settings{cogs_blast_db},
 		outfile => "$$settings{tempdir}/$0.$$.blast_out",
@@ -61,17 +58,7 @@ sub main() {
 		a => AKUtils::getNumCPUs());
 
 	logmsg "Running BLAST on $$settings{query_mfa} vs. $$settings{cogs_blast_db}...";
-  # blast+ query
-  my $report;
-  if($$settings{blast_version} eq 'blast+'){
-    my $blastCommand="blastp -query $$settings{query_mfa} -db $$settings{cogs_blast_db} -num_threads $$settings{num_cpus} -out $$settings{tempdir}/$0.$$.blast_out";
-    system($blastCommand); die if $?;
-    $report=new Bio::SearchIO(-format=>'blast',-file=>"$$settings{tempdir}/$0.$$.blast_out");
-  }
-  # regular blast query
-  else {
-    $report=$bf->blastall($$settings{query_mfa});
-  }
+	my $report = $bf->blastall($$settings{query_mfa});
 
 	my $query_seqs = AKUtils::readMfa($$settings{query_mfa});
 #	my $db_seqs = AKUtils::readMfa($$settings{db_mfa});
@@ -115,19 +102,3 @@ sub main() {
 	logmsg "Report is in $$settings{outfile}";
 	return 0;
 }
-
-# modify settings to figure out which version of blast we are dealing with
-# TODO if need be, put this into AKUtils
-# TODO allow for whichBlast to pick up on the other four flavors of blast
-sub whichBlast{
-  my($settings)=@_;
-  my $version="before2009";
-  $$settings{path_to_blast}=AKUtils::fullPathToExec("blastall")||AKUtils::fullPathToExec("blastp")||"";
-  if($$settings{path_to_blast}=~/blastall/){
-    $$settings{blast_version}="before2009";
-  }
-  elsif($$settings{path_to_blast}=~/blastp/){
-    $$settings{blast_version}="blast+";
-  }
-}
-

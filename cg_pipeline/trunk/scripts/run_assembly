@@ -39,13 +39,7 @@ sub main() {
 	my $assemblyProgram="run_assembly_core.pl";
 
 	# print out usage if no arguments are specified
-	if(@ARGV<1){
-	  print("	Usage: $0 input.sff [, input2.sff, ...] [-R reference1.mfa [-R reference2.mfa...]] [-C workdir] [-e expectedGenomeSize] [-d=forceDeNovo]
-	-e expectedGenomeSize: in megabases 
-	-d forceDeNovo: either T or F but is false by default (true if no reference specified)
-    ");
-	  exit;
-	}
+	die usage() if(@ARGV<1);
 	
 	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'output=s','expectedSize=i','deNovo=s');
 	GetOptions($settings, @cmd_options) or die;
@@ -59,7 +53,7 @@ sub main() {
 	my($invoke_string,$params,@parametersToPass,@parametersToSkip,$assemblyDir,$tempDir,@finalAssemblyFilename);
 	@parametersToPass=qw(keep expectedSize);
 	# run DE NOVO if it's explicitly asked for, or if there are no references
-	if($$settings{deNovo} eq 'T'||scalar(@{ $$settings{Reference} })<1){
+	if($$settings{deNovo} =~/T/i ||scalar(@{ $$settings{Reference} })<1){
 	  $tempDir=$$settings{tempdir}."/"."DENOVO";
 	  my $outFilename="$tempDir/final.fna";
 	  push(@finalAssemblyFilename,$outFilename);
@@ -67,12 +61,12 @@ sub main() {
 	  $params=join(" ",@ARGV)." --tempdir $tempDir --output $outFilename ";
 	  $params.=parameterString(\@parametersToPass,$settings);
 	  $invoke_string="$assemblyProgram $params";
-	  logmsg "De novo assembly";
+	  logmsg "De novo assembly with command\n  $invoke_string";
 	  system($invoke_string);
 	}
 	# run assembly or assemblies for each REFERENCE, plus once for de novo if applicable
 	foreach my $R (@{$$settings{Reference}}){
-	  $tempDir=$$settings{tempdir}."/".basename($R,qw(.fna .ffn .faa .fasta .seq .fa));
+	  $tempDir=$$settings{tempdir}."/".basename($R,qw(.fna .ffn .faa .fasta .seq .fa .mfa .fas .txt));
 	  my $outFilename="$tempDir/final.fna";
 	  push(@finalAssemblyFilename,$outFilename);
 	  mkpath($tempDir);
@@ -82,9 +76,9 @@ sub main() {
 
 	  # run the assembly with parameters
 	  $invoke_string="$assemblyProgram $params";
-	  logmsg "Reference assembly with $R";
+	  logmsg "Reference assembly with $R, with command\n  $invoke_string";
 	  system($invoke_string);
-    }
+  }
 
 	# Now that each assembly has been produced, find the best assembly.
 	# Preferential treatment is given to the de novo assembly, so it goes first in the arguments list
@@ -118,10 +112,10 @@ sub parameterString{
   return $params;
 }
 
-# see if there is a value in an array
-# parameters: $array, $value
-sub in_array{
-   my ($arr,$search_for) = @_;
-   my %items = map {$_ => 1} @$arr;
-   return (exists($items{$search_for}))?1:0;
+sub usage{
+  "Perform a genome assembly
+  Usage: $0 input.sff [, input2.sff, ...] [-R reference1.mfa [-R reference2.mfa...]] [-C workdir] [-e expectedGenomeSize] [-d=forceDeNovo]
+  -e expectedGenomeSize: in megabases
+  -d forceDeNovo: either T or F but is false by default (true if no reference specified)
+  ";
 }

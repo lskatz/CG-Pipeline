@@ -103,8 +103,11 @@ sub main() {
     }
   }
 
+  # IS elements
+  system("run_annotation_isElements.pl -i $aa_file -o $aa_file.is_hits.sql"); die if$?;
+
 	# Run SignalP on all proteins
-	system("run_annotation_signalp.pl $aa_file"); die "Error with SignalP" if $?;
+	system("run_annotation_signalp.pl $aa_file"); die if $?;
 	foreach my $file (glob "$$settings{tempdir}/*.sql") {
 		move($file, $$settings{outdir});
 	}
@@ -112,7 +115,7 @@ sub main() {
 
 	# Run TMHMM on all proteins
   TMHMM:
-	system("run_annotation_tmhmm.pl $aa_file"); die "Error with TMHMM" if $?;
+	system("run_annotation_tmhmm.pl $aa_file"); die if $?;
 	foreach my $file (glob "$$settings{tempdir}/*.sql") {
 		move($file, $$settings{outdir});
 	}
@@ -120,7 +123,7 @@ sub main() {
 
 	# Check all proteins against VFDB
   VFDB:
-	system("run_annotation_vfdb.pl $aa_file"); die "Error with VFDB" if $?;
+	system("run_annotation_vfdb.pl $aa_file"); die if $?;
 	foreach my $file (glob "$$settings{tempdir}/*.sql") {
 		move($file, $$settings{outdir});
 	}
@@ -128,7 +131,7 @@ sub main() {
 
 	# Check all proteins against COGs 
   COGS:
-	system("run_annotation_cogs.pl -tempdir=$$settings{tempdir} $aa_file"); die "Error with COGs" if $?;
+	system("run_annotation_cogs.pl -tempdir=$$settings{tempdir} $aa_file"); die if $?;
 	foreach my $file (glob "$$settings{tempdir}/*.sql") {
 		move($file, $$settings{outdir});
 	}
@@ -140,7 +143,7 @@ sub main() {
 	$invoke_string .= " -outfile='$$settings{tempdir}/blast.sql'";
 	$invoke_string .= " -keep" if $$settings{keep};
 	$invoke_string .= " -tempdir='$$settings{tempdir}'";
-	system($invoke_string); die "Error with BLAST vs UniProt" if $?;
+	system($invoke_string); die if $?;
 	move("$$settings{tempdir}/blast.sql", $$settings{outdir});
 
 	# TODO: auto-build uniprot database (and VFDB database)
@@ -151,7 +154,7 @@ sub main() {
 	$invoke_string .= " -uniprot_evidence_db3='$$settings{uniprot_evidence_db3}'";
 	$invoke_string .= " -uniprot_sql_outfile='$$settings{tempdir}/uniprot.sql'";
 	$invoke_string .= " -uniprot_evidence_sql_outfile='$$settings{tempdir}/uniprot_evidence.sql'";
-	system($invoke_string); die "Error with BLAST vs UniProt processing" if $?;
+	system($invoke_string); die if $?;
 	foreach my $file (glob "$$settings{tempdir}/*.sql") {
 		move($file, $$settings{outdir});
 	}
@@ -159,15 +162,13 @@ sub main() {
   INTERPRO:
 	# Run InterProScan on all proteins
 	$invoke_string = "run_annotation_interpro.pl $aa_file";
-	system($invoke_string); die "Error with InterProScan" if $?;
+	system($invoke_string); die if $?;
 
 	foreach my $file (glob "$$settings{tempdir}/*.sql") {
 		move($file, $$settings{outdir});
 	}
 	logmsg "Output is in $$settings{outdir}";
 	# maybe perform the load of all the sql files
-
-  return 0;
 }
 
 #	$invoke_string = "run_annotation_interpro_batch.py $aa_file";

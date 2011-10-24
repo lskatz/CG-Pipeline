@@ -112,16 +112,13 @@ sub getGenePredictions($$$$$) {
 # FIXME: workaround for gibbs sampler bug - turn off RBS motif finding in GeneMark
 $$settings{gm_trainer_xopts} .= " --motif=0";
 
-#logmsg "Skipping to RNA";goto RNA;
-#logmsg "Skipping to BLAST"; goto BLAST;
+#goto RNA;
 	# Obtain ab initio predictions
 	my $genemark_predictions;
 	if ($$settings{prediction_use_genemark}) {
 		$genemark_predictions = AKUtils::getGenemarkPredictions($input_seqs, $settings);
 	}
 	my $glimmer_predictions = AKUtils::getGlimmer3Predictions($input_seqs, $settings);
-
-BLAST:
 	my $blast_predictions = AKUtils::getBLASTGenePredictions($input_seqs, $settings);
 
 	# Combine and index predictions by strand, stop
@@ -212,7 +209,6 @@ BLAST:
 		close MR;
 	}
 
-RNA:
 	my $trna_predictions = AKUtils::gettRNAscanSEPredictions($input_seqs, $settings);
 	foreach my $seqname (keys %$trna_predictions) {
 		foreach my $pred (@{$$trna_predictions{$seqname}}) {
@@ -221,6 +217,7 @@ RNA:
 		}
 	}
 
+RNA:
   my $rrna_predictions = getRRnaPredictions($input_files,$settings);
   foreach my $seqname (keys %$rrna_predictions){
     foreach my $pred (@{$$rrna_predictions{$seqname}}) {
@@ -361,7 +358,6 @@ sub rnammer($$){
     my $command="$$settings{rnammer_exec} -S $domain -multi -m tsu,lsu,ssu -gff $$settings{tempdir}/rnammer.gff -xml $$settings{tempdir}/rnammer.xml -f $$settings{tempdir}/rnammer.ffn < $i";
     logmsg "Running RNAmmer.\nCOMMAND\n  $command";
     system($command);
-    die if $?;
   }
   logmsg "RNAmmer output files are in $$settings{tempdir}\n";
   $predictions=loadRnammerPredictions("$$settings{tempdir}/rnammer.gff",$settings);
