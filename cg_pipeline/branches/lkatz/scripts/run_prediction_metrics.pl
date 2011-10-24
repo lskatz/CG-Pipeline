@@ -59,8 +59,11 @@ sub predictionMetrics($$){
   my($file,$settings)=@_;
   my $metrics; # hash of prediction metrics
 
+  my %seenSeq;
   my $seqio=Bio::SeqIO->new(-file=>$file,-format=>'genbank');
   while(my $seq=$seqio->next_seq){
+    next if($seenSeq{$seq->id}++);
+    $$metrics{genomeLength}+=$seq->length;
     for my $feat ($seq->get_SeqFeatures){
       $$metrics{$feat->primary_tag}++;
       #for my $tag ($feat->get_all_tags){

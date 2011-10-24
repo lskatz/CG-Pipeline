@@ -1,4 +1,4 @@
-#!/usr/bin/env perl
+#!/usr/bin/perl
 
 # run_pipeline: wrapper script for CG-Pipeline
 # Author: Lee Katz (lskatz@gatech.edu)
@@ -116,7 +116,7 @@ sub main(){
       else{
         $invoke_string.=">>$logfile";
       }
-      CGLog($logfile,"COMMAND to assemble with ".scalar(@{ $$settings{input} })." sequence files\n  $invoke_string",'append');
+      CGLog($logfile,"COMMAND to assemble with ".scalar(@{ $$settings{input} })." SFF files\n  $invoke_string",'append');
       system($invoke_string);
       CGLog($logfile,'ASSEMBLY END '.date(),'append');
       $$settings{input}=""; # unset input for any possible future steps, because input was meant as an SFF in this case

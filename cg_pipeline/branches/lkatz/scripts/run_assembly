@@ -36,15 +36,10 @@ exit(main());
 
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
+	my $assemblyProgram="run_assembly_core.pl";
 
 	# print out usage if no arguments are specified
-	if(@ARGV<1){
-	  print("	Usage: $0 input.sff [, input2.sff, ...] [-R reference1.mfa [-R reference2.mfa...]] [-C workdir] [-e expectedGenomeSize] [-d=forceDeNovo]
-	-e expectedGenomeSize: in megabases 
-	-d forceDeNovo: either T or F but is false by default (true if no reference specified)
-    ");
-	  exit;
-	}
+	die usage() if(@ARGV<1);
 	
 	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'output=s','expectedSize=i','deNovo=s');
 	GetOptions($settings, @cmd_options) or die;
@@ -55,34 +50,23 @@ sub main() {
 	  die("Input or reference file $file not found") unless -f $file;
 	}
 
-  # separate input files into different chemistries
-  my %input_file=separateInputFilesByChemistry(\@ARGV,$settings);
-  my @chemistry=keys(%input_file);
-
 	my($invoke_string,$params,@parametersToPass,@parametersToSkip,$assemblyDir,$tempDir,@finalAssemblyFilename);
 	@parametersToPass=qw(keep expectedSize);
 	# run DE NOVO if it's explicitly asked for, or if there are no references
-	if($$settings{deNovo} eq 'T'||scalar(@{ $$settings{Reference} })<1){
-    for my $chemistry(@chemistry){ # e.g. 454, illumina
-      my $assemblyProgram="run_assembly_$chemistry.pl";
-      my $input_file=$input_file{$chemistry};
-      $tempDir=$$settings{tempdir}."/"."DENOVO"."/".$chemistry;
-      my $outFilename="$tempDir/final.fna";
-      push(@finalAssemblyFilename,$outFilename);
-      mkpath($tempDir);
-      $params=join(" ",@$input_file)." --tempdir $tempDir --output $outFilename ";
-      $params.=parameterString(\@parametersToPass,$settings);
-      $invoke_string="$assemblyProgram $params";
-      logmsg "De novo assembly";
-      system($invoke_string);
-    }
+	if($$settings{deNovo} =~/T/i ||scalar(@{ $$settings{Reference} })<1){
+	  $tempDir=$$settings{tempdir}."/"."DENOVO";
+	  my $outFilename="$tempDir/final.fna";
+	  push(@finalAssemblyFilename,$outFilename);
+	  mkpath($tempDir);
+	  $params=join(" ",@ARGV)." --tempdir $tempDir --output $outFilename ";
+	  $params.=parameterString(\@parametersToPass,$settings);
+	  $invoke_string="$assemblyProgram $params";
+	  logmsg "De novo assembly with command\n  $invoke_string";
+	  system($invoke_string);
 	}
 	# run assembly or assemblies for each REFERENCE, plus once for de novo if applicable
 	foreach my $R (@{$$settings{Reference}}){
-    die "Not set up for reference assembly yet";
-    my $chemistry=""; ########
-    my $assemblyProgram="run_assembly_$chemistry.pl";
-	  $tempDir=$$settings{tempdir}."/".basename($R,qw(.fna .ffn .faa .fasta .seq .fa));
+	  $tempDir=$$settings{tempdir}."/".basename($R,qw(.fna .ffn .faa .fasta .seq .fa .mfa .fas .txt));
 	  my $outFilename="$tempDir/final.fna";
 	  push(@finalAssemblyFilename,$outFilename);
 	  mkpath($tempDir);
@@ -92,9 +76,9 @@ sub main() {
 
 	  # run the assembly with parameters
 	  $invoke_string="$assemblyProgram $params";
-	  logmsg "Reference assembly with $R";
+	  logmsg "Reference assembly with $R, with command\n  $invoke_string";
 	  system($invoke_string);
-    }
+  }
 
 	# Now that each assembly has been produced, find the best assembly.
 	# Preferential treatment is given to the de novo assembly, so it goes first in the arguments list
@@ -102,9 +86,6 @@ sub main() {
 	$invoke_string="run_assembly_chooseBest.pl ".join(" ",@finalAssemblyFilename)." --output $$settings{output}";
 	logmsg $invoke_string;
 	system($invoke_string);
-  $invoke_string="run_assembly_metrics.pl $$settings{output}";
-  logmsg $invoke_string;
-  system($invoke_string);
 
 	return 0;
 }
@@ -131,35 +112,10 @@ sub parameterString{
   return $params;
 }
 
-# see if there is a value in an array
-# parameters: $array, $value
-sub in_array{
-   my ($arr,$search_for) = @_;
-   my %items = map {$_ => 1} @$arr;
-   return (exists($items{$search_for}))?1:0;
+sub usage{
+  "Perform a genome assembly
+  Usage: $0 input.sff [, input2.sff, ...] [-R reference1.mfa [-R reference2.mfa...]] [-C workdir] [-e expectedGenomeSize] [-d=forceDeNovo]
+  -e expectedGenomeSize: in megabases
+  -d forceDeNovo: either T or F but is false by default (true if no reference specified)
+  ";
 }
-
-# make a hash of arrays of files, by chemistry type (e.g. $file{454}=>[input1.sff,input2.sff])
-sub separateInputFilesByChemistry{
-  my($input_file,$settings)=@_;
-  my %file;
-  for my $f(@$input_file){
-    my $ext=$f;
-    $ext=~s/^.+\.//;
-    $ext=lc($ext); # lc saves on the cost of =~//i later
-    if($ext=~/sff/){ # 454
-      push(@{ $file{'454'} },$f);
-    }
-    elsif($ext=~/^(sff|fna|fasta|ffn|fa|mfa)$/){ # fasta
-      push(@{ $file{'fasta'} },$f);
-    }
-    elsif($ext=~/^(fastq|fq)$/){
-      push(@{ $file{'illumina'} },$f);
-    }
-    else{
-      die "Could not determine the file type of $f or it is not supported. Cannot continue";
-    }
-  }
-  return %file;
-}
-

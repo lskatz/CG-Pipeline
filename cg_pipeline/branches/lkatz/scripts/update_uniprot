@@ -10,9 +10,9 @@ gunzip --stdout uniprot_trembl.fasta.gz > uniprot_trembl.fasta
 
 cat uniprot_sprot.fasta uniprot_trembl.fasta > uniprot_sprot_trembl.fasta
 
-formatdb -p T -t uniprot_sprot_trembl -n uniprot_sprot_trembl -i uniprot_sprot_trembl.fasta
-formatdb -p T -t uniprot_sprot -n uniprot_sprot -i uniprot_sprot.fasta
-formatdb -p T -t uniprot_trembl -n uniprot_trembl -i uniprot_trembl.fasta
+formatdb -p T -t uniprot_sprot_trembl -n uniprot_sprot_trembl -i uniprot_sprot_trembl.fasta -o T
+formatdb -p T -t uniprot_sprot -n uniprot_sprot -i uniprot_sprot.fasta -o T
+formatdb -p T -t uniprot_trembl -n uniprot_trembl -i uniprot_trembl.fasta -o T
 
 wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.xml.gz
 gunzip --stdout uniprot_sprot.xml.gz > uniprot_sprot.xml

@@ -26,7 +26,6 @@ while (my $seq = $inseq->next_seq) {
 	$i++; logmsg "Processed $i proteins" if $i % 100 == 0;
 
 	my ($feats, $stats) = $factory->run($seq);
-  die "TMHMM error: check to see if you have tmhmm in your path: echo \$PATH | grep --color=TTY tmhmm" if(!defined($feats));
 	next if @$feats < 2; # a transmembrane motif results in at least 3 features (inside-transmembrane-outside)
 
 	foreach my $feat (@$feats) {

@@ -49,7 +49,7 @@ my $settings = {
 ######################
 # set up cogs mapping
 	my %prot2cogid;
-	open(CFH,"<$$settings{prot2cogid}") or die "Could not find the mapping file, as specificed by the config key 'prot2cogid'";
+	open(CFH,"<$$settings{prot2cogid}") or die;
 	my @prot2cogid_map=<CFH>;
 	close (CFH);
 	foreach (@prot2cogid_map){
@@ -92,7 +92,7 @@ my $settings = {
 		if(!defined($type) || !defined($map{$type})){ print STDERR "Input filename rejected: $type\n";next;}
 		@params = @{$map{$type}};
 		open (FH, "<$sqlfile") or die $!; #one prediction file containing locus tags
-print STDERR "parsing $sqlfile\n";
+    print ("parsing $sqlfile");
 		while (<FH>){
 			chomp;
 			# skip a row of empties

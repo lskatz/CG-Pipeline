@@ -278,7 +278,8 @@ sub processAlignment{
 }
 
 sub usage{
-  "perl $0 -r restrictionMap.xml -s sequenceReads.fasta -a assembly.ace -o assembly.fasta
+  "incorporate an OpGen xml to make an assembly better: remove misassembled contigs and perform reference assembly of unused reads back onto the well-assembled contigs
+  Usage: perl $0 -r restrictionMap.xml -s sequenceReads.fasta -a assembly.ace -o assembly.fasta
   -r restrictionMap.xml
     Restriction map xml outputted by MapSolver
   -a assembly.ace

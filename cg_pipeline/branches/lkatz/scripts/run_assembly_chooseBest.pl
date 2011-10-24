@@ -45,16 +45,6 @@ sub main() {
   $$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
   
   my @input_files=@ARGV;
-  my @tmpFiles=();
-  for(my $i=0;$i<@input_files;$i++){
-    if(-s $input_files[$i]<1){
-      logmsg "I will not consider the empty file $input_files[$i]";
-    }
-    else{
-      push(@tmpFiles,$input_files[$i]);
-    }
-  }
-  @input_files=@tmpFiles;
   logmsg "Determining best assembly from ".join(", ",@input_files).".";
   foreach my $file (@input_files) {
 	  $file = File::Spec->rel2abs($file);
@@ -71,13 +61,9 @@ sub main() {
 # Find the best assembly, given the contigs in that assembly
 # params: list each assembly, composed of contigs
 # return seqs of best assembly
-# TODO if one of the metrics is an order of magnitude higher than any other assembly's metric then give it a +1
-#   This would give a distict advantage to much better assemblies (watch out for numContigs=0 and the like)
 sub bestAssemblySeqs($$){
   my($seqs,$settings)=@_;
   my($i,%metrics,%vote);
-  my @largestStats=qw(N50 genomeLength longestContig);
-  my @smallestStats=qw(numContigs);
 
   # generate the metrics
   @$seqs=sort{$a cmp $b} @$seqs;
@@ -96,6 +82,8 @@ sub bestAssemblySeqs($$){
   }
 
   # largest values give a vote
+  my @largestStats=qw(N50 genomeLength longestContig);
+  my @smallestStats=qw(numContigs);
   foreach my $statistic (@largestStats,@smallestStats){
     my $key="---";
     # make a hash of this statistic
@@ -109,6 +97,7 @@ sub bestAssemblySeqs($$){
   }
 
   my $bestAssemblyFilename=winner(\%vote);
+  logmsg "The best assembly file is $bestAssemblyFilename";
 
   return AKUtils::readMfa($bestAssemblyFilename);
 }
