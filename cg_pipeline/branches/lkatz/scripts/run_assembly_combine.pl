@@ -3,6 +3,9 @@
 # run-assembly-reconciliation: combine assemblies
 # Author: Lee Katz <lskatz@gatech.edu>
 
+# TODO see if any contigs can be recovered as minimus "singlets"
+#   Therefore, have an alternate -r parameter so that singlets will not be recovered
+
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 
@@ -64,6 +67,7 @@ sub main() {
 sub combineAllAssemblies{
   my($assembly,$settings)=@_;
   my $combinedAssembly=shift(@$assembly);
+  # TODO change a setting to true if the next "assembly" is reads
   for(my $i=0;$i<@$assembly;$i++){
     my $otherAssembly=$$assembly[$i];
     $combinedAssembly=combine2Assemblies($combinedAssembly,$otherAssembly,$settings);
@@ -95,6 +99,7 @@ sub combine2Assemblies{
   die "Problem with toAmos with command\n  toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'" if $?;
   system("minimus2 -D REFCOUNT=$numContigs '$$settings{tempdir}/minimus.combined'");
   die "Problem with Minimus2" if $?;
+  # TODO recover singletons if this is an assembly, not reads
   return "$$settings{tempdir}/minimus.combined.fasta";
 }
 
@@ -113,7 +118,8 @@ sub usage{
   "Combines two or more assemblies into one assembly, using Minimus2
   Usage: $0 -a assembly1 -a assembly2 [-a ...] -o output.assembly.fasta
     -a assembly file
-      at least two assembly files are needed.  You can also decide to use a reads file at your own risk.
+      multiple assemblies are allowed (and expected)
+    -r reads file
     -o outputfile
       assembly output fasta file
     optional parameters:
@@ -122,6 +128,5 @@ sub usage{
       force
     -k
       keep temp files
-
   "
 }
