@@ -3,9 +3,6 @@
 # run-assembly-reconciliation: combine assemblies
 # Author: Lee Katz <lskatz@gatech.edu>
 
-# TODO see if any contigs can be recovered as minimus "singlets"
-#   Therefore, have an alternate -r parameter so that singlets will not be recovered
-
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 
@@ -39,14 +36,15 @@ exit(main());
 sub main() {
   $settings = AKUtils::loadConfig($settings);
 
-  die(usage()) if @ARGV < 1;
+  die(usage($settings)) if @ARGV < 1;
 
-  my @cmd_options = qw(keep tempdir=s outfile=s force assembly=s@);
+  my @cmd_options = qw(keep tempdir=s outfile=s force assembly=s@ reads=s@ minContigSize=i);
   GetOptions($settings, @cmd_options) or die;
 
   $$settings{cpus}=AKUtils::getNumCPUs();
+  $$settings{minContigSize}||=500;
 
-  my @assembly=@{ $$settings{assembly} } or die "Need assemblies:\n".usage();
+  my @assembly=@{ $$settings{assembly} } or die "Need assemblies:\n".usage($settings);
   $$settings{outfile} ||= "$0.out.fasta"; # TODO determine if an ace should be the output
   $$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
   open(FH, '>', $$settings{outfile}) or die("Error writing to output file $$settings{outfile}: $!");
@@ -54,6 +52,10 @@ sub main() {
 
   $$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
   logmsg "Temporary directory is $$settings{tempdir}";
+
+  # put all the reads into the temporary directory for later
+  my $reads=combineReadsFiles($settings);
+  push(@assembly,$reads); # the last file in @assembly is the reads file
 
   my $combinedAssembly=combineAllAssemblies(\@assembly,$settings);
   system("cp $combinedAssembly $$settings{outfile}"); 
@@ -64,14 +66,38 @@ sub main() {
   return 0;
 }
 
+sub combineReadsFiles{
+  my($settings)=@_;
+  $$settings{readsFile}="$$settings{tempdir}/extraReads.fasta";
+  my $reads={};
+  for my $file(@{$$settings{reads}}){
+    my $seqs=AKUtils::readMfa($file,$settings);
+    for my $s(keys(%$seqs)){
+      $$reads{$s}=$$seqs{$s}; # if(length($$seqs{$s})>$$settings{minContigSize});
+    }
+  }
+  AKUtils::printSeqsToFile($reads,$$settings{readsFile},$settings);
+  return $$settings{readsFile};
+}
 sub combineAllAssemblies{
   my($assembly,$settings)=@_;
   my $combinedAssembly=shift(@$assembly);
-  # TODO change a setting to true if the next "assembly" is reads
   for(my $i=0;$i<@$assembly;$i++){
+    $$settings{is_reads_file}=1 if($i+1==@$assembly);
     my $otherAssembly=$$assembly[$i];
+    next if(-s $otherAssembly < 1);
     $combinedAssembly=combine2Assemblies($combinedAssembly,$otherAssembly,$settings);
   }
+
+  # filter sequences (contig size, and any other filter in the future)
+  my $filteredSeqs;
+  my $seqs=AKUtils::readMfa($combinedAssembly,$settings);
+  while(my($id,$sequence)=each(%$seqs)){
+    $$filteredSeqs{$id}=$sequence if(length($sequence)>$$settings{minContigSize});
+  }
+  $$settings{order_seqs_by_length}=1;
+  AKUtils::printSeqsToFile($filteredSeqs,$combinedAssembly,$settings);
+  
   return $combinedAssembly;
 }
 
@@ -87,7 +113,7 @@ sub combine2Assemblies{
   my $queryGenome=$a2;
   system("cat '$a1' '$a2' > $combined_fasta_file");
   die "Problem with creating input file" if $?;
-  if($numContigs2>$numContigs1){
+  if($numContigs2>$numContigs1 && !$$settings{is_reads_file}){
     $numContigs=$numContigs2;
     $refGenome=$a2;
     $queryGenome=$a1;
@@ -99,13 +125,24 @@ sub combine2Assemblies{
   die "Problem with toAmos with command\n  toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'" if $?;
   system("minimus2 -D REFCOUNT=$numContigs '$$settings{tempdir}/minimus.combined'");
   die "Problem with Minimus2" if $?;
-  # TODO recover singletons if this is an assembly, not reads
-  return "$$settings{tempdir}/minimus.combined.fasta";
+
+  # recover singletons that pass the filter
+  my %allseqs=(); my $i=0;
+  for my $file("$$settings{tempdir}/minimus.combined.fasta","$$settings{tempdir}/minimus.combined.singletons.seq"){
+    my $seqs=AKUtils::readMfa($file,$settings);
+    while(my($id,$sequence)=each(%$seqs)){
+      $allseqs{++$i}=$sequence if (length($sequence)>=$$settings{minContigSize});
+    }
+  }
+  AKUtils::printSeqsToFile(\%allseqs,"$$settings{tempdir}/contigsAndSingletons.fasta");
+
+  return "$$settings{tempdir}/contigsAndSingletons.fasta";
 }
 
 sub assembly_metrics{
   my($a,$settings)=@_;
   my %seqMetric;
+  return %seqMetric if(-s $a < 1);
   my $metrics=`run_assembly_metrics.pl '$a'`;
   for my $line(split(/\n/,$metrics)){
     my($key,$value)=split(/\t/,$line);
@@ -117,12 +154,14 @@ sub assembly_metrics{
 sub usage{
   "Combines two or more assemblies into one assembly, using Minimus2
   Usage: $0 -a assembly1 -a assembly2 [-a ...] -o output.assembly.fasta
-    -a assembly file
+    -a assembly file in fasta format
       multiple assemblies are allowed (and expected)
-    -r reads file
+    -r reads file in fasta format
+      Reads that have not been used in the individual assemblies
     -o outputfile
       assembly output fasta file
     optional parameters:
+    -m minimum size of a contig
     -t tempdir
     -f
       force
