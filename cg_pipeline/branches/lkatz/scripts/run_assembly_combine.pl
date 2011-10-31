@@ -53,9 +53,10 @@ sub main() {
   $$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
   logmsg "Temporary directory is $$settings{tempdir}";
 
-  # put all the reads into the temporary directory for later
-  my $reads=combineReadsFiles($settings);
-  push(@assembly,$reads); # the last file in @assembly is the reads file
+  if($$settings{reads}){
+    my $reads=combineReadsFiles($settings);
+    push(@assembly,$reads);
+  }
 
   my $combinedAssembly=combineAllAssemblies(\@assembly,$settings);
   system("cp $combinedAssembly $$settings{outfile}"); 
@@ -69,27 +70,36 @@ sub main() {
 sub combineReadsFiles{
   my($settings)=@_;
   $$settings{readsFile}="$$settings{tempdir}/extraReads.fasta";
+  logmsg "Combining all reads into a single reads file at $$settings{readsFile}";
   my $reads={};
   for my $file(@{$$settings{reads}}){
     my $seqs=AKUtils::readMfa($file,$settings);
     for my $s(keys(%$seqs)){
-      $$reads{$s}=$$seqs{$s}; # if(length($$seqs{$s})>$$settings{minContigSize});
+      $$reads{$s}=$$seqs{$s};
     }
   }
   AKUtils::printSeqsToFile($reads,$$settings{readsFile},$settings);
   return $$settings{readsFile};
 }
+
 sub combineAllAssemblies{
   my($assembly,$settings)=@_;
-  my $combinedAssembly=shift(@$assembly);
+  
+  logmsg "Sorting the assemblies by combining assembly metrics";
+  my @assembly=sort({
+    assemblyScore($b) <=> assemblyScore($a);
+  } @$assembly);
+  $assembly=\@assembly;
+
+  my $combinedAssembly=shift(@$assembly); # the first assembly is the first "combined" assembly
   for(my $i=0;$i<@$assembly;$i++){
-    $$settings{is_reads_file}=1 if($i+1==@$assembly);
+    $$settings{is_reads_file}=1 if($i+1==@$assembly && $$settings{readsFile});
     my $otherAssembly=$$assembly[$i];
     next if(-s $otherAssembly < 1);
     $combinedAssembly=combine2Assemblies($combinedAssembly,$otherAssembly,$settings);
   }
 
-  # filter sequences (contig size, and any other filter in the future)
+  logmsg "Filtering sequences by contig size of $$settings{minContigSize}";
   my $filteredSeqs;
   my $seqs=AKUtils::readMfa($combinedAssembly,$settings);
   while(my($id,$sequence)=each(%$seqs)){
@@ -113,13 +123,6 @@ sub combine2Assemblies{
   my $queryGenome=$a2;
   system("cat '$a1' '$a2' > $combined_fasta_file");
   die "Problem with creating input file" if $?;
-  if($numContigs2>$numContigs1 && !$$settings{is_reads_file}){
-    $numContigs=$numContigs2;
-    $refGenome=$a2;
-    $queryGenome=$a1;
-    system("cat '$a2' '$a1' > $combined_fasta_file");
-    die "Problem with creating input file" if $?;
-  }
   logmsg "Running Minimus2 with reference genome $refGenome and query genome $queryGenome";
   system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
   die "Problem with toAmos with command\n  toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'" if $?;
@@ -137,6 +140,22 @@ sub combine2Assemblies{
   AKUtils::printSeqsToFile(\%allseqs,"$$settings{tempdir}/contigsAndSingletons.fasta");
 
   return "$$settings{tempdir}/contigsAndSingletons.fasta";
+}
+
+# make a crude assembly score for sorting the best assemblies
+# TODO move this subroutine to run_assembly_metrics.pl so that you can get a quick number
+sub assemblyScore{
+  my($a,$settings)=@_;
+  my %metrics=assembly_metrics($a);
+  my $points;
+  for (qw(N50 genomeLength longestContig numContigs)){
+    if(/numContigs/){
+      $points-=log($metrics{$_});
+      next;
+    }
+    $points+=log($metrics{$_});
+  }
+  return $points;
 }
 
 sub assembly_metrics{
