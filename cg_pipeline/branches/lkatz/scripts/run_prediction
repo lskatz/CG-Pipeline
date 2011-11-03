@@ -186,14 +186,12 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 				}
 				my $aa_seq = AKUtils::dna2aa($nt_seq);
 
-#				print "$best_start..$stop\t"; print " $$_{predictor}" for @{$all_predictions{$seq}->{$strand}->{$stop}};
-#				print " [ @s ] [ L=".length($$input_seqs{$seq})." ]\n";
-#				warn("WARNING: L(pred)>2000") if abs($best_start-$stop)>2800;
-#				warn("WARNING: L(pred)<100") if abs($best_start-$stop)<100;
-
 				# NB: longest known protein in e. coli is 1538 aa
-				if (length($aa_seq) < 30 or length($aa_seq) > 2000 or $aa_seq !~ /M.+\*$/) {
-					warn("WARNING: abnormal translated sequence: \n\t$nt_seq\n\t$aa_seq\n");
+        # TODO put these settings into conf file
+        $$settings{prediction_minLength}||=30;
+        $$settings{prediction_maxLength}||=2000;
+				if (length($aa_seq) < $$settings{prediction_minLength} or length($aa_seq) > $$settings{prediction_maxLength} or $aa_seq !~ /M.+\*$/) {
+					warn("WARNING: abnormal translated sequence (either too long, too short, or doesn't have a possible M start site): \n\t$nt_seq\n\t$aa_seq\n");
 				}
 
 			}
