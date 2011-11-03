@@ -37,20 +37,20 @@ exit(main());
 
 sub main() {
   $settings = AKUtils::loadConfig($settings);
-  die("  Usage: $0 -p projectName\n") if @ARGV<1;
+  die("  Usage: $0 annotation.gb\n") if @ARGV<1;
 
-  my @cmd_options=('output=s','project=s');
+  my @cmd_options=('output=s');
   GetOptions($settings, @cmd_options) or die;
 
-  my $project=$$settings{project};
+  my $project=shift(@ARGV);
   my $project=File::Spec->rel2abs($project);
-  die("Project $project not found") unless -d $project;
+  die("Annotation file $project not found") unless -e $project;
 
   my $metrics=annotationMetrics($project,$settings);
   # TODO print metrics in an understandable and parsable way
   print join("\t","Project",$project)."\n";
   foreach my $metric (keys %$metrics){
-    print join("\t",$metric,$$metrics{$metric},($$metrics{$metric}/$$metrics{CDS}*100))."\n";
+    print join("\t",$metric,$$metrics{$metric})."\n";
   }
   return 0;
 }
@@ -63,8 +63,8 @@ sub annotationMetrics($$){
   my $count;
   
   my %seenCDS;
-  my $file="$project/annotation.gb";
-  my $seqio=Bio::SeqIO->new(-file=>$file,-format=>'genbank');
+  my $file=$project;
+  my $seqio=Bio::SeqIO->new(-file=>$file);
   while(my $seq=$seqio->next_seq){
     FEATURE: for my $feat ($seq->get_SeqFeatures){
       $$metrics{$feat->primary_tag}++;

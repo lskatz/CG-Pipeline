@@ -36,12 +36,12 @@ exit(main());
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
 
-	die("Usage: $0 input.sff [, input2.sff, ...] [-R references.mfa] [-C workdir]\n  Input files can also be fasta files.  *.fasta.qual files are considered as the relevant quality files") if @ARGV < 1;
+	die("Usage: $0 input.sff [, input2.sff, ... inputN.fastq, ... inputM.fasta] [-R references.mfa] [-C workdir]\n  Input files can be sff, fastq, and fasta.  *.fasta.qual files are considered as the relevant quality files") if @ARGV < 1;
 
-	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'output=s', 'min_out_contig_length=i');
+	my @cmd_options = ('Reference=s@', 'keep', 'tempdir=s', 'output=s', 'assembly_min_contig_length=i', 'debug');
 	GetOptions($settings, @cmd_options) or die;
 
-	$$settings{min_out_contig_length} ||= 500;
+	$$settings{assembly_min_contig_length} ||= 500;
 	$$settings{outfile} = $$settings{output};
 	$$settings{outfile} ||= "$0.out.fasta";
 	$$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
@@ -62,12 +62,13 @@ sub main() {
 		die("Input or reference file $file not found") unless -f $file;
 	}
 
+  # TODO make a distinction between long and short reads
+
   my $fastaqualfiles=baseCall(\@input_files,$settings); #array of [0=>fna,1=>qual file] (array of arrays)
 
 	my $final_seqs;
 
 	if (@ref_files) {
-    # TODO multithread reference assemblies
 		my $newbler_basename = runNewblerMapping(\@input_files, \@ref_files, $settings);
 
 		my $amos_basename = runAMOSMapping($fastaqualfiles, \@ref_files, $settings);
@@ -77,29 +78,70 @@ sub main() {
 		$final_seqs = AKUtils::readMfa($combined_filename);
 	} else {
     
-    # TODO multithread assemblies
-		my $newbler_basename = runNewblerAssembly(\@input_files, $settings);
+    my ($command,@assembly);
 
-    my $combined_filename=combineNewblerDeNovo($newbler_basename,$settings);
+    DENOVO_454:
+    if(@{ $$fastaqualfiles{454} }){
+      my $newbler_basename=File::Spec->rel2abs("$$settings{tempdir}/DENOVO/P__runAssembly");
+      my $out454="$newbler_basename/assembly.fasta";
+      $command="run_assembly_454.pl ".join(" ",@{ $$fastaqualfiles{sff} }) . " -t $newbler_basename -o $newbler_basename/assembly.fasta 2>&1";
+      logmsg "Running Newbler assembly with\n    $command";
+      system($command) unless($$settings{debug});
+      die "Could not run Newbler" if $?;
 
-		# TODO: reprocess repeat or long singleton reads
-    # repeating the process might be moot if we use reconciliator -LK
+      DENOVO_POLISHING:
+      if(@{ $$fastaqualfiles{illumina} }){
+        logmsg "Polishing the 454 assembly with Nesoni";
+        my $polishing_basename=File::Spec->rel2abs("$$settings{tempdir}/DENOVO/polishing");
+        my $outPolishing=File::Spec->abs2rel("$polishing_basename/consensus_masked.fa");
+        system("mkdir $polishing_basename") if(!-d $polishing_basename);
+        system("nesoni samshrimp: $polishing_basename $out454 reads: ".join(" ",@{ $$fastaqualfiles{illumina} })." --sam-unaligned no") unless($$settings{debug});
+        die "Problem with Nesoni and/or SHRiMP" if $?;
+        system("nesoni samconsensus: $polishing_basename --majority 0.9 --cutoff 0.9") unless($$settings{debug});
+        die "Problem with Nesoni and/or Samtools" if $?;
+        $out454=$outPolishing;
+      }
+      push(@assembly, $out454);
+    }
+
+    DENOVO_ILLUMINA:
+    if(@{ $$fastaqualfiles{illumina} }){
+      logmsg "Performing denovo assembly of Illumina";
+      my $illumina_basename=File::Spec->rel2abs("$$settings{tempdir}/DENOVO/illumina");
+      my $outIllumina="$illumina_basename/assembly.fasta";
+      mkdir($illumina_basename) if(!-d $illumina_basename);
+      $command="run_assembly_illumina.pl ".join(" ",@{ $$fastaqualfiles{illumina} })." -o $outIllumina -t $illumina_basename 2>&1";
+      logmsg "Running Illumina assembly with\n   $command";
+      system($command) unless($$settings{debug});
+      die "Could not perform Velvet assembly" if $?;
+      push(@assembly,$outIllumina);
+    }
+
+    # sanity check
+    die "There are no individual assemblies to combine!" if(@assembly < 1);
+
+    DENOVO_COMBINING:
+    # run combining stage between 454 and Illumina assemblies.
+    # TODO consider unused reads
+    logmsg "Combining individual assemblies";
+    my $combined_filename="$$settings{tempdir}/DENOVO/final.fna";
+    mkdir("$$settings{tempdir}/DENOVO/combining") if(!-d "$$settings{tempdir}/DENOVO/combining");
+    $command="run_assembly_combine.pl -a '".join("' -a '",@assembly)."' -o '$combined_filename' -t '$$settings{tempdir}/DENOVO/combining' -m $$settings{assembly_min_contig_length} ";
+    #$command.="-r $$settings{tempdir}/DENOVO/newbler_Singleton.sff.fasta -r $$settings{tempdir}/DENOVO/newbler_Repeat.sff.fasta "; # adding in extra reads doesn't add much
+    $command.="2>&1 ";
+    logmsg "Combining with command\n   $command";
+    system($command) unless($$settings{debug});
+
 		$final_seqs = AKUtils::readMfa("$combined_filename");
 	}
 	
+  # TODO this filtering step is not necessary if run_assembly_combine.pl does it for us.
 	foreach my $seq (keys %$final_seqs) {
-		delete $$final_seqs{$seq} if length($$final_seqs{$seq}) < $$settings{min_out_contig_length};
+		delete $$final_seqs{$seq} if length($$final_seqs{$seq}) < $$settings{assembly_min_contig_length};
 	}
 	AKUtils::printSeqsToFile($final_seqs, $$settings{outfile}, {order_seqs_by_name => 1});
 
-	#copy($combined_filename, $$settings{outfile}) or die("Error writing to output file $$settings{outfile}");
 	logmsg "Output is in $$settings{outfile}";
-
-	if ($$settings{keep}) {
-		my ($out_filename, $out_dirname) = fileparse($$settings{outfile});
-		logmsg "Saving assembly working directory $$settings{tempdir} to $out_dirname";
-		move($$settings{tempdir}, $out_dirname) or die "Error moving output directory $$settings{tempdir} to $out_dirname: $!";
-	}
 
 	return 0;
 }
@@ -118,30 +160,65 @@ sub is_sff($){
 }
 sub is_fasta($){
   my($file)=@_;
-  return 1 if(ext($file)=~/^(sff|fna|fasta|ffn|fa|fas)$/i);
+  return 1 if(ext($file)=~/^(fna|fasta|ffn|fa|fas|mfa)$/i);
   return 0;
 }
-# wrapper for all base calling for input files
+sub is_fastq($){
+  my($file)=@_;
+  return 1 if(ext($file)=~/^(fastq)$/i);
+  return 0;
+}
+
+# Wrapper for all base calling for input files
+# Separates chemistries by extension
+# TODO in the future somehow distinguish between chemistries using user-inputted flags
 sub baseCall($$){
   my($input_files,$settings)=@_;
-  my $fastaqualfiles;
+  #my $fastaqualfiles;
+  my($long,$short,$sff);
   foreach my $file (@$input_files){
     my $seqQualPair; # [0=>seq,1=>qual]
     if(is_sff($file)){
       $seqQualPair=sff2fastaqual([$file], $settings);
       $seqQualPair=$$seqQualPair[0];
+      push(@$long,$seqQualPair);
+      push(@$sff,$file);
     }
     elsif(is_fasta($file)){
       my $qualfile="";
       $qualfile="$file.qual" if(-e "$file.qual");
       $seqQualPair=[$file,$qualfile];
+      push(@$long,$seqQualPair);
+    }
+    elsif(is_fastq($file)){
+      # quality trim fastq files
+      $file=qualityControlFastq($file,$settings);
+      push(@$short,$file);
     }
     else{
       die "The format of $file is incompatible";
     }
-    push(@$fastaqualfiles,$seqQualPair);
   }
-  return $fastaqualfiles;
+  return {sff=>$sff,454=>$long,illumina=>$short};
+}
+
+# quality control the fastq reads.
+# minimum of 75% of bases have to have a quality of at least 20
+sub qualityControlFastq{
+  my($file,$settings)=@_;
+  my $outfile="$$settings{tempdir}/".fileparse($file).".trimmed.fastq";
+  return $outfile if(-s $outfile > 100); # skip this sub if the file already has some content
+  logmsg "Performing a quality filter on the reads in $file ==> $outfile";
+  my $executable=AKUtils::fullPathToExec("fastq_quality_filter");
+  my $command="$executable -Q33 -q 20 -p 75 -v -i '$file' -o '$outfile' 2>&1";
+  system($command);
+  if($?){
+    logmsg "Error with fastx. Trying again but assuming Sanger-variant fastq file";
+    $command=~s/\-Q33\s*//; # remove Q33 parameter (but not using ///g, in case it matches the infile name)
+    system($command);
+    die "Error with fastx toolkit" if $?;
+  }
+  return $outfile;
 }
 
 # given a file containing one read accession per line and a pattern for all SFFs, extracts the reads and creates a new SFF
@@ -169,14 +246,52 @@ sub sff2fastaqual($$) {
 	foreach my $input_file (@$sff_files) {
 		my ($sff_file, $sff_dir) = fileparse($input_file);
 		my $invoke_string = "sffinfo -seq '$sff_dir/$sff_file' > '$$settings{tempdir}/$sff_file.fasta'";
-		logmsg "Running $invoke_string";
-		system($invoke_string) if(!-e "$$settings{tempdir}/$sff_file.fasta"); die if $?;
-		$invoke_string = "sffinfo -qual '$sff_dir/$sff_file' > '$$settings{tempdir}/$sff_file.qual'";
-		logmsg "Running $invoke_string";
-		system($invoke_string) if(!-e "$$settings{tempdir}/$sff_file.qual"); die if $?;
+    if(!-e "$$settings{tempdir}/$sff_file.fasta"){
+      logmsg "Running $invoke_string";
+      system($invoke_string) if(!-e "$$settings{tempdir}/$sff_file.fasta"); die if $?;
+    }
+    if(!-e "$$settings{tempdir}/$sff_file.qual"){
+      $invoke_string = "sffinfo -qual '$sff_dir/$sff_file' > '$$settings{tempdir}/$sff_file.qual'";
+      logmsg "Running $invoke_string";
+      system($invoke_string) if(!-e "$$settings{tempdir}/$sff_file.qual"); die if $?;
+    }
 		push(@fastaqualfiles, ["$$settings{tempdir}/$sff_file.fasta", "$$settings{tempdir}/$sff_file.qual"]);
 	}
 	return \@fastaqualfiles;
+}
+
+sub fastq2fastaqual($$){
+  my($fastq_files,$settings)=@_;
+  my @fastaqualfiles;
+  foreach my $input_file (@$fastq_files) {
+    my ($fastq_file, $fastq_dir)=fileparse($input_file);
+    open(FASTQ,"<",$input_file) or die "Could not open $input_file for reading because $!";
+    open(FASTA,">","$$settings{tempdir}/$fastq_file.fasta") or die "Could not open $$settings{tempdir}/$fastq_file.fasta for writing because $!";
+    open(QUAL,">","$$settings{tempdir}/$fastq_file.qual") or die "Could not open $$settings{tempdir}/$fastq_file.qual for writing because $!";
+    logmsg "Converting fastq $input_file to $$settings{tempdir}/$fastq_file.fasta and $fastq_file.qual";
+    my $i=0;
+    my $defline="";
+    while(my $fLine=<FASTQ>){
+      my $readLineNumber=$i%4;
+      if($readLineNumber==0){
+        $defline=$fLine;
+        $defline=~s/^@//;
+        $defline=~s/\s+$//;
+      } elsif($readLineNumber==1){       # sequence
+        print FASTA ">$defline\n$fLine";
+      } elsif($readLineNumber==3){       # quality
+        chomp($fLine);
+        my @qual=split(//,$fLine);
+        for (@qual){
+          $_=ord($_)-33;  # TODO make a distinction b/n illumina and Sanger variants
+        }
+        print QUAL ">$defline\n".join(" ",@qual)."\n";
+      }
+      $i++;
+    }
+    close FASTQ;
+  }
+  return \@fastaqualfiles;
 }
 
 sub runNewblerMapping($$$) {
@@ -189,23 +304,6 @@ sub runNewblerMapping($$$) {
 	foreach my $ref_file (@$ref_files) {
 		system("setRef '$run_name' '$ref_file'"); die if $?;
 	}
-	foreach my $sff_file (@$input_files) {
-		system("addRun '$run_name' '$sff_file'"); die if $?;
-	}
-#sed -i -e 's|\(<overlapMinMatchLength>\)40\(</overlapMinMatchLength>\)|\125\2|' \
-#               -e 's|\(<overlapMinMatchIdentity>\)90\(</overlapMinMatchIdentity>\)|\175\2|' \
-#               $runName/mapping/454MappingProject.xml
-	system("runProject '$run_name'"); die if $?;
-	return $run_name;
-}
-
-sub runNewblerAssembly($$) {
-	my ($input_files, $settings) = @_;
-	my $run_name = "$$settings{tempdir}/P__runAssembly";
-  # logmsg "Skipping newbler assembly for testing purposes";  return $run_name; #debugging
-	logmsg "Executing Newbler assembly project $run_name";
-
-	system("newAssembly '$run_name'"); die if $?;
 	foreach my $sff_file (@$input_files) {
 		system("addRun '$run_name' '$sff_file'"); die if $?;
 	}

@@ -36,14 +36,13 @@ exit(main());
 
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
-	$$settings{min_out_contig_length} = 100; #TODO put this into config file
+	$$settings{assembly_min_contig_length} = 100; #TODO put this into config file
 
-	die("Usage: $0 input.fastq [, input2.fastq, ...] [-R references.mfa] [-C workdir]\n  Input files can also be fasta files.  *.fasta.qual files are considered as the relevant quality files") if @ARGV < 1;
+	die("Usage: $0 input.fastq [, input2.fastq, ...] [-o outfile.fasta] [-R references.mfa]\n  Input files can also be fasta files.  *.fasta.qual files are considered as the relevant quality files") if @ARGV < 1;
 
-	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'output=s');
+	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'outfile=s');
 	GetOptions($settings, @cmd_options) or die;
 
-	$$settings{outfile} = $$settings{output};
 	$$settings{outfile} ||= "$0.out.fasta";
 	$$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
 	open(FH, '>', $$settings{outfile}) or die("Error writing to output file $$settings{outfile}");
@@ -64,7 +63,7 @@ sub main() {
 		die("Input or reference file $file not found") unless -f $file;
 	}
 
-  my $fastqfiles=baseCall(\@input_files,$settings); #array of [0=>fna,1=>qual file] (array of arrays)
+  my $fastqfiles=baseCall(\@input_files,$settings); #array of fastq files
 
 	my $final_seqs;
 
@@ -74,32 +73,21 @@ sub main() {
 	} else {
     my($velvet_basename,$velvet_assembly,$combined_filename);
 
-    # TODO multithread assemblies
-
     $velvet_basename = runVelvetAssembly($fastqfiles,$settings);
     $velvet_assembly="$velvet_basename/contigs.fa";
 
+    # in case assemblies from multiple assemblers are combined
     $combined_filename=$velvet_assembly;
 
-		# TODO: reprocess repeat or long singleton reads
-    # repeating the process might be moot if we use reconciliator -LK
 		$final_seqs = AKUtils::readMfa("$combined_filename");
-
 	}
 
 	foreach my $seq (keys %$final_seqs) {
-		delete $$final_seqs{$seq} if length($$final_seqs{$seq}) < $$settings{min_out_contig_length};
+		delete $$final_seqs{$seq} if length($$final_seqs{$seq}) < $$settings{assembly_min_contig_length};
 	}
-  logmsg "";
 	AKUtils::printSeqsToFile($final_seqs, $$settings{outfile}, {order_seqs_by_name => 1});
 
 	logmsg "Output is in $$settings{outfile}";
-
-	if ($$settings{keep}) {
-		my ($out_filename, $out_dirname) = fileparse($$settings{outfile});
-		logmsg "Saving assembly working directory $$settings{tempdir} to $out_dirname";
-		move($$settings{tempdir}, $out_dirname) or die "Error moving output directory $$settings{tempdir} to $out_dirname: $!";
-	}
 
 	return 0;
 }
@@ -168,16 +156,16 @@ sub runVelvetAssembly($$){
   my $run_name = "$$settings{tempdir}/velvet";
   system("mkdir -p $run_name") if(!-d $run_name);
   logmsg "Executing Velvet assembly $run_name";
-  my $velvetPrefix=File::Spec->abs2rel("$run_name/auto");
+  my $velvetPrefix=File::Spec->abs2rel("$run_name/auto"); # VelvetOptimiser chokes on an abs path
   my $command="VelvetOptimiser.pl -a -v -p $velvetPrefix ";
-  #$command.="-k 'n50*Lcon' -c 'n50*Lcon' "; # change the metrics for how velvet rates its assembly
+  #warn "=======Debugging: only running hashes of 29 and 31\n"; $command.=" -s 29 -e 31 ";
   $command.="-f '";
   foreach my $fqFiles (@$fastqfiles){
     my $fileFormat="fastq"; # per the Velvet manual
     #TODO detect the chemistry of each run and treat them differently (454, Illumina, etc)
     #see if the reads are mate pairs (454)
     my $isMatePairs=0;
-    # TODO find out if there are mate pairs (observed-insert-lengths program via Velvet?)
+    # TODO find out if there are mate pairs (observed-insert-lengths program via Velvet, or maybe by reading the headers?)
     #TODO remove reads with an overall bad quality (about <20)
     #TODO examine reads to see if the file overall belongs in "long" "short" etc: might just filter based on chemistry
     my $readLength="short"; # per velvet docs
@@ -185,26 +173,28 @@ sub runVelvetAssembly($$){
   }
   $command.="' 2>&1 ";
   logmsg "VELVET COMMAND\n  $command";
+  # warn "Warning: Skipping velvet command"; goto CLEANUP;
   system($command); die if $?;
 
-  # cleanup
-  my @velvetTempDir=glob("$velvetPrefix*"); # find the output directory
-  logmsg "Velvet directory(ies) found: ".join(", ",@velvetTempDir) ." . Assuming $velvetTempDir[0] is the best Velvet assembly.";
-  system("cp -r $velvetTempDir[0]/* $run_name/"); # copy the output directory contents to the actual directory
+  CLEANUP:
+  my $logfile="$run_name/auto_logfile.txt";
+  my $optimiserOutDir=`tail -1 $logfile`;
+  chomp($optimiserOutDir);
+  if($optimiserOutDir && -d $optimiserOutDir){
+    logmsg "The log file indicates this is the final output directory for VelvetOptimiser: $optimiserOutDir";
+  } else {
+    my @velvetTempDir=glob("$velvetPrefix*"); # find the output directory
+    logmsg "Could not determine the VelvetOptimiser output directory. I'll have to guess.  Velvet directory(ies) found: ".join(", ",@velvetTempDir) ." . Assuming $velvetTempDir[0] is the best Velvet assembly.";
+    $optimiserOutDir=$velvetTempDir[0];
+  }
+  system("cp -rv $optimiserOutDir/* $run_name/"); # copy the output directory contents to the actual directory
 
   #TODO create dummy qual file (phred qual for each base is probably about 60-65). Or, if Velvet outputs it in the future, add in the qual parameter.
 
-  system("amos2ace $run_name/velvet_asm.afg"); logmsg "Warning: amos2ace failed" if $?; # make an ace file too
+  # TODO make the amos2ace an option
+  #logmsg "Creating ace file with amos2ace";
+  #system("amos2ace $run_name/velvet_asm.afg"); logmsg "Warning: amos2ace failed" if $?; # make an ace file too
 
   return $run_name;
 }
 
-# TODO use run_assembly_metrics.pl instead to streamline
-sub count_contigs{
-	my $file=shift;
-	open(FH,"<$file")or die "Could not find $file because $!";
-	my @lines=<FH>;
-	close(FH);
-	my @contigs=grep /^>/,@lines;
-	return scalar @contigs;
-}

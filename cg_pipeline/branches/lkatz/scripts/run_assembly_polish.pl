@@ -1,5 +1,7 @@
 #! /usr/bin/env perl
 
+die "Use nesoni instead";
+
 # Adds Illumina reads to an assembly to make better base calls and improve the quality
 # Original concept by Eishita Tyagi
 # Author: Eishita Tyagi <etyagi@cdc.gov>

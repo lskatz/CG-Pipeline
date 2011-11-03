@@ -36,7 +36,7 @@ exit(main());
 
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
-	$$settings{min_out_contig_length} = 500; #TODO put this into config file
+	$$settings{assembly_min_contig_length} ||= 500; #TODO put this into config file
 
 	die("Usage: $0 input.sff [, input2.sff, ...] [-R references.mfa] [-C workdir]\n  Input files can also be fasta files.  *.fasta.qual files are considered as the relevant quality files") if @ARGV < 1;
 
@@ -59,6 +59,7 @@ sub main() {
 
 	$$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
 	logmsg "Temporary directory is $$settings{tempdir}";
+  system("mkdir -p $$settings{tempdir}");
 
 	foreach my $file (@input_files, @ref_files) {
 		$file = File::Spec->rel2abs($file);
@@ -70,44 +71,30 @@ sub main() {
 	my $final_seqs;
 
 	if (@ref_files) {
-    # TODO multithread reference assemblies
 		my $newbler_basename = runNewblerMapping(\@input_files, \@ref_files, $settings);
 
 		my $amos_basename = runAMOSMapping($fastaqualfiles, \@ref_files, $settings);
 
+    # TODO combine only using run_assembly_combine.pl
 		my $combined_filename = combineNewblerAMOS($newbler_basename, $amos_basename, $settings);
 
 		$final_seqs = AKUtils::readMfa($combined_filename);
 	} else {
     my($combined_filename);
 
-    # TODO multithread assemblies
 		my $newbler_basename = runNewblerAssembly(\@input_files, $settings);
     my $newbler_assembly="$newbler_basename/assembly/454AllContigs.fna";
     $newbler_assembly="$newbler_basename/assembly/454Scaffolds.fna" if(-s "$newbler_basename/assembly/454Scaffolds.fna" > 0);
-
-    $combined_filename=$newbler_assembly;
-
-		# TODO: reprocess repeat or long singleton reads
-    # repeating the process might be moot if we use reconciliator -LK
-		$final_seqs = AKUtils::readMfa("$combined_filename");
 
     $final_seqs=AKUtils::readMfa($newbler_assembly);
 	}
 
 	foreach my $seq (keys %$final_seqs) {
-		delete $$final_seqs{$seq} if length($$final_seqs{$seq}) < $$settings{min_out_contig_length};
+		delete $$final_seqs{$seq} if length($$final_seqs{$seq}) < $$settings{assembly_min_contig_length};
 	}
 	AKUtils::printSeqsToFile($final_seqs, $$settings{outfile}, {order_seqs_by_name => 1});
 
-	#copy($combined_filename, $$settings{outfile}) or die("Error writing to output file $$settings{outfile}");
 	logmsg "Output is in $$settings{outfile}";
-
-	if ($$settings{keep}) {
-		my ($out_filename, $out_dirname) = fileparse($$settings{outfile});
-		logmsg "Saving assembly working directory $$settings{tempdir} to $out_dirname";
-		move($$settings{tempdir}, $out_dirname) or die "Error moving output directory $$settings{tempdir} to $out_dirname: $!";
-	}
 
 	return 0;
 }
@@ -178,10 +165,10 @@ sub sff2fastaqual($$) {
 		my ($sff_file, $sff_dir) = fileparse($input_file);
 		my $invoke_string = "sffinfo -seq '$sff_dir/$sff_file' > '$$settings{tempdir}/$sff_file.fasta'";
 		logmsg "Running $invoke_string";
-		system($invoke_string); die "Failed when running\n  $invoke_string" if $?;
+		system($invoke_string) if(!-e "$$settings{tempdir}/$sff_file.fasta"); die "Failed when running\n  $invoke_string" if $?;
 		$invoke_string = "sffinfo -qual '$sff_dir/$sff_file' > '$$settings{tempdir}/$sff_file.qual'";
 		logmsg "Running $invoke_string";
-		system($invoke_string); die if $?;
+		system($invoke_string) if(!-e "$$settings{tempdir}/$sff_file.qual"); die if $?;
 		push(@fastaqualfiles, ["$$settings{tempdir}/$sff_file.fasta", "$$settings{tempdir}/$sff_file.qual"]);
 	}
 	return \@fastaqualfiles;
