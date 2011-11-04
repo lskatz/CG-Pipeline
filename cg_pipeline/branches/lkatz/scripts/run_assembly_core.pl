@@ -69,6 +69,7 @@ sub main() {
 	my $final_seqs;
 
 	if (@ref_files) {
+    die "TODO: REFERENCE ASSEMBLY";
 		my $newbler_basename = runNewblerMapping(\@input_files, \@ref_files, $settings);
 
 		my $amos_basename = runAMOSMapping($fastaqualfiles, \@ref_files, $settings);
@@ -79,11 +80,14 @@ sub main() {
 	} else {
     
     my ($command,@assembly);
+    system("mkdir $$settings{tempdir}/DENOVO") if(!-d "$$settings{tempdir}/DENOVO");
+    die "Could not make the target directory because $!" if $?;
 
     DENOVO_454:
     if(@{ $$fastaqualfiles{454} }){
       my $newbler_basename=File::Spec->rel2abs("$$settings{tempdir}/DENOVO/P__runAssembly");
       my $out454="$newbler_basename/assembly.fasta";
+      #push(@assembly,$out454); goto DENOVO_ILLUMINA;
       $command="run_assembly_454.pl ".join(" ",@{ $$fastaqualfiles{sff} }) . " -t $newbler_basename -o $newbler_basename/assembly.fasta 2>&1";
       logmsg "Running Newbler assembly with\n    $command";
       system($command) unless($$settings{debug});
@@ -94,6 +98,7 @@ sub main() {
         logmsg "Polishing the 454 assembly with Nesoni";
         my $polishing_basename=File::Spec->rel2abs("$$settings{tempdir}/DENOVO/polishing");
         my $outPolishing=File::Spec->abs2rel("$polishing_basename/consensus_masked.fa");
+        #push(@assembly,$out454); goto DENOVO_ILLUMINA;
         system("mkdir $polishing_basename") if(!-d $polishing_basename);
         system("nesoni samshrimp: $polishing_basename $out454 reads: ".join(" ",@{ $$fastaqualfiles{illumina} })." --sam-unaligned no") unless($$settings{debug});
         die "Problem with Nesoni and/or SHRiMP" if $?;
@@ -109,7 +114,9 @@ sub main() {
       logmsg "Performing denovo assembly of Illumina";
       my $illumina_basename=File::Spec->rel2abs("$$settings{tempdir}/DENOVO/illumina");
       my $outIllumina="$illumina_basename/assembly.fasta";
-      mkdir($illumina_basename) if(!-d $illumina_basename);
+      system("mkdir $illumina_basename") if(!-d $illumina_basename);
+      die "Could not make the dir $illumina_basename because $!" if $?;
+      #push(@assembly,$outIllumina); goto DENOVO_COMBINING;
       $command="run_assembly_illumina.pl ".join(" ",@{ $$fastaqualfiles{illumina} })." -o $outIllumina -t $illumina_basename 2>&1";
       logmsg "Running Illumina assembly with\n   $command";
       system($command) unless($$settings{debug});
@@ -123,7 +130,7 @@ sub main() {
     DENOVO_COMBINING:
     # run combining stage between 454 and Illumina assemblies.
     # TODO consider unused reads
-    logmsg "Combining individual assemblies";
+    logmsg "Combining individual assemblies: ".join(" ",@assembly);
     my $combined_filename="$$settings{tempdir}/DENOVO/final.fna";
     mkdir("$$settings{tempdir}/DENOVO/combining") if(!-d "$$settings{tempdir}/DENOVO/combining");
     $command="run_assembly_combine.pl -a '".join("' -a '",@assembly)."' -o '$combined_filename' -t '$$settings{tempdir}/DENOVO/combining' -m $$settings{assembly_min_contig_length} ";
@@ -174,8 +181,7 @@ sub is_fastq($){
 # TODO in the future somehow distinguish between chemistries using user-inputted flags
 sub baseCall($$){
   my($input_files,$settings)=@_;
-  #my $fastaqualfiles;
-  my($long,$short,$sff);
+  my $long=[]; my $short=[]; my $sff=[];
   foreach my $file (@$input_files){
     my $seqQualPair; # [0=>seq,1=>qual]
     if(is_sff($file)){
