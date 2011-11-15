@@ -36,9 +36,9 @@ exit(main());
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
 
-	die("Usage: $0 input.sff [, input2.sff, ... inputN.fastq, ... inputM.fasta] [-o output.fasta] [-R references.mfa] [-t tempdir] [-m minContigLength]\n  Input files can be sff, fastq, and fasta.  *.fasta.qual files are considered as the relevant quality files") if @ARGV < 1;
+	die("Usage: $0 input.sff [, input2.sff, ... inputN.fastq, ... inputM.fasta] [-o output.fasta] [-R references.mfa] [-t tempdir]\n  Input files can be sff, fastq, and fasta.  *.fasta.qual files are considered as the relevant quality files") if @ARGV < 1;
 
-	my @cmd_options = ('Reference=s@', 'keep', 'tempdir=s', 'output=s', 'assembly_min_contig_length=i', 'debug');
+	my @cmd_options = ('Reference=s@', 'keep', 'tempdir=s', 'output=s', 'debug');
 	GetOptions($settings, @cmd_options) or die;
 
 	$$settings{assembly_min_contig_length} ||= 500;
@@ -66,20 +66,71 @@ sub main() {
 
   my $fastaqualfiles=baseCall(\@input_files,$settings); #array of [0=>fna,1=>qual file] (array of arrays)
 
-	my $final_seqs;
+  my ($final_seqs,$command,@assembly);
 
 	if (@ref_files) {
-    die "TODO: REFERENCE ASSEMBLY";
-		my $newbler_basename = runNewblerMapping(\@input_files, \@ref_files, $settings);
+    for my $ref_file(@ref_files){
+      my $ref_name=fileparse($ref_file);
+      system("mkdir $$settings{tempdir}/$ref_name") if(!-d "$$settings{tempdir}/$ref_name");
+      die "Could not make the target directory because $!" if $?;
+      my @ref_assembly=();
+      my $ref_assembly="$$settings{tempdir}/$ref_name/assembly.fasta"; # final assembly name for this ref
+      MAPPING_454:
+      if(@{ $$fastaqualfiles{454} }){
+        my $newbler_basename=File::Spec->rel2abs("$$settings{tempdir}/$ref_name/P__runAssembly");
+        my $out454="$newbler_basename/assembly.fasta";
+        #push(@assembly,$out454); goto MAPPING_ILLUMINA;
+        $command="run_assembly_454.pl ".join(" ",@{ $$fastaqualfiles{sff} }) . " -R $ref_file -t $newbler_basename -o $out454 2>&1";
+        logmsg "Running Newbler assembly with\n    $command";
+        system($command) unless(-s $out454 > 1 || $$settings{debug});
+        die "Could not run Newbler" if $?;
 
-		my $amos_basename = runAMOSMapping($fastaqualfiles, \@ref_files, $settings);
+        DENOVO_POLISHING:
+        if(@{ $$fastaqualfiles{illumina} }){
+          logmsg "Polishing the 454 assembly with Nesoni";
+          my $polishing_basename=File::Spec->rel2abs("$$settings{tempdir}/$ref_name/polishing");
+          my $outPolishing=File::Spec->abs2rel("$polishing_basename/consensus_masked.fa");
+          #push(@assembly,$out454); goto MAPPING_ILLUMINA;
+          system("mkdir $polishing_basename") if(!-d $polishing_basename);
+          system("nesoni samshrimp: $polishing_basename $out454 reads: ".join(" ",@{ $$fastaqualfiles{illumina} })." --sam-unaligned no") unless($$settings{debug} || -e "$polishing_basename/alignments.bam");
+          die "Problem with Nesoni and/or SHRiMP" if $?;
+          system("nesoni samconsensus: $polishing_basename --majority 0.9 --cutoff 0.9") unless($$settings{debug} || -e "$polishing_basename/consensus.fa");
+          die "Problem with Nesoni and/or Samtools" if $?;
+          $out454=$outPolishing;
+        }
+        push(@ref_assembly, $out454);
+      }
 
-		my $combined_filename = combineNewblerAMOS($newbler_basename, $amos_basename, $settings);
+      MAPPING_ILLUMINA:
+      if(@{ $$fastaqualfiles{illumina} }){
+        logmsg "Performing mapping assembly of Illumina";
+        my $illumina_basename=File::Spec->rel2abs("$$settings{tempdir}/$ref_name/illumina");
+        mkdir($illumina_basename) if(!-d $illumina_basename);
+        my $outIllumina="$illumina_basename/assembly.fasta";
+        system("run_assembly_illumina.pl ".join(" ",@{ $$fastaqualfiles{illumina} })." -R $ref_name -t $illumina_basename -o $illumina_basename/assembly.fasta 2>&1");
+        die "Could not perform illumina assembly" if $?;
+        push(@ref_assembly,$outIllumina);
+      }
 
-		$final_seqs = AKUtils::readMfa($combined_filename);
+      # TODO combine Illumina/454
+      my $command="run_assembly_combine.pl -a ".join(" -a ",@ref_assembly)." -o $ref_assembly 2>&1";
+      logmsg "Combining mapping assemblies for $ref_name";
+      system($command);
+      push(@ref_assembly,$ref_assembly);
+      die "DEBUG";
+    }
+    # TODO choose the best combined assembly
+    # run_assembly_chooseBest.pl
+
+    # TODO read the assembly into $final_seqs
+
+		#my $amos_basename = runAMOSMapping($fastaqualfiles, \@ref_files, $settings);
+
+		#my $combined_filename = combineNewblerAMOS($newbler_basename, $amos_basename, $settings);
+
+		#$final_seqs = AKUtils::readMfa($combined_filename);
 	} else {
     
-    my ($command,@assembly);
     system("mkdir $$settings{tempdir}/DENOVO") if(!-d "$$settings{tempdir}/DENOVO");
     die "Could not make the target directory because $!" if $?;
 

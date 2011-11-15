@@ -1,7 +1,8 @@
 #!/usr/bin/env perl
 
 # run-assembly: Perform standard assembly protocol operations on 454 pyrosequenced flowgram file(s)
-# Author: Andrey Kislyuk (kislyuk@gatech.edu)
+# Author: Lee Katz <lkatz@cdc.gov>
+# Author: Eishita Tyagi <etyagi@cdc.gov>
 
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
@@ -27,6 +28,8 @@ use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
 use Bio::Perl;
 use Data::Dumper;
+#use Bio::Tools::Run::BWA;
+#use Bio::Tools::Run::Samtools;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
@@ -56,6 +59,8 @@ sub main() {
   die "Error: No input files given" if(@ARGV<1);
 
 	$$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
+  mkdir($$settings{tempdir}) if(!-d $$settings{tempdir});
+  $$settings{tempdir}=File::Spec->rel2abs($$settings{tempdir});
 	logmsg "Temporary directory is $$settings{tempdir}";
 
 	foreach my $file (@input_files, @ref_files) {
@@ -65,22 +70,40 @@ sub main() {
 
   my $fastqfiles=baseCall(\@input_files,$settings); #array of fastq files
 
-	my $final_seqs;
+	my ($combined_filename,$final_seqs);
 
 	if (@ref_files) {
-    # TODO use Columbus
-    die "Using references for illumina assembly is not working right now";
+    # TODO use Columbus or SHRiMP
+    #die "Using references for illumina assembly is not working right now";
+    logmsg "Warning: paired end reference illumina assemby is not supported right now";
+
+    logmsg "Concatenating the reference sequence(s) into one file. And then all reads into one file.";
+    my $concatenatedReferences="$$settings{tempdir}/ref_seqs.fna";
+    my $concatenatedReads="$$settings{tempdir}/reads.fastq";
+    system("cat ".join(" ",@ref_files)." >$concatenatedReferences") if(!-e $concatenatedReferences); die "Could not concatenate references because $!" if $?;
+    system("cat ".join(" ",@$fastqfiles)." >$concatenatedReads") if(!-e $concatenatedReads); die "Could not concatenate reads because $!" if $?;
+    
+    # grab the consensus sequence
+    my $amos_assembly=amosShortReadMapping($concatenatedReferences,$concatenatedReads,$settings);
+    logmsg "AMOS assembly is in $amos_assembly";
+    my $nesoni_assembly=nesoni($concatenatedReferences,$concatenatedReads,$settings);
+    logmsg "Nesoni assembly is in $nesoni_assembly";
+
+    $combined_filename="$$settings{tempdir}/mappingAssembly_combined.fasta";
+    system("run_assembly_combine.pl -a $amos_assembly -a $nesoni_assembly -o $combined_filename -m 10");
+    die "Could not combine assemblies" if $?;
+    
 	} else {
-    my($velvet_basename,$velvet_assembly,$combined_filename);
+    my($velvet_basename,$velvet_assembly);
 
     $velvet_basename = runVelvetAssembly($fastqfiles,$settings);
     $velvet_assembly="$velvet_basename/contigs.fa";
 
     # in case assemblies from multiple assemblers are combined
     $combined_filename=$velvet_assembly;
-
-		$final_seqs = AKUtils::readMfa("$combined_filename");
 	}
+
+  $final_seqs = AKUtils::readMfa("$combined_filename");
 
 	foreach my $seq (keys %$final_seqs) {
 		delete $$final_seqs{$seq} if length($$final_seqs{$seq}) < $$settings{assembly_min_contig_length};
@@ -196,5 +219,154 @@ sub runVelvetAssembly($$){
   #system("amos2ace $run_name/velvet_asm.afg"); logmsg "Warning: amos2ace failed" if $?; # make an ace file too
 
   return $run_name;
+}
+sub nesoni{
+  my($concatenatedReferences,$concatenatedReads,$settings)=@_;
+  logmsg "Running nesoni samshrimp";
+  my $nesoni_run="$$settings{tempdir}/nesoni";
+  mkdir($nesoni_run) if(!-d $nesoni_run);
+
+  system("nesoni samshrimp: $nesoni_run $concatenatedReferences reads: $concatenatedReads --sam-unaligned no") unless (-e "$nesoni_run/alignments.bam");
+  die "Problem with Nesoni and/or SHRiMP" if $?;
+  logmsg "Running nesoni samconsensus";
+  system("nesoni samconsensus: $nesoni_run --majority 0.7 --cutoff 0.7") unless(-e "$nesoni_run/consensus.fa");
+  die "Problem with Nesoni and/or Samtools" if $?;
+  
+  # read the consensus sequence into contigs
+  my $unmaskedContigs="$nesoni_run/consensus.fa";
+  my $contigs={};
+  my $c=0;
+  my $mappings=AKUtils::readMfa($unmaskedContigs,$settings);
+  for my $contig(values(%$mappings)){
+    my @contigs=split(/N+/,$contig);
+    @contigs=grep(!/^\s*$/,@contigs);
+    $$contigs{++$c}=$_ for(@contigs);
+  }
+
+  AKUtils::printSeqsToFile($contigs,"$nesoni_run/contigs.fasta");
+
+  return "$nesoni_run/contigs.fasta";
+}
+
+sub amosShortReadMapping{
+  my($concatenatedReferences,$concatenatedReads,$settings)=@_;
+  my $amosPrefix="$$settings{tempdir}/amos";
+
+  logmsg "Converting $concatenatedReads to bnk";
+  #my $afg=fastqToAfg($concatenatedReads,"$amosPrefix.afg",$settings);
+  system("toAmos_new -Q $concatenatedReads -b $amosPrefix.bnk") if(!-d "$amosPrefix.bnk");
+  die "Problem with AMOS's toAmos_new" if $?;
+
+  logmsg "Running AMOScmp-shortReads on $amosPrefix";
+  system("ln -f -s $concatenatedReferences $amosPrefix.1con"); die "Could not create shortcut for references at $amosPrefix.1con" if $?;
+  system("AMOScmp-shortReads -s 20 $amosPrefix") if(-s "$amosPrefix.fasta" < 1);
+  die "Error with AMOS-shortReads" if $?;
+  return "$amosPrefix.fasta";
+}
+
+# modified from Torsten Seemann <torsten@seemann.id.au>
+# http://biostar.stackexchange.com/questions/14189/convert-fastq-to-afg/14198#14198
+sub fastqToAfg{
+  my($fastq,$outfile,$settings)=@_;
+  $$settings{qOffset}||=33; # 33=sanger 64=illumina(<1.8)
+  $$settings{aOffset}||=60;
+  $$settings{afg_reportEvery}=10000;
+
+  return $outfile if(-s $outfile > 1000); # if the output file already has something in it, don't bother converting
+  $|++;
+
+  my $numLines=`wc -l $fastq`;
+  my $numReads=$numLines/4;
+  logmsg "Converting $numReads reads to afg";
+
+  open(FASTQ,$fastq) or die "Could not open $fastq because $!";
+  open(AFG,">",$outfile) or die "Could not open $outfile for writing because $!";
+  my $iid=0;
+  while (my $eid = <FASTQ>) {
+
+    die "bad fastq ID line '$eid'" unless $eid =~ m/^\@/;
+    $eid = substr $eid, 1;  # remove '@'
+
+    my $seq = scalar(<FASTQ>);
+    chomp $seq;
+    $seq=~s/(.{60})/\1\n/g; #newline every 60 bp
+
+    my $id2 = scalar(<FASTQ>);
+    die "bad fastq ID2 line '$id2" unless $id2 =~ m/^\+/;
+
+    my $qlt = scalar(<FASTQ>);
+    chomp $qlt;
+
+    $iid++;
+    print AFG "{RED\n";
+    print AFG "iid:$iid\n";
+    print AFG "eid:$eid";  # already has \n
+    print AFG "seq:\n$seq\n.\n";
+    print AFG "qlt:\n";
+    my @q = split m//, $qlt;
+    @q = map { chr( ord($_)-$$settings{qOffset} + $$settings{aOffset} ) } @q;
+    my $qltAfg=join("",@q);
+    $qltAfg=~s/(.{60})/\1\n/g; #newline every 60 bp
+    print AFG $qltAfg.".\n\n";
+    print AFG "}\n";
+    print "." if($iid % $$settings{afg_reportEvery} == 0);
+    last if($iid>20);
+  }
+  print "\n";
+  close FASTQ; close AFG;
+  $|--;
+  return $outfile;
+}
+
+# quick and dirty
+sub fastqToFasta{
+  my($fastq,$outPrefix,$settings)=@_;
+  $$settings{qOffset}||=33;
+  my $outfasta="$outPrefix.fasta";
+  my $outqual="$outPrefix.qual";
+  return ($outfasta,$outqual) if(-e $outfasta && -e $outqual);
+
+  # make things fast by getting the length of the read ahead of time
+  my $secondLine=`head -2 $fastq|tail -1`;
+  chomp($secondLine);
+  my $readLength=length($secondLine);
+  die "The read length has been determined to be $readLength, which is too small" if($readLength<10);
+
+  open(FASTQ,$fastq) or die "Could not open $fastq for reading because $!";
+  open(FASTA,">",$outfasta) or die "Could not write to $outfasta because $!";
+  open(QUAL,">",$outqual) or die "Could not write to $outqual because $!";
+  my $i=0;
+  while(<FASTQ>){
+    my $whichLine=$i%4;
+    if($whichLine==0){
+      my $defline=$_;
+      $defline=~s/^\@/>/;
+      $defline=~s/^\s+|\s+$//g;
+      print FASTA $defline."\n";
+      print QUAL $defline."\n";
+    } elsif ($whichLine==1){
+      print FASTA $_;
+    } elsif ($whichLine==3){
+      my $qual=$_;
+      chomp $qual;
+      for(my $j=0;$j<$readLength;$j++){
+        my $newQual=(ord(substr($qual,$j,1))-$$settings{qOffset})." ";
+        print QUAL $newQual;
+      }
+      print QUAL "\n";
+    }
+    $i++;
+  }
+  close FASTQ; close FASTA; close QUAL;
+  return ($outfasta,$outqual);
+}
+
+# run a command
+sub command{
+  my ($command)=@_;
+  logmsg "RUNNING COMMAND\n  $command";
+  system($command);
+  die "ERROR running command $command\n  With error code $?. Reason: $!" if($?);
+  return 1;
 }
 

@@ -75,7 +75,6 @@ sub main() {
 
 		my $amos_basename = runAMOSMapping($fastaqualfiles, \@ref_files, $settings);
 
-    # TODO combine only using run_assembly_combine.pl
 		my $combined_filename = combineNewblerAMOS($newbler_basename, $amos_basename, $settings);
 
 		$final_seqs = AKUtils::readMfa($combined_filename);
@@ -176,6 +175,7 @@ sub sff2fastaqual($$) {
 sub runNewblerMapping($$$) {
 	my ($input_files, $ref_files, $settings) = @_;
 	my $run_name = "$$settings{tempdir}/P__runMapping";
+  #logmsg "Debugging"; return $run_name;
 	logmsg "Executing Newbler mapping project $run_name";
 
 	system("newMapping '$run_name'"); die if $?;
@@ -207,6 +207,7 @@ sub runNewblerAssembly($$) {
 sub runAMOSMapping($$$) {
 	my ($input_files, $ref_files, $settings) = @_;
 	my $run_name = "$$settings{tempdir}/amos_mapping";
+  #logmsg "Debugging"; return $run_name;
 	logmsg "Executing AMOS mapping project $run_name";
 
 	my @afg_files;
@@ -309,6 +310,14 @@ sub combineNewblerAMOS($$$) {
 	system("sfffile -i '$$settings{tempdir}/newbler_repeat_acc' -o '$$settings{tempdir}/newbler_repeat.sff' '$newbler_basename'/sff/*.sff");
 	die if $?;
 	my $repeat_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_repeat.sff"], $settings);
+
+  my $combiningDir="$$settings{tempdir}/454combine";
+  my $combined_filename="$combiningDir/assembly.fasta";
+  system("mkdir $combiningDir") if(!-d $combiningDir);
+  die "Couldn't make combining directory because $!" if $?;
+  system("run_assembly_combine.pl -a '$newbler_basename/mapping/454AllContigs.fna' -a '$amos_basename.fasta' -r '$$unmapped_fastaqual[0]->[0]' -t $combiningDir -o $combined_filename");
+  die "Couldn't combine mapping assemblies" if $?;
+  return $combined_filename;
 
 	my $newbler_contigs = count_contigs("$newbler_basename/mapping/454AllContigs.fna");
 	my $amos_contigs = count_contigs("$amos_basename.fasta");
