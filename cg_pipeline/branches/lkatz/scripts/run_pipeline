@@ -92,6 +92,9 @@ sub main(){
       my $refarg="";
       if($$settings{Reference}){
         my @reference=split(/\s+/,$$settings{Reference});
+        if(@reference>1){
+          die "Sorry, but multiple references are not supported right now.\nTODO allow for multiple references."
+        }
         foreach(@reference){
           $refarg.="-R $_ ";
         }
@@ -109,14 +112,13 @@ sub main(){
       }
       $invoke_string="time run_assembly $sffarg --tempdir=$home/$project/build/assembly --keep $refarg --output $home/$project/assembly.fasta ";
       $invoke_string.="-d T " if($$settings{deNovo});
-      $invoke_string.=" 2>&1 ";
       if($verbose>1){
-        $invoke_string.="|tee --append $logfile";
+        $invoke_string.=" 2>&1 |tee --append $logfile";
       }
       else{
-        $invoke_string.=">>$logfile";
+        $invoke_string.=">>$logfile 2>&1";
       }
-      CGLog($logfile,"COMMAND to assemble with ".scalar(@{ $$settings{input} })." SFF files\n  $invoke_string",'append');
+      CGLog($logfile,"COMMAND to assemble with ".scalar(@{ $$settings{input} })." files\n  $invoke_string",'append');
       system($invoke_string);
       CGLog($logfile,'ASSEMBLY END '.date(),'append');
       $$settings{input}=""; # unset input for any possible future steps, because input was meant as an SFF in this case

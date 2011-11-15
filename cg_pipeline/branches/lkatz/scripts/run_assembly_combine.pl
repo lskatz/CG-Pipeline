@@ -26,6 +26,7 @@ use File::Basename;
 use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
 use Data::Dumper;
+use Bio::Perl;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
@@ -121,8 +122,21 @@ sub combine2Assemblies{
   my $numContigs=$numContigs1;
   my $refGenome=$a1;
   my $queryGenome=$a2;
-  system("cat '$a1' '$a2' > $combined_fasta_file");
-  die "Problem with creating input file" if $?;
+
+  # combine the input fastas into one, with unique IDs
+  #system("cat '$a1' '$a2' > $combined_fasta_file");
+  #die "Problem with creating input file" if $?;
+  my @seq;
+  for my $file($refGenome,$queryGenome){
+    my $in=Bio::SeqIO->new(-file=>$file);
+    while(my $seq=$in->next_seq){
+      $seq->id(join("_",$file,$seq->id));
+      push(@seq,$seq);
+    }
+  }
+  my $seqout=Bio::SeqIO->new(-file=>">$combined_fasta_file");
+  $seqout->write_seq(@seq);
+
   logmsg "Running Minimus2 with reference genome $refGenome and query genome $queryGenome";
   system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
   die "Problem with toAmos with command\n  toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'" if $?;
