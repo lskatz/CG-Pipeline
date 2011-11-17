@@ -1736,13 +1736,13 @@ sub formatBLASTdb($;$) {
 	$formatdb_opts .= " -n $$settings{formatdb_db_name}" if defined $$settings{formatdb_db_name};
 	my ($invoke_string, $db_loc);
 	if ($$settings{formatdb_in_place}) {
-		$invoke_string = "formatdb $formatdb_opts -i $input_file_full";
+		$invoke_string = "legacy_blast.pl formatdb $formatdb_opts -i $input_file_full";
 		$db_loc = $input_file_full;
 	} else {
 		$$settings{tempdir} ||= AKUtils::mktempdir($settings);
 		die("Directory $$settings{tempdir} does not exist") unless -d $$settings{tempdir};
 		symlink($input_file_full, "$$settings{tempdir}/$input_file");
-		$invoke_string = "cd $$settings{tempdir}; formatdb $formatdb_opts -i $input_file";
+		$invoke_string = "cd $$settings{tempdir}; legacy_blast.pl formatdb $formatdb_opts -i $input_file";
 		$db_loc = "$$settings{tempdir}/$input_file";
 	}
 	system($invoke_string); die("Error running formatdb: $!") if $?;
