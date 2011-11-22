@@ -50,7 +50,14 @@ sub main{
   for my $file(@$infile){
     my $in=Bio::SeqIO->new(-file=>$file);
     while(my $seq=$in->next_seq){
-      next if($proteinList{$seq->id});
+      my $id=$seq->id;
+      # There are some unnecessary characters after a second pipe
+      $id=~s/^(\w{2}\|[A-Z\d]{6}).*/$1/;
+      if($proteinList{$id}){
+        print ".";
+        # TODO decide if proteinList can be whittled down to reduce search space
+        next;
+      }
       $out->write_seq($seq);
       logmsg "Finished with $seqCount sequences" if(++$seqCount%1000000==0);
     }
