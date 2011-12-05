@@ -36,9 +36,9 @@ exit(main());
 
 sub main() {
   $settings = AKUtils::loadConfig($settings);
-  die("  Usage: $0 assembly1.fasta [-e expectedGenomeLength] [-m minContigLength]\n") if @ARGV<1;
+  die(usage()) if @ARGV<1;
 
-  my @cmd_options=('output=s','expectedGenomeLength=i','minContigLength=i');
+  my @cmd_options=('output=s','expectedGenomeLength=i','minContigLength=i','statistic=s');
   GetOptions($settings, @cmd_options) or die;
   $$settings{minContigLength}||=500;
 
@@ -59,15 +59,34 @@ sub main() {
 sub assemblyMetrics($$){
   my($seqs,$settings)=@_;
   my($result);
-  $seqs=AKUtils::readMfa($seqs);
+
+  if(-s $seqs < 1){
+    $seqs={};
+  } else {
+    $seqs=AKUtils::readMfa($seqs);
+  }
 
   $seqs=filterSeqs($seqs,$settings);
 
+  my $metrics={};
   foreach my $statistic qw(N50 genomeLength longestContig numContigs avgContigLength){
     my $stat=&$statistic($seqs,$settings);
+    $$metrics{$statistic}=$stat;
     $result.=join("\t",$statistic,$stat)."\n";
   }
+  $result.=join("\t","assemblyScore",assemblyScore($metrics,$settings))."\n";
   chomp($result);
+
+  if($$settings{statistic}){
+    die "The metric $$settings{statistic} is not supported" if(!defined &{$$settings{statistic}});
+    if($$settings{statistic}=~/assemblyScore/){
+      print assemblyScore($metrics,$settings);
+    } else {
+      print &{$$settings{statistic}}($seqs,$settings);
+    }
+    exit(0);
+  }
+
   return $result;
 }
 
@@ -89,6 +108,7 @@ sub avgContigLength{
     $length+=length($$seqs{$seqname});
     $numContigs++;
   }
+  return 0.01 if($numContigs==0);
   return int(($length/$numContigs));
 }
 
@@ -104,6 +124,7 @@ sub longestContig($){
       $longest=$contigLength;
     }
   }
+  $longest||=0.01;
   return $longest;
 }
 
@@ -138,6 +159,7 @@ sub N50($;$){
     }
   }
   # return the length of the contig
+  $N50||=0.01;
   return $N50;
 }
 
@@ -151,15 +173,46 @@ sub genomeLength($){
   foreach $seqname (keys %$seqs){
     $length+=length($$seqs{$seqname});
   }
+  $length||=0.01;
   return $length;
 }
+
+# make a crude assembly score for sorting the best assemblies
+sub assemblyScore{
+  my($metrics,$settings)=@_;
+  my $points;
+  for (qw(N50 genomeLength numContigs)){
+    my $m=$$metrics{$_};
+    if(/numContigs/){
+      $points-=log($m);
+      next;
+    }
+    $points+=log($m);
+  }
+  return $points;
+}
+
 
 # Find the number of contigs in an assembly
 # param: fasta filename
 # return int The number of contigs
 sub numContigs($){
   my($seqs)=@_;
-  my(@seqValue)=values %$seqs;
-  return scalar @seqValue;
+  my $numContigs=scalar(values(%$seqs));
+  $numContigs=9999999999 if($numContigs<1);
+  
+  return $numContigs;
 }
 
+sub usage{
+  "Prints useful assembly statistics
+  Usage: $0 assembly1.fasta [-e expectedGenomeLength] [-m minContigLength]
+  -e genome length
+    helps with N50 calculation but not necessary
+  -m size
+    only consider contigs of size m in the calculations
+  -s stat
+    only print out the value for this stat only. Useful for parsing output from this script.
+    e.g. assemblyScore or N50
+  "
+}
