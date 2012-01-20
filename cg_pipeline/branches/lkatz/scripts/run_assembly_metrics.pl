@@ -177,19 +177,16 @@ sub genomeLength($){
   return $length;
 }
 
-# make a crude assembly score for sorting the best assemblies
+# make a crude assembly score for comparing the best assemblies
 sub assemblyScore{
   my($metrics,$settings)=@_;
-  my $points;
-  for (qw(N50 genomeLength numContigs)){
-    my $m=$$metrics{$_};
-    if(/numContigs/){
-      $points-=log($m);
-      next;
-    }
-    $points+=log($m);
+  my $percentGenomeCovered=1;
+  if($$settings{expectedGenomeLength}){
+    $percentGenomeCovered=1-abs(1-$$settings{expectedGenomeLength}/$$metrics{genomeLength});
   }
-  return $points;
+  my $score=$$metrics{N50}/$$metrics{numContigs} * $percentGenomeCovered;
+  my $logscore=log($score);
+  return $logscore;
 }
 
 
@@ -214,5 +211,8 @@ sub usage{
   -s stat
     only print out the value for this stat only. Useful for parsing output from this script.
     e.g. assemblyScore or N50
+  The assembly score is calculated as a log of (N50/numContigs * percentOfGenomeCovered)
+    The percent of the genome covered is 1 if you do not supply an expected genome length.
+    The percent of the genome covered counts against you if you assemble higher than the expected genome size.
   "
 }
