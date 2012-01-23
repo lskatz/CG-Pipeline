@@ -2,12 +2,18 @@
 
 # run_assembly_metrics.pl: finds metrics of a given assembly and prints them
 # Author: Lee Katz (lskatz@gatech.edu)
+# TODO allow multiple genomes
+# TODO have a table output if multiple genomes are given
 
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 
 my $settings = {
     appname => 'cgpipeline',
+    # these are the subroutines for all assembly metrics
+    metrics=>[qw(N50 genomeLength longestContig numContigs avgContigLength assemblyScore)],
+    # these are the subroutines for all standard assembly metrics
+    stdMetrics=>[qw(N50 genomeLength numContigs assemblyScore)],
 };
 my $stats;
 
@@ -36,56 +42,69 @@ exit(main());
 
 sub main() {
   $settings = AKUtils::loadConfig($settings);
-  die(usage()) if @ARGV<1;
+  die(usage($settings)) if @ARGV<1;
 
-  my @cmd_options=('output=s','expectedGenomeLength=i','minContigLength=i','statistic=s');
+  my @cmd_options=qw(output=s expectedGenomeLength=i minContigLength=i statistic=s@ numberOnly);
   GetOptions($settings, @cmd_options) or die;
   $$settings{minContigLength}||=500;
+  $$settings{expectedGenomeLength}||=0;
 
   my $input_file=$ARGV[0];
   my $file=File::Spec->rel2abs($input_file);
   die("Input or reference file $file not found") unless -f $file;
 
   my $metrics=assemblyMetrics($file,$settings);
-  # TODO print metrics in an understandable and parsable way
-  print "File\t$file\n";
-  print "ExpectedGenomeLength\t$$settings{expectedGenomeLength}\n" if($$settings{expectedGenomeLength});
-  print join("\t","minContigLength",$$settings{minContigLength})."\n";
   print "$metrics\n";
 
   return 0;
 }
 
 sub assemblyMetrics($$){
-  my($seqs,$settings)=@_;
+  my($file,$settings)=@_;
   my($result);
 
-  if(-s $seqs < 1){
-    $seqs={};
-  } else {
-    $seqs=AKUtils::readMfa($seqs);
+  my $seqs={};
+  if(-s $file > 0){
+    $seqs=AKUtils::readMfa($file);
   }
 
   $seqs=filterSeqs($seqs,$settings);
 
-  my $metrics={};
-  foreach my $statistic qw(N50 genomeLength longestContig numContigs avgContigLength){
-    my $stat=&$statistic($seqs,$settings);
-    $$metrics{$statistic}=$stat;
-    $result.=join("\t",$statistic,$stat)."\n";
-  }
-  $result.=join("\t","assemblyScore",assemblyScore($metrics,$settings))."\n";
-  chomp($result);
+  # put the assembly score last because it depends on everything else
+  my @statsToProcess=sort({
+    return 1 if($a=~/assemblyScore/i);
+    return 0;
+  } @{$$settings{metrics}});
 
-  if($$settings{statistic}){
-    die "The metric $$settings{statistic} is not supported" if(!defined &{$$settings{statistic}});
-    if($$settings{statistic}=~/assemblyScore/){
-      print assemblyScore($metrics,$settings);
-    } else {
-      print &{$$settings{statistic}}($seqs,$settings);
+  # some default metrics
+  my $metrics={
+    File=> $file,
+    minContigLength=>$$settings{minContigLength},
+    expectedGenomeLength=>$$settings{expectedGenomeLength},
+  };
+
+  # calculate metrics
+  foreach my $statistic (@statsToProcess){
+    my $stat;
+    if($statistic eq 'assemblyScore'){
+      $stat=&$statistic($metrics,$settings);
+    } else{
+      $stat=&$statistic($seqs,$settings);
     }
-    exit(0);
+    $$metrics{$statistic}=$stat;
   }
+
+  # set the output in the result hash
+  my $statsToOutput=$$settings{statistic} || $$settings{stdMetrics};
+  unshift(@$statsToOutput,qw(File minContigLength expectedGenomeLength)) if(!$$settings{numberOnly});
+  for my $statistic(@$statsToOutput){
+    if($$settings{numberOnly}){
+      $result.=$$metrics{$statistic}."\n";
+    } else {
+      $result.=join("\t",$statistic,$$metrics{$statistic})."\n";
+    }
+  }
+  chomp($result);
 
   return $result;
 }
@@ -202,15 +221,18 @@ sub numContigs($){
 }
 
 sub usage{
+  my ($settings)=@_;
   "Prints useful assembly statistics
   Usage: $0 assembly1.fasta [-e expectedGenomeLength] [-m minContigLength]
   -e genome length
     helps with N50 calculation but not necessary
   -m size
     only consider contigs of size m in the calculations
+  -n
+    Output only the number of the metric(s) you supplied. Works well with -s
   -s stat
-    only print out the value for this stat only. Useful for parsing output from this script.
-    e.g. assemblyScore or N50
+    only print out the value for this stat (or these stats) only.
+    Possible values: ".join(", ",@{$$settings{metrics}})."
   The assembly score is calculated as a log of (N50/numContigs * percentOfGenomeCovered)
     The percent of the genome covered is 1 if you do not supply an expected genome length.
     The percent of the genome covered counts against you if you assemble higher than the expected genome size.
