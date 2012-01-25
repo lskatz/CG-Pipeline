@@ -201,9 +201,11 @@ sub assemblyScore{
   my($metrics,$settings)=@_;
   my $percentGenomeCovered=1;
   if($$settings{expectedGenomeLength}){
-    $percentGenomeCovered=1-abs(1-$$settings{expectedGenomeLength}/$$metrics{genomeLength});
+    $percentGenomeCovered=1-abs(1-$$metrics{genomeLength}/$$settings{expectedGenomeLength});
   }
+  $percentGenomeCovered=1/9999999999 if($percentGenomeCovered<=0);
   my $score=$$metrics{N50}/$$metrics{numContigs} * $percentGenomeCovered;
+  die "score is negative and so it cannot be put on the log scale because: $$metrics{N50}/$$metrics{numContigs} * [1-abs(1-$$settings{expectedGenomeLength}/$$metrics{genomeLength})]\n" if($score<=0);
   my $logscore=log($score);
   return $logscore;
 }

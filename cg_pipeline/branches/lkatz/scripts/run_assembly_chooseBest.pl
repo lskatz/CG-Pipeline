@@ -36,7 +36,7 @@ exit(main());
 
 sub main() {
   $settings = AKUtils::loadConfig($settings);
-  die("  Usage: $0 assembly1.fasta [,assembly2.fasta...] -output bestAssembly.fasta\n  Tip: put your preffered assembly first to help break ties.\n") if @ARGV<1;
+  die("  Usage: $0 assembly1.fasta [,assembly2.fasta...] -output bestAssembly.fasta [-e expectedGenomeLength]\n  Tip: put your preffered assembly first to help break ties.\n  This script relies on run_assembly_metrics.pl\n") if @ARGV<1;
 
   my @cmd_options=('output=s','expectedGenomeLength=i');
   GetOptions($settings, @cmd_options) or die;
@@ -63,16 +63,17 @@ sub main() {
 # return seqs of best assembly
 sub bestAssemblySeqs($$){
   my($seqs,$settings)=@_;
-  my($i,%metrics,%vote);
+  my($i,%metrics);
 
   # generate the metrics
   @$seqs=sort{$a cmp $b} @$seqs;
   for($i=0;$i<@$seqs;$i++){
     my %seqMetric;
     my $command="run_assembly_metrics.pl $$seqs[$i]";
-    $command.=" -e $$settings{expectedGenomeSize}" if($$settings{expectedGenomeSize});
+    $command.=" -e $$settings{expectedGenomeLength}" if($$settings{expectedGenomeLength});
     logmsg "COMMAND $command";
-    my $seqMetric=`$command`;
+    my $seqMetric=`$command 2>&1`;
+    die "Problem with run_assembly_metrics.pl. Output was\n".$seqMetric."\n" if $?;
     my @seqMetric=split(/\n/,$seqMetric);
     for my $line (@seqMetric){
       my($key,$value)=split(/\t/,$line);
@@ -81,72 +82,18 @@ sub bestAssemblySeqs($$){
     $metrics{$seqMetric{File}}=\%seqMetric;
   }
 
-  # largest values give a vote
-  my @largestStats=qw(N50 genomeLength longestContig);
-  my @smallestStats=qw(numContigs);
-  foreach my $statistic (@largestStats,@smallestStats){
-    my $key="---";
-    # make a hash of this statistic
-    my %hash;
-    while(my ($assemblyFilename,$stats)=each(%metrics)){
-      $hash{$assemblyFilename}=$$stats{$statistic};
+  # rate the assemblies by the score
+  my $bestAssemblyFilename=(keys(%metrics))[0];
+  my $bestAssemblyScore=$metrics{$bestAssemblyFilename}{assemblyScore};
+  for my $file(keys(%metrics)){
+    my $assemblyScore=$metrics{$file}{assemblyScore};
+    logmsg "Comparing $bestAssemblyFilename ($bestAssemblyScore) vs $file ($assemblyScore)";
+    if($assemblyScore>$bestAssemblyScore){
+      $bestAssemblyFilename=$file;
+      $bestAssemblyScore=$metrics{$bestAssemblyFilename}{assemblyScore};
     }
-    $key=maxValueIndex(\%hash) if(in_array($statistic,\@largestStats));
-    $key=minValueIndex(\%hash) if(in_array($statistic,\@smallestStats));
-    $vote{$key}++;
   }
-
-  my $bestAssemblyFilename=winner(\%vote);
   logmsg "The best assembly file is $bestAssemblyFilename";
-
   return AKUtils::readMfa($bestAssemblyFilename);
-}
-
-# returns the key with the biggest value
-# There's probably a more optimal way to do this but it's not necessary especially since the number of assemblies will in the neighborhood of 1 to 5.  Even 100 assemblies would probably be negligable.
-sub winner{
-  my ($hash)=@_;
-  my $mostVotes=0;
-  my $winningKey="----";
-  while( my($key,$value)=each(%$hash)){
-    if($value>$mostVotes){
-      $mostVotes=$value;
-      $winningKey=$key;
-    }
-  }
-  return $winningKey;
-}
-# returns the index of the array with the lowest numerical value
-sub minValueIndex{
-  my($hash)=@_;
-  my $lowestValue=999999999; # some really large number
-  my $lowestKey=-1;
-  while( my($key,$value)=each(%$hash)){
-    if($value<$lowestValue){
-      $lowestValue=$value;
-      $lowestKey=$key;
-    }
-  }
-  return $lowestKey;
-}
-# largest value of an array
-sub maxValueIndex{
-  my($hash)=@_;
-  my $largestValue=-999999999; # some really negative number
-  my $largestKey=-1;
-  while( my($key,$value)=each(%$hash)){
-    if($value>$largestValue){
-      $largestValue=$value;
-      $largestKey=$key;
-    }
-  }
-  return $largestKey;
-}
-
-# http://www.go4expert.com/forums/showthread.php?t=8978
-sub in_array {
-     my ($search_for,$arr) = @_;
-     my %items = map {$_ => 1} @$arr; # create a hash out of the array values
-     return (exists($items{$search_for}))?1:0;
 }
 
