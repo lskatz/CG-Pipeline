@@ -52,13 +52,13 @@ sub main() {
   my $infile=$$settings{infile} or die "Error: need an infile\n".usage();
   my $outfile=$$settings{outfile} or die "Error: need an outfile\n".usage();
 
-  logmsg "Trimming and cleaning a read file $infile";
-  my $seqs=qualityTrimFastq($infile,$settings);
+  my $seqs=[];
+  $seqs=qualityTrimFastqPE($infile,$settings) if($$settings{pairedEnd});
+  $seqs=qualityTrimFastqSE($infile,$settings) if(!$$settings{pairedEnd});
   
-  open(OUT,">",$outfile);
+  open(OUT,">",$outfile) or die "Error: Could not open $outfile for writing";
   print OUT $_ for(@$seqs);
   close OUT;
-  
   logmsg "Reads are in $outfile";
 
   return 0;
@@ -66,18 +66,15 @@ sub main() {
 
 # returns a reference to an array of fastq entries.
 # These entries are each a string of the actual entry
-sub qualityTrimFastq($;$){
+sub qualityTrimFastqPE($;$){
   my($fastq,$settings)=@_;
 
+  logmsg "Trimming and cleaning a paired end read file $fastq";
   # initialize the threads
   my (@t,$t);
   my $Q=Thread::Queue->new;
   for(0..$$settings{numcpus}-1){
-    if($$settings{pairedEnd}){
-      $t[$t++]=threads->create(\&trimCleanPEWorker,$Q,$settings);
-    } else {
-      die "Error: non paired end does not work right now. Use -p";
-    }
+    $t[$t++]=threads->create(\&trimCleanPEWorker,$Q,$settings);
   }
 
   # load all reads into the threads for analysis
@@ -112,8 +109,56 @@ sub qualityTrimFastq($;$){
     push(@entry,@$tmp);
   }
 
-  my $numCleaned=$entryCount-@entry;
-  logmsg "$numCleaned entries out of $entryCount removed due to low quality";
+  my $numEntriesLeft=@entry;
+  my $numCleaned=$entryCount-$numEntriesLeft;
+  logmsg "$numCleaned entries out of $entryCount removed due to low quality ($numEntriesLeft left)";
+  return \@entry;
+}
+sub qualityTrimFastqSE($;$){
+  my($fastq,$settings)=@_;
+
+  logmsg "Trimming and cleaning a single end read file $fastq";
+  # initialize the threads
+  my (@t,$t);
+  my $Q=Thread::Queue->new;
+  for(0..$$settings{numcpus}-1){
+    $t[$t++]=threads->create(\&trimCleanSEWorker,$Q,$settings);
+  }
+  # load all reads into the threads for analysis
+  my $entryCount=0;
+  open(FQ,'<',$fastq) or die "Could not open $fastq for reading: $!";
+  while(my $entry=<FQ>){
+    $entry.=<FQ> for(1..3); # 4 lines total for single end entry
+    $Q->enqueue($entry);
+    $entryCount++;
+    logmsg "Finished loading $entryCount pairs" if($entryCount%100000==0);
+  }
+  close FQ;
+  logmsg "Done loading: $entryCount entries loaded.";
+  
+  # stop the threads
+  $Q->enqueue(undef) for(1..$$settings{numcpus});
+  # status update
+  STATUS_UPDATE:
+  while(my $p=$Q->pending){
+    logmsg "$p entries left to process";
+    # shave off some time if the queue empties while we are sleeping
+    for(1..5){
+      sleep 2;
+      last STATUS_UPDATE if(!$Q->pending);
+    }
+  }
+
+  # grab all the results from the threads
+  my @entry;
+  for(@t){
+    my $tmp=$_->join;
+    push(@entry,@$tmp);
+  }
+
+  my $numEntriesLeft=@entry;
+  my $numCleaned=$entryCount-$numEntriesLeft;
+  logmsg "$numCleaned entries out of $entryCount removed due to low quality ($numEntriesLeft left)";
   return \@entry;
 }
 
@@ -134,6 +179,23 @@ sub trimCleanPEWorker{
     next if(!read_is_good(\%read2,$settings));
 
     my $entryOut="$read1{id}\n$read1{seq}\n+\n$read1{qual}\n$read2{id}\n$read2{seq}\n+\n$read2{qual}\n";
+    push(@entryOut,$entry);
+  }
+  return \@entryOut;
+}
+sub trimCleanSEWorker{
+  my($Q,$settings)=@_;
+  logmsg "Launching thread TID".threads->tid;
+  my(@entryOut);
+  while(defined(my $entry=$Q->dequeue)){
+    my($id1,$seq1,undef,$qual1)=split(/\s*\n\s*/,$entry);
+    my %read1=(id=>$id1,seq=>$seq1,qual=>$qual1,length=>length($seq1));
+    trimRead(\%read1,$settings);
+
+    #cleaning stage
+    next if(!read_is_good(\%read1,$settings));
+
+    my $entryOut="$read1{id}\n$read1{seq}\n+\n$read1{qual}\n";
     push(@entryOut,$entry);
   }
   return \@entryOut;
@@ -192,7 +254,7 @@ sub usage{
     -o output file in fastq format
   Additional options
   
-  -p Use this switch if the reads are paired-end (currently on by default)
+  -p Use this switch if the reads are paired-end 
 
   Use phred scores (e.g. 20 or 30) or length in base pairs if it says P or L, respectively
   --min_quality P             # trimming
