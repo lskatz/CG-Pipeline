@@ -38,11 +38,12 @@ sub main() {
   $settings = AKUtils::loadConfig($settings);
   die("  Usage: $0 assembly1.fasta [,assembly2.fasta...] -output bestAssembly.fasta [-e expectedGenomeLength]\n  Tip: put your preffered assembly first to help break ties.\n  This script relies on run_assembly_metrics.pl\n") if @ARGV<1;
 
-  my @cmd_options=('output=s','expectedGenomeLength=i');
+  my @cmd_options=qw(output=s expectedGenomeLength=i metrics);
   GetOptions($settings, @cmd_options) or die;
 
   $$settings{outfile} = $$settings{output} || "$0.out.fasta";
   $$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
+  $$settings{min_contig_length}||=1;
   
   my @input_files=@ARGV;
   logmsg "Determining best assembly from ".join(", ",@input_files).".";
@@ -54,6 +55,13 @@ sub main() {
   
   AKUtils::printSeqsToFile($final_seqs, $$settings{outfile}, {order_seqs_by_name => 1});
   logmsg "Output is in $$settings{outfile}";
+
+  if($$settings{metrics}){
+    logmsg "Gathering metrics...";
+    my $metricsCommand="run_assembly_metrics.pl $$settings{outfile} -m $$settings{min_contig_length}";
+    $metricsCommand.=" -e $$settings{expectedGenomeLength}" if($$settings{expectedGenomeLength});
+    system($metricsCommand);
+  }
 
   return 0;
 }
@@ -69,7 +77,7 @@ sub bestAssemblySeqs($$){
   @$seqs=sort{$a cmp $b} @$seqs;
   for($i=0;$i<@$seqs;$i++){
     my %seqMetric;
-    my $command="run_assembly_metrics.pl $$seqs[$i]";
+    my $command="run_assembly_metrics.pl $$seqs[$i] -m $$settings{min_contig_length}";
     $command.=" -e $$settings{expectedGenomeLength}" if($$settings{expectedGenomeLength});
     logmsg "COMMAND $command";
     my $seqMetric=`$command 2>&1`;
@@ -87,7 +95,7 @@ sub bestAssemblySeqs($$){
   my $bestAssemblyScore=$metrics{$bestAssemblyFilename}{assemblyScore};
   for my $file(keys(%metrics)){
     my $assemblyScore=$metrics{$file}{assemblyScore};
-    logmsg "Comparing $bestAssemblyFilename ($bestAssemblyScore) vs $file ($assemblyScore)";
+    logmsg "Comparing $bestAssemblyFilename vs $file\n  ($bestAssemblyScore vs $assemblyScore)";
     if($assemblyScore>$bestAssemblyScore){
       $bestAssemblyFilename=$file;
       $bestAssemblyScore=$metrics{$bestAssemblyFilename}{assemblyScore};
@@ -97,3 +105,11 @@ sub bestAssemblySeqs($$){
   return AKUtils::readMfa($bestAssemblyFilename);
 }
 
+sub usage{
+  "Usage: $0 assembly1.fasta [,assembly2.fasta...] -output bestAssembly.fasta [-e expectedGenomeLength]
+  -e expectedGenomeLength in bp
+  -m
+    if you want final metrics to be displayed
+  Tip: put your preffered assembly first to help break ties.
+  "
+}
