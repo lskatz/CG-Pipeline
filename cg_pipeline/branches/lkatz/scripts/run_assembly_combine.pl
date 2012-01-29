@@ -157,19 +157,11 @@ sub combine2Assemblies{
 }
 
 # make a crude assembly score for sorting the best assemblies
-# TODO move this subroutine to run_assembly_metrics.pl so that you can get a quick number
 sub assemblyScore{
   my($a,$settings)=@_;
-  my %metrics=assembly_metrics($a);
-  my $points;
-  for (qw(N50 genomeLength longestContig numContigs)){
-    if(/numContigs/){
-      $points-=log($metrics{$_});
-      next;
-    }
-    $points+=log($metrics{$_});
-  }
-  return $points;
+  my $tmp= `run_assembly_metrics.pl $a -s assemblyScore -n`;
+  chomp($tmp);
+  return $tmp;
 }
 
 sub assembly_metrics{
