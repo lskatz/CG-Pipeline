@@ -28,16 +28,19 @@ use CGPipelineUtils;
 use Data::Dumper;
 use threads;
 use Thread::Queue;
+use threads::shared;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
 sub logmsg {print STDOUT "$0: ".(caller(1))[3].": @_\n";}
 
+my %threadStatus:shared;
+
 exit(main());
 
 sub main() {
   my $settings={};
-  GetOptions($settings,qw(pairedEnd infile=s outfile=s min_quality=i bases_to_trim=i min_avg_quality=i min_avg_quality_window=i min_length=i));
+  GetOptions($settings,qw(pairedEnd infile=s outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i));
   $$settings{numcpus}||=AKUtils::getNumCPUs();
 
   # trimming
@@ -45,12 +48,11 @@ sub main() {
   $$settings{bases_to_trim}||=10; # max number of bases that will be trimmed on either side
   # cleaning
   $$settings{min_avg_quality}||=30;
-  $$settings{min_avg_quality_window}||=70;
   $$settings{min_length}||=62; # twice kmer length sounds good
   
   
-  my $infile=$$settings{infile} or die "Error: need an infile\n".usage();
-  my $outfile=$$settings{outfile} or die "Error: need an outfile\n".usage();
+  my $infile=$$settings{infile} or die "Error: need an infile\n".usage($settings);
+  my $outfile=$$settings{outfile} or die "Error: need an outfile\n".usage($settings);
 
   my $seqs=[];
   $seqs=qualityTrimFastqPE($infile,$settings) if($$settings{pairedEnd});
@@ -84,7 +86,11 @@ sub qualityTrimFastqPE($;$){
     $entry.=<FQ> for(1..7); # 8 lines total for paired end entry
     $Q->enqueue($entry);
     $entryCount++;
-    logmsg "Finished loading $entryCount pairs" if($entryCount%100000==0);
+    if($entryCount%100000==0){
+      my $numGood=sum(values(%threadStatus));
+      my $freq_isClean=$numGood/$entryCount;
+      logmsg "Finished loading $entryCount pairs ($freq_isClean pass rate)";
+    }
   }
   close FQ;
   logmsg "Done loading: $entryCount entries loaded.";
@@ -164,7 +170,8 @@ sub qualityTrimFastqSE($;$){
 
 sub trimCleanPEWorker{
   my($Q,$settings)=@_;
-  logmsg "Launching thread TID".threads->tid;
+  my $tid="TID".threads->tid;
+  logmsg "Launching thread $tid";
   my(@entryOut);
   while(defined(my $entry=$Q->dequeue)){
     my($id1,$seq1,undef,$qual1,$id2,$seq2,undef,$qual2)=split(/\s*\n\s*/,$entry);
@@ -179,7 +186,8 @@ sub trimCleanPEWorker{
     next if(!read_is_good(\%read2,$settings));
 
     my $entryOut="$read1{id}\n$read1{seq}\n+\n$read1{qual}\n$read2{id}\n$read2{seq}\n+\n$read2{qual}\n";
-    push(@entryOut,$entry);
+    $threadStatus{$tid}++;
+    push(@entryOut,$entryOut);
   }
   return \@entryOut;
 }
@@ -196,7 +204,7 @@ sub trimCleanSEWorker{
     next if(!read_is_good(\%read1,$settings));
 
     my $entryOut="$read1{id}\n$read1{seq}\n+\n$read1{qual}\n";
-    push(@entryOut,$entry);
+    push(@entryOut,$entryOut);
   }
   return \@entryOut;
 }
@@ -216,10 +224,14 @@ sub trimRead{
     $numToTrim5++ if($qual[$i]<$$settings{min_quality});
     last if($qual[$i]>=$$settings{min_quality});
   }
-  $$read{seq}=substr($$read{seq},$numToTrim3,$$read{length}-$numToTrim3-$numToTrim5);
-  $$read{qual}=substr($$read{qual},$numToTrim3,$$read{length}-$numToTrim3-$numToTrim5);
+  if($numToTrim3 || $numToTrim5){
+    #my $tmp= "TRIM  ==>$numToTrim3 ... <==$numToTrim5\n  >$$read{seq}<";
+    $$read{seq}=substr($$read{seq},$numToTrim3,$$read{length}-$numToTrim3-$numToTrim5);
+    $$read{qual}=substr($$read{qual},$numToTrim3,$$read{length}-$numToTrim3-$numToTrim5);
+    #print "$tmp\n  >$$read{seq}<\n\n";
+  }
 
-  return $read;
+  return %$read;
 }
 
 
@@ -228,20 +240,15 @@ sub trimRead{
 # judging by the cleaning options
 sub read_is_good{
   my($read,$settings)=@_;
-  return 0 if(length($$read{seq})<$$settings{min_length});
+  my $readLength=length($$read{seq});
+  #die "short read: $$read{seq}\n$readLength < $$settings{min_length}\n" if($readLength<$$settings{min_length});
+  return 0 if($readLength<$$settings{min_length});
   
   # avg quality
   my $qual_is_good=1;
   my @qual=map(ord($_)-33,split(//,$$read{qual}));
-  my $length=scalar(@qual)-$$settings{min_avg_quality_window};
-  for(my $i=0;$i<$length;$i++){
-    my @subQual=@qual[$i..($$settings{min_avg_quality_window}+$i-1)];
-    my $avgQual=sum(@subQual)/$$settings{min_avg_quality_window};
-    if($avgQual<$$settings{min_avg_quality}){
-      #print "$i: ".join(".",@subQual)."\n$avgQual <=> $$settings{min_avg_quality}\n";die;
-      return 0;
-    }
-  }
+  my $avgQual=sum(@qual)/$readLength;
+  return 0 if($avgQual<$$settings{min_avg_quality});
   return 1;
 }
 
@@ -258,10 +265,13 @@ sub usage{
 
   Use phred scores (e.g. 20 or 30) or length in base pairs if it says P or L, respectively
   --min_quality P             # trimming
+    default: $$settings{min_quality}
   --bases_to_trim L           # trimming
+    default: $$settings{bases_to_trim}
   --min_avg_quality P         # cleaning
-  --min_avg_quality_window L  # cleaning
+    default: $$settings{min_avg_quality}
   --min_length L              # cleaning
+    default: $$settings{min_length}
   "
 }
 
