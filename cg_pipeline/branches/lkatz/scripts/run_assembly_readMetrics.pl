@@ -53,14 +53,41 @@ sub main() {
 
 sub readMetrics{
   my($file,$settings)=@_;
+
+  # STEP 1: READ THE FILE
   my($seqs,$qual);
   my $ext=(split(/\./,$file))[-1];
-  if($ext=~/fastq/){
+  my($name,$path,$ext)=fileparse($file,qw(.fastq.gz .fastq .fq .fa .fa .fas .fasta .fna .mfa));
+  if($ext=~/fastq|fq|gz/){
+    die "Cannot support fastq.gz right now" if($ext eq 'gz');
     ($seqs,$qual)=readFastq($file,$settings);
+  }
+  elsif($ext=~/fa|fas|fasta|fna|mfa/i){
+    $seqs=AKUtils::readMfa($file,$settings);
+    my $qualfile;
+    for("$name$ext.qual","$name.qual"){
+      $qualfile=$_ if(-e $_);
+    }
+    # convert the quality file to Illumina qual strings
+    $qual=AKUtils::readMfa($qualfile,{keep_whitespace=>1});
+    while(my($id,$qualstr)=each(%$qual)){
+      my $newQual;
+      my @tmpQual=split(/\s+/,$qualstr);
+      $newQual.=chr($_+33) for(@tmpQual);
+      $$qual{$id}=$newQual;
+    }
   } else {
     die "$ext extension not supported";
   }
+  
+  # STEP 1b: FILL IN QUALITY VALUES FOR READS WHOSE QUALITY IS NULL
+  if(!keys(%$qual)){
+    warn "Warning: There are no quality scores associated with $file";
+    my $nullQual=chr(33);
+    $$qual{$_}=$nullQual x length($$seqs{$_}) for(keys(%$seqs));
+  }
 
+  # STEP 2: METRICS
   my $seqCounter=0;
   my($totalReadLength,$maxReadLength,$totalReadQuality,$totalQualScores,$avgReadQualTotal)=(0,0);
   while(my($id,$seq)=each(%$seqs)){
@@ -71,8 +98,12 @@ sub readMetrics{
     
     # quality metrics
     my $qualStr=$$qual{$id};
-    die "Could not find qual for $id" if(!$qualStr);
-    my @qual=map(ord($_)-33,split(//,$qualStr));
+    my @qual;
+    if(!$qualStr){
+      warn "Warning: Could not find qual for $id. Setting to 0.";
+      $qualStr=chr(33)x$readLength;
+    }
+    @qual=map(ord($_)-33,split(//,$qualStr));
     my $sumReadQuality=sum(@qual);
     my $thisReadAvgQual=$sumReadQuality/$readLength;
     $avgReadQualTotal+=$thisReadAvgQual;
@@ -80,7 +111,6 @@ sub readMetrics{
     $totalQualScores+=$readLength;
     
     $seqCounter++;
-    # TODO avg quality overall
   }
   my $avgReadLength=$totalReadLength/$seqCounter;
   my $avgQuality=$totalReadQuality/$totalQualScores;
@@ -106,6 +136,7 @@ sub readFastq{
     my $sequence=<FASTQ>;
     my $plus=<FASTQ>;
     my $qual=<FASTQ>;
+    next if(!$sequence);
     $id=~s/^@//;
     $$seqs{$id}=$sequence;
     $$quals{$id}=$qual;
