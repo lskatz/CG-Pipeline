@@ -36,7 +36,7 @@ exit(main());
 
 sub main() {
   $settings = AKUtils::loadConfig($settings);
-  die("  Usage: $0 assembly1.fasta [,assembly2.fasta...] -output bestAssembly.fasta [-e expectedGenomeLength]\n  Tip: put your preffered assembly first to help break ties.\n  This script relies on run_assembly_metrics.pl\n") if @ARGV<1;
+  die(usage($settings)) if @ARGV<1;
 
   my @cmd_options=qw(output=s expectedGenomeLength=i metrics);
   GetOptions($settings, @cmd_options) or die;

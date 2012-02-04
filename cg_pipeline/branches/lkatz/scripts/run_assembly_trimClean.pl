@@ -2,6 +2,7 @@
 
 # run_assembly_trimClean: trim and clean a set of raw reads
 # Author: Lee Katz <lkatz@cdc.gov>
+# TODO make an output queue and have one thread writing the results
 
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
@@ -40,7 +41,7 @@ exit(main());
 
 sub main() {
   my $settings={};
-  GetOptions($settings,qw(pairedEnd infile=s outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i));
+  GetOptions($settings,qw(pairedEnd infile=s outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter));
   $$settings{numcpus}||=AKUtils::getNumCPUs();
 
   # trimming
@@ -86,7 +87,7 @@ sub qualityTrimFastqPE($;$){
     $entry.=<FQ> for(1..7); # 8 lines total for paired end entry
     $Q->enqueue($entry);
     $entryCount++;
-    if($entryCount%100000==0){
+    if(!$$settings{quieter} && $entryCount%100000==0){
       my $numGood=sum(values(%threadStatus));
       my $freq_isClean=$numGood/$entryCount;
       logmsg "Finished loading $entryCount pairs ($freq_isClean pass rate)";
@@ -97,16 +98,7 @@ sub qualityTrimFastqPE($;$){
   
   # stop the threads
   $Q->enqueue(undef) for(1..$$settings{numcpus});
-  # status update
-  STATUS_UPDATE:
-  while(my $p=$Q->pending){
-    logmsg "$p entries left to process";
-    # shave off some time if the queue empties while we are sleeping
-    for(1..5){
-      sleep 2;
-      last STATUS_UPDATE if(!$Q->pending);
-    }
-  }
+  queue_status_updater($Q,$settings);
 
   # grab all the results from the threads
   my @entry;
@@ -117,7 +109,7 @@ sub qualityTrimFastqPE($;$){
 
   my $numEntriesLeft=@entry;
   my $numCleaned=$entryCount-$numEntriesLeft;
-  logmsg "$numCleaned entries out of $entryCount removed due to low quality ($numEntriesLeft left)";
+  logmsg "$numCleaned entries out of $entryCount removed due to low quality ($numEntriesLeft left)" if(!$$settings{quieter});
   return \@entry;
 }
 sub qualityTrimFastqSE($;$){
@@ -137,23 +129,14 @@ sub qualityTrimFastqSE($;$){
     $entry.=<FQ> for(1..3); # 4 lines total for single end entry
     $Q->enqueue($entry);
     $entryCount++;
-    logmsg "Finished loading $entryCount pairs" if($entryCount%100000==0);
+    logmsg "Finished loading $entryCount pairs" if(!$$settings{quieter} && $entryCount%100000==0);
   }
   close FQ;
   logmsg "Done loading: $entryCount entries loaded.";
   
   # stop the threads
   $Q->enqueue(undef) for(1..$$settings{numcpus});
-  # status update
-  STATUS_UPDATE:
-  while(my $p=$Q->pending){
-    logmsg "$p entries left to process";
-    # shave off some time if the queue empties while we are sleeping
-    for(1..5){
-      sleep 2;
-      last STATUS_UPDATE if(!$Q->pending);
-    }
-  }
+  queue_status_updater($Q,$settings);
 
   # grab all the results from the threads
   my @entry;
@@ -171,7 +154,7 @@ sub qualityTrimFastqSE($;$){
 sub trimCleanPEWorker{
   my($Q,$settings)=@_;
   my $tid="TID".threads->tid;
-  logmsg "Launching thread $tid";
+  logmsg "Launching thread $tid" if(!$$settings{quieter});
   my(@entryOut);
   while(defined(my $entry=$Q->dequeue)){
     my($id1,$seq1,undef,$qual1,$id2,$seq2,undef,$qual2)=split(/\s*\n\s*/,$entry);
@@ -193,7 +176,7 @@ sub trimCleanPEWorker{
 }
 sub trimCleanSEWorker{
   my($Q,$settings)=@_;
-  logmsg "Launching thread TID".threads->tid;
+  logmsg "Launching thread TID".threads->tid if(!$$settings{quieter});
   my(@entryOut);
   while(defined(my $entry=$Q->dequeue)){
     my($id1,$seq1,undef,$qual1)=split(/\s*\n\s*/,$entry);
@@ -204,6 +187,7 @@ sub trimCleanSEWorker{
     next if(!read_is_good(\%read1,$settings));
 
     my $entryOut="$read1{id}\n$read1{seq}\n+\n$read1{qual}\n";
+    warn "Error: $entryOut\n HAS NO \@!!!!" if($entryOut!~/^@/);
     push(@entryOut,$entryOut);
   }
   return \@entryOut;
@@ -217,11 +201,12 @@ sub trimRead{
   $numToTrim3=$numToTrim5=0;
   @qual=map(ord($_)-33,split(//,$$read{qual}));
   for(my $i=0;$i<$$settings{bases_to_trim};$i++){
-    $numToTrim3++ if($qual[$i]<$$settings{min_quality});
+    $numToTrim3++ if(sum(@qual[0..$i])/($i+1)<$$settings{min_quality});
     last if($qual[$i]>=$$settings{min_quality});
   }
+  my $j=0;
   for(my $i=$$read{length}-$$settings{bases_to_trim};$i<@qual;$i++){
-    $numToTrim5++ if($qual[$i]<$$settings{min_quality});
+    $numToTrim5++ if(sum(@qual[$i..$#qual])/(++$j)<$$settings{min_quality});
     last if($qual[$i]>=$$settings{min_quality});
   }
   if($numToTrim3 || $numToTrim5){
@@ -249,6 +234,20 @@ sub read_is_good{
   my @qual=map(ord($_)-33,split(//,$$read{qual}));
   my $avgQual=sum(@qual)/$readLength;
   return 0 if($avgQual<$$settings{min_avg_quality});
+  return 1;
+}
+
+sub queue_status_updater{
+  my($Q,$settings)=@_;
+  STATUS_UPDATE:
+  while(my $p=$Q->pending){
+    logmsg "$p entries left to process";
+    # shave off some time if the queue empties while we are sleeping
+    for(1..5){
+      sleep 2;
+      last STATUS_UPDATE if(!$Q->pending);
+    }
+  }
   return 1;
 }
 

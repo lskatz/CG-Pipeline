@@ -909,7 +909,9 @@ sub readMfa($;$) {
 			undef $seq;
 			$cur_seq_hdr = ($$settings{first_word_only} ? (split /\s/, $1)[0] : $1);
 		} else {
-			chomp; s/\s//g; $seq .= uc $_;
+			chomp; 
+      s/\s//g unless($$settings{keep_whitespace});
+      $seq .= uc $_;
 		}
 	}
 	close FH;
@@ -1802,6 +1804,18 @@ sub getBLASTGenePredictions($$) {
 	my ($input_seqs, $settings) = @_;
 	my $orfs = AKUtils::findOrfs2($input_seqs, {orftype=>'start2stop', need_seq=>1, need_aa_seq=>1});
 
+  my $numOrfs;
+  foreach my $seqname(keys %$orfs){
+    foreach my $frame(keys %{$$orfs{$seqname}}){
+      foreach my $stop (keys %{$$orfs{$seqname}->{$frame}}){
+        $numOrfs++;
+      }
+    }
+  }
+  logmsg "$numOrfs ORFs found.";
+  my $reportEvery=int($numOrfs/10); # send out 10 total updates
+  my $orfCount=0;
+
 	$$settings{min_default_db_coverage} ||= 0.7;
 	$$settings{min_reference_coverage} ||= 0.85;
 	$$settings{ignore_blast_errors} ||= 1;
@@ -1819,6 +1833,7 @@ sub getBLASTGenePredictions($$) {
 	logmsg "Using database $$settings{blast_db}";
 	logmsg "Running BLAST gene prediction on ".keys(%$input_seqs)." sequences...";
 	foreach my $seqname (sort keys %$orfs) {
+    #logmsg "Checking contig $seqname. ".scalar(keys(%$orfs))." ORFs to check.";
 		foreach my $frame (sort keys %{$$orfs{$seqname}}) {
 			foreach my $stop (sort keys %{$$orfs{$seqname}->{$frame}}) {
 				my $orf = $$orfs{$seqname}->{$frame}->{$stop};
@@ -1863,9 +1878,14 @@ sub getBLASTGenePredictions($$) {
 					die("bad orf $$orf{lo}..$$orf{hi}") if ($$orf{hi}-$$orf{lo}+1) % 3 != 0;
 					die("bad pred $$pred{lo} .. $$pred{hi} (orf $$orf{lo}..$$orf{hi}, in-hit coords $$best_hit{start1}..$$best_hit{end1})") if ($$pred{hi} - $$pred{lo} + 1 ) % 3 != 0;
 				}
+        
+        if(++$orfCount % $reportEvery==0){
+          logmsg "Finished with $orfCount blasts";
+        }
 			}
 		}
 	}
+  logmsg "Finished BLASTing $orfCount BLASTs";
 	return \%blast_preds;
 }
 
@@ -2002,7 +2022,7 @@ sub loadCDSFromGenbankFile($) {
 	logmsg "Loading data from $file...";
 	my $gbh = Bio::SeqIO->new(-format => 'genbank', -file => $file);
 	while (my $gb_ent = $gbh->next_seq()) {
-		warn unless $gb_ent->species;
+		warn "Warning: species tag isn't present in $file" unless $gb_ent->species;
 		for my $cds ($gb_ent->get_SeqFeatures) {
 			next if $cds->primary_tag ne 'CDS';
 			my $locus_name = ($cds->get_tag_values('locus_tag'))[0];
@@ -2017,6 +2037,7 @@ sub loadCDSFromGenbankFile($) {
 # Usage: $settings = loadConfig($default_settings);
 # By default, load 3 files in succession: bindir/appnamerc, /etc/appnamerc, ~/.appnamerc (if they exist)
 # Override this with: $settings = loadConfig({config_files => [file1, file2]});
+# 2011-11-22 LK added that a current working directory can have an appnamerc file too
 sub loadConfig($) {
 	my ($settings) = @_;
 
@@ -2028,7 +2049,8 @@ sub loadConfig($) {
 	$$settings{config_files} ||= ["$FindBin::RealBin/$$settings{appname}rc",
 		"$$settings{app_config_dir}/$$settings{appname}rc",
         "$$settings{system_config_dir}/$$settings{appname}rc",
-		"$$settings{user_config_dir}/.$$settings{appname}rc"];
+		"$$settings{user_config_dir}/.$$settings{appname}rc",
+    "./$$settings{appname}rc"];
 
 	my @config_files = @{$$settings{config_files}}; # avoid ridiculousness from config_files being set in a config file
 
