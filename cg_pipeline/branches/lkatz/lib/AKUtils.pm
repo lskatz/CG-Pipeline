@@ -1769,7 +1769,7 @@ sub blastSeqs($$$) {
 	my $blast_outfile = "$$settings{tempdir}/blastseqs.out";
 	printSeqsToFile($seqs, $blast_infile);
 
-	my $blast_qs = "blastall -p $mode -d $$settings{blast_db} -m 8 -a $$settings{num_cpus} -i $blast_infile -o $blast_outfile ";
+	my $blast_qs = "legacy_blast.pl blastall -p $mode -d $$settings{blast_db} -m 8 -a $$settings{num_cpus} -i $blast_infile -o $blast_outfile ";
 	$blast_qs .= $$settings{blast_xopts};
 
 	logmsg "Running $blast_qs" unless $$settings{quiet};
