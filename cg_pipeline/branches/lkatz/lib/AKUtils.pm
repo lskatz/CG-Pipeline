@@ -4,7 +4,7 @@
 # Author: Andrey Kislyuk (kislyuk@gatech.edu)
 
 package AKUtils;
-require 5.005;
+require 5.8.0;
 my ($VERSION) = ('$Id$' =~ /,v\s+(\d+\S+)/o);
 
 use strict;
@@ -18,7 +18,7 @@ use File::Temp ('tempdir');
 use Sys::Hostname;
 use Storable ('dclone'); # for deep copying
 #use Bit::Vector;
-#use Data::Dumper; # useful for printing deep structures, e.g. to print %hash: print Data::Dumper->new([\%hash],[qw(hash)])->Indent(3)->Quotekeys(0)->Dump;
+use Data::Dumper; # useful for printing deep structures, e.g. to print %hash: print Data::Dumper->new([\%hash],[qw(hash)])->Indent(3)->Quotekeys(0)->Dump;
 #use Fatal qw(:void open);
 # Useful modules to look at:
 # FindBin DynaLoader IO::Poll IO::Select IO::Socket Math::* Net::*
@@ -1699,7 +1699,8 @@ sub printSeqsToFile($$;$) {
 
 sub getNumCPUs() {
 	my $num_cpus;
-	open(IN, '<', '/proc/cpuinfo'); while (<IN>) { /processor\s*\:\s*\d+/ or next; $num_cpus++; } close IN;
+  open(IN, '<', '/proc/cpuinfo') or warn "Warning: tried to get num cpus from /proc/cpuinfo but couldn't. Setting numcpus to 1.";
+  while (<IN>) { /processor\s*\:\s*\d+/ or next; $num_cpus++; } close IN;
 	return $num_cpus || 1;
 }
 
@@ -1771,6 +1772,7 @@ sub blastSeqs($$$) {
 
 	my $blast_qs = "legacy_blast.pl blastall -p $mode -d $$settings{blast_db} -m 8 -a $$settings{num_cpus} -i $blast_infile -o $blast_outfile ";
 	$blast_qs .= $$settings{blast_xopts};
+  $blast_qs .= " 2>&1 ";
 
 	logmsg "Running $blast_qs" unless $$settings{quiet};
 	system($blast_qs);
@@ -1778,6 +1780,7 @@ sub blastSeqs($$$) {
 		my $er_str = "Error running \"$blast_qs\": $!";
 		$$settings{ignore_blast_errors} ? warn($er_str) : die($er_str);
 	}
+  logmsg "flushing $blast_outfile and reading results"; open(BLS,$blast_outfile) or die "Could not open $blast_outfile because $!";;close(BLS,$blast_outfile);
 #	open(BLAST_OUT, "$blast_qs |") or die "Unable to run \"$blast_qs\": $!";
 	return loadBLAST8($blast_outfile);
 }
@@ -1826,7 +1829,8 @@ sub getBLASTGenePredictions($$) {
 	$$settings{blast_db} ||= $$settings{prediction_blast_db};
 #	$$settings{blast_db} ||= $$settings{default_blast_db};
 	$$settings{blast_xopts} = " -e $$settings{min_default_db_evalue}";
-	$$settings{quiet} = 1;
+	#$$settings{quiet} = 1;
+  $$settings{num_cpus}||=AKUtils::getNumCPUs();
 
 	my %blast_preds;
 
@@ -1835,16 +1839,47 @@ sub getBLASTGenePredictions($$) {
 	foreach my $seqname (sort keys %$orfs) {
     #logmsg "Checking contig $seqname. ".scalar(keys(%$orfs))." ORFs to check.";
 		foreach my $frame (sort keys %{$$orfs{$seqname}}) {
-			foreach my $stop (sort keys %{$$orfs{$seqname}->{$frame}}) {
+      my @stop=sort keys %{$$orfs{$seqname}->{$frame}};
+      my %blsQuery=();
+      my %orfInfo=();
+      my ($best_hit, $best_hit_coverage);
+      for(1..@stop){
+        my $stop=shift(@stop);
 				my $orf = $$orfs{$seqname}->{$frame}->{$stop};
 				my $aa_seq = $orf->{aa_seq};
-				my $blast_hits = AKUtils::blastSeqs({seq1 => $aa_seq}, 'blastp', $settings);
-				my ($best_hit, $best_hit_coverage);
+        $orfInfo{"seq$_"}={aa_seq=>$aa_seq,stop=>$stop,orf=>$orf,length=>length($aa_seq)};
+        $blsQuery{"seq$_"}=$aa_seq;
+      }
+      logmsg "BLASTing frame $frame";
+      my $bh = AKUtils::blastSeqs(\%blsQuery, 'blastp', $settings);
+
+      # group the blast hits by name1
+      my @blast_hits_allSeqs=sort({$$a{name1} cmp $$b{name1}} @$bh);
+      next if(!@blast_hits_allSeqs);
+      my $name1=$blast_hits_allSeqs[-1]{name1};
+      my @blast_hits;
+      for(my $i=@blast_hits_allSeqs-1;$i>=0;$i--){
+        my $name1a=$blast_hits_allSeqs[$i]{name1};
+        next if($name1a eq $name1);
+        my @tmp=splice(@blast_hits_allSeqs,$i+1);
+        push(@blast_hits,\@tmp);
+        #print Dumper \@tmp;
+        #die "Spliced from 0 to $i with $name1 to $$hit{name1}";
+        $name1=$name1a;
+      }
+      push(@blast_hits,\@blast_hits_allSeqs);
+
+      foreach my $blast_hits (@blast_hits){
+        my $seqId=$$blast_hits[0]{name1};
+        my $stop=$orfInfo{$seqId}{stop};
+        my $orf=$orfInfo{$seqId}{orf};
+        my $aa_seq=$orfInfo{$seqId}{aa_seq};
+        my $aa_length=$orfInfo{$seqId}{length};
 				# TODO: treat truncated orfs separately, relax metrics for them and remove irrelevant sanity checks for them
 				# TODO: this selects best hit by coverage, but for purposes of homolog finding max e-value may be better
 				foreach my $hit (@$blast_hits) {
 					next unless $$hit{start1};
-					$$hit{coverage} = $$hit{al_len} / length($aa_seq); # query coverage (not db coverage)
+					$$hit{coverage} = $$hit{al_len} / $aa_length; # query coverage (not db coverage)
 					next if $$hit{coverage} < $$settings{min_default_db_coverage};
 					next if $$hit{percent_id} < $$settings{min_default_db_identity} * 100;
 					$best_hit_coverage = $$hit{coverage} if $best_hit_coverage < $$hit{coverage} or not defined $best_hit_coverage;
