@@ -76,12 +76,11 @@ sub main() {
 	my $predictions = getGenePredictions(\@input_files, \@ref_files, $input_seqs, $ref_seqs, $settings);
 	my $gb_filename = generateGenBankFile($input_seqs, $predictions, $settings);
 	logmsg "Output is in $gb_filename";
-  logmsg "Prediction statistics are being generated:";
-  system("run_prediction_metrics.pl $gb_filename");
 
   return 0;
 }
 
+# TODO put stop codons in all frames around each input seq
 sub loadInputs($$) {
 	my ($input_files, $ref_files) = @_;
 	my ($input_seqs, $ref_seqs) = ({}, {});
@@ -113,13 +112,13 @@ sub getGenePredictions($$$$$) {
 $$settings{gm_trainer_xopts} .= " --motif=0";
 
 #goto RNA;
+	my $blast_predictions = AKUtils::getBLASTGenePredictions($input_seqs, $settings);
 	# Obtain ab initio predictions
 	my $genemark_predictions;
 	if ($$settings{prediction_use_genemark}) {
 		$genemark_predictions = AKUtils::getGenemarkPredictions($input_seqs, $settings);
 	}
 	my $glimmer_predictions = AKUtils::getGlimmer3Predictions($input_seqs, $settings);
-	my $blast_predictions = AKUtils::getBLASTGenePredictions($input_seqs, $settings);
 
 	# Combine and index predictions by strand, stop
 	foreach my $pred_set ($genemark_predictions, $glimmer_predictions, $blast_predictions) {
