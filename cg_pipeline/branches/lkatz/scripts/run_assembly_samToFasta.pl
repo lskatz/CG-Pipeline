@@ -41,6 +41,7 @@ sub main{
   # make some filenames absolute
   for my $param (qw(assembly sam)){
     $$settings{$param} = File::Spec->rel2abs($$settings{$param});
+    die "Error: $$settings{$param} doesn't exist!" unless(-e $$settings{$param});
   }
 
   # set up the directory structure
@@ -54,20 +55,22 @@ sub main{
   # start the computation
 
   setupBuildDirectory($$settings{tempdir},$settings);
-  #indexAssembly($settings);
-
-  #my $sai=queryIlluminaReads($settings);
-
-  #my $sam=convertSaiToSam($sai,$settings);
 
   my ($bam,$bamIndex)=createBam($sam,$settings);
+  my $fastqOut=bamToFastq($bam,$bamIndex,$settings);
+  my ($newAssembly,$newAssemblyQual)=fastqToFastaQual($fastqOut,$settings);
 
-  my $snpcalls=predictSnps($bam,$bamIndex,$settings);
+  open(OUT,">$$settings{outfile}") or die "Could not open $$settings{outfile} because $!";
+  print OUT $newAssembly;
+  close OUT;
+  open(OUT,">$$settings{outfile}.qual") or die "Could not open $$settings{outfile}.qual because $!";
+  print OUT $newAssemblyQual;
+  close OUT;
+  logmsg "Output is in $$settings{outfile}";
 
-  my %baseChanges=makeNewBasecalls($snpcalls,$settings);
-  my $newAssembly=putChangesIntoAssembly(\%baseChanges,$settings);
+  return 0;
 
-  #TODO print out the new assembly
+  # print out the new assembly
   $$settings{order_seqs_by_name}=1;
   AKUtils::printSeqsToFile($newAssembly,$$settings{outfile},$settings);
   logmsg "Printed new assembly file $$settings{outfile}";
@@ -95,14 +98,14 @@ sub setupBuildDirectory{
 
 # The database/reference genome file in the FASTA format was first indexed with the `index' 
 sub indexAssembly{
-  my($settings)=@_;
+  my($assembly,$settings)=@_;
   logmsg "Indexing assembly";
-  if(!-e "$$settings{assembly}.rsa"){
-    my $command="bwa index -a bwtsw $$settings{assembly}";
+  if(!-e "$assembly.rsa"){
+    my $command="bwa index -a bwtsw $assembly";
     command($command);
   } else {logmsg "Index exists; skipping";}
 
-  return $$settings{assembly};
+  return $assembly;
 }
 
 # the query illumina reads were aligned using the short read algorithm
@@ -161,149 +164,162 @@ sub createBam{
   return ($alnSorted,$bamIndex);
 }
 
-# generate the pileup output of SNP/indel predictions
-sub predictSnps{
+sub bamToFastq{
   my($bam,$bamIndex,$settings)=@_;
-  my $rawSnps="$$settings{tempdir}/sam.raw.snps";
-  my $filteredSnps="$$settings{tempdir}/sam.filtered.snps";
-  my $pileup="$$settings{tempdir}/sam.pileup.snps";
 
-  logmsg "Creating pileup file";
-  #print "BAM FILE IS $bam and ASSEMBLY FILE IS $$settings{assembly}\n";die;
-  # samtools mpileup -ugf ref.fa aln1.bam aln2.bam | bcftools view -bvcg - > var.raw.bcf
-  # bcftools view var.raw.bcf | vcfutils.pl varFilter -D100 > var.flt.vcf
-  # works -- samtools mpileup -ugf /netapp_beryl_users/gzu2/projects/assembly/tmp/2010V-1031.assembly.fasta /netapp_beryl_users/gzu2/projects/assembly/tmp/2010V-1031.assembly.fasta.bam.bai | bcftools view -bvcg - > var.raw.bcf
-  if(!-e $pileup){
-    command("samtools pileup -vcf $$settings{assembly} $bam > $rawSnps");
-    command("samtools.pl varFilter -D100 < $rawSnps > $filteredSnps") if(!-e $pileup);
-    command("awk '(\$3==\"*\"&&\$6>=50) || (\$3!=\"*\"&&\$6>=20)' $filteredSnps > $pileup");
-  } else {logmsg "$pileup exists; skipping";}
+  my $out1="$$settings{tempdir}/mpileupout1.tmp";
+  my $out2="$$settings{tempdir}/bcftoolsout2.tmp";
+  my $fastqOutNonstandard="$$settings{tempdir}/outNonstandard.fastq";
+  my $fastqOutStandard="$$settings{tempdir}/outStandard.fastq";
+  my $fastqOut="$$settings{tempdir}/out.fastq";
 
-  return $pileup;
+  logmsg "Converting BAM to fastq";
+  if(!-e $fastqOutNonstandard){
+    #indexAssembly($$settings{assembly},$settings);
+    # separate out these commands for debugging purposes
+    command("samtools mpileup -uf $$settings{assembly} $bam > $out1");
+    command("bcftools view -cg - < $out1 > $out2");
+    command("vcfutils.pl vcf2fq < $out2 > $fastqOutNonstandard");
+  } else {logmsg "$fastqOutNonstandard exists; skipping";}
+  if(!-e $fastqOut || -s $fastqOut < 1){
+    standardizeFastq($fastqOutNonstandard,$fastqOutStandard,$settings);
+    splitFastqByGaps($fastqOutStandard,$fastqOut,$settings);
+  }
+  return $fastqOut;
 }
 
-# determine the needed coverage before a base can even be considered to be changed
-sub coverageThreshold{
-  my ($snpcalls,$settings)=@_;
-
-  # just start off on 20 for now, using Eishita's research
-  return 20;
-}
-
-sub percentNeededForSnpCall{
-  my($snpcalls,$minCoverage,$settings)=@_;
-  
-  # just start off on 90 for now, using Eishita's research
-  return 90;
-}
-
-# list where all base call changes are
-sub makeNewBasecalls{
-  my($snpcalls,$settings)=@_;
-  my $minCoverage=coverageThreshold($snpcalls,$settings);
-  my $percentNeededForSnpCall=percentNeededForSnpCall($snpcalls,$minCoverage,$settings);
-
-  my %changes=();
-
-  my $seqs=AKUtils::readMfa($$settings{assembly});
-  open(SNPS,$snpcalls) or die "Cannot open pileup snpcalls file $snpcalls beacuse $!";
-  while(my $line=<SNPS>){
-    my %line=readPileupLine($line,$settings);
-    #print Dumper \%line;die;
-    next if($line{coverage}<$minCoverage);
-    
-    # mark bases for change, if they meet the requirements
-    #TODO remove or ignore bases with low quality values
-
-    # how many reads need to support you for a base change?
-    my $supportNeededForChange=($percentNeededForSnpCall/100)*$line{coverage};
-
-    my $consensusBase=$line{consensusBase};
-    #my $poskey=join("_",$line{'chr'},$line{'pos'}); # position is defined by contig/position
-    my($chr,$pos)=($line{'chr'},$line{'pos'});
-    if($line{type} eq 'snp'){
-      my $numBasesThatSupportTheSnp=($line{bases}=~s/$consensusBase//gi);
-      if($numBasesThatSupportTheSnp>$supportNeededForChange){
-        $changes{$chr}{$pos}=$line{consensusBase};
+# change a fastq with tons of newlines to the standard 4-line entries
+sub standardizeFastq{
+  my($fIn,$fOut,$settings)=@_;
+  logmsg "Standardizing $fIn to $fOut";
+  open(IN,$fIn) or die "Could not open $fIn because $!";
+  open(OUT,">",$fOut) or die "Could not write to $fOut because $!";
+  my $id;
+  while(my $line=<IN>){
+    if($line=~/^@/){
+      my($entrySequence,$entryQuality)=("","");
+      $id=$line;
+      chomp($id);
+      # grab the sequence
+      my $linesOfSequence=0;
+      while(<IN>){
+        last if(/^\+\s*$/);
+        $entrySequence.=$_;
+        $linesOfSequence++;
       }
-    } elsif($line{type} eq 'indel'){
-      $changes{$chr}{$pos}=$line{consensusBase};
-    } else { die "Unknown type '$line{type}' in the pileup file"};
-  }
-  close SNPS;
+      # grab the quality
+      my $linesOfQuality=0;
+      while(<IN>){
+        $entryQuality.=$_;
+        last if(++$linesOfQuality == $linesOfSequence);
+      }
 
-  return %changes;
-}
-
-# make a new assembly based on these changes
-sub putChangesIntoAssembly{
-  my($baseChanges,$settings)=@_;
-  my $assembly=AKUtils::readMfa($$settings{assembly});
-  my $totalSubs=0;
-
-  # make each change
-  # changes are 1-based and the assembly is 0-based (b/c it's a regular string)
-  while(my($contig,$changehash)=each(%$baseChanges)){
-    my($contigSubs)=(0);
-    my $sequence=[split(//,$$assembly{$contig})]; # make changes in an array
-
-    # make changes in reverse numerical order so that indels don't mess up the coordinates
-    # of any subsequent changes
-    my @sortedPos=sort{
-      #local($a,$b); # don't alter the original variables
-      my($A,$B)=($a,$b);
-      $A=~s/\+|\-//;
-      $B=~s/\+|\-//;
-      $B<=>$A
-    } keys(%$changehash);
-    for my $pos(@sortedPos){
-      my $change=$$changehash{$pos};
-      if($change!~/\+|\-/){
-        makeSubstitution($sequence,$pos-1,$change,$settings);
-      } elsif($change=~/\+/){
-        makeInsertion($sequence,$pos-1,$change,$settings);
-      } elsif($change=~/\-/){
-        makeDeletion($sequence,$pos-1,$change,$settings);
-      } 
-      $contigSubs++;
+      #cleanup of the entry
+      $entrySequence=~s/\n//g;
+      $entryQuality=~s/\n//g;
+      print OUT "$id\n$entrySequence\n+\n$entryQuality\n";
     }
-    $$assembly{$contig}=join("",@$sequence);
-
-    logmsg "Made $contigSubs substitutions and indels for contig $contig";
-    $totalSubs+=$contigSubs;
   }
-  logmsg "Finished making substitutions and indels. $totalSubs total";
-
-  return $assembly;
+  close OUT;
+  close IN;
+  return $fOut;
 }
 
+sub fastqToFastaQual{
+  my($fastq,$settings)=@_;
+  open(FASTQ,"<",$fastq) or die "Could not open $fastq because $!";
+  my $i=0;
+  my $seqId="";
+  my $sequence="NNN";
+  my($fasta,$qual);
+  while(my $fastqEntry=<FASTQ>){
+    $fastqEntry.=<FASTQ> for(1..3);
+    my($fastaEntry,$qualEntry)=fastqEntryToFastaQual($fastqEntry,$settings);
+    $qual.="$qualEntry\n";
+    $fasta.="$fastaEntry\n";
+  }
+  close FASTQ;
+  return($fasta,$qual);
+}
+
+sub fastqEntryToFastaQual{
+  my($entry,$settings)=@_;
+  $entry=~s/^\s+|\s+$//g;
+  my($id,$sequence,undef,$qualIllumina)=split(/\s*\n\s*/,$entry);
+  $id=~s/^@/>/;
+  my @qual=split(//,$qualIllumina);
+  @qual=map(ord($_)-33,@qual);
+  for(my $i=60;$i<@qual;$i+=60){
+    $qual[$i].="\n";
+  }
+  my $qualFasta=join(" ",@qual);
+  
+  $sequence=~s/(.{60})/$1\n/g;
+  my $fastaEntry="$id\n$sequence";
+  my $qualEntry="$id\n$qualFasta";
+  return ($fastaEntry,$qualEntry) if wantarray;
+  return $fastaEntry;
+}
+
+# split contigs by gaps
+sub splitFastqByGaps{
+  my($fastq,$fastqOut,$settings)=@_;
+  $$settings{min_gap_size}||=6;
+  my $contigBreak="N"x$$settings{min_gap_size};
+
+  logmsg "Splitting contigs by gaps of size $$settings{min_gap_size} from $fastq to $fastqOut";
+  open(IN,$fastq) or die "Could not open $fastq because $!";
+  open(OUT,">",$fastqOut) or die "Could not write to $fastqOut because $!";
+  while(my $seqId=<IN>){
+    my $sequence=<IN>;
+    <IN>; # + sign
+    my $qual=<IN>;
+    chomp($seqId,$sequence,$qual);
+    
+    # look for large enough gaps to split contigs
+    my $seqLength=length($sequence);
+    my (@gapStart,@gapStop);
+    my $contigNum=0;
+    for(my $i=0;$i<$seqLength;$i++){ 
+      next if(uc(substr($sequence,$i,$$settings{min_gap_size})) ne $contigBreak);
+      # step 1: the contig break has been found.
+      $gapStart[$contigNum]=$i;
+      # step 2: elongation
+      $i+=$$settings{min_gap_size};
+      for($i=$i;$i<$seqLength;$i++){
+        last if(uc(substr($sequence,$i,1)) ne "N");
+      }
+      $gapStop[$contigNum]=$i-1;
+      $contigNum++;
+    }
+
+    # extract contigs between gaps
+    my @newContig;
+    my $contigStart=0;
+    for(my $i=0;$i<@gapStart;$i++){
+      my $subseqId=$seqId."_subcontig$i";
+      my $contigStop;
+      if($i+1<@gapStart){
+        $contigStop=$gapStart[$i+1]-1;
+      } else { $contigStop=$seqLength; }
+      if($contigStop<1){
+        next;
+      }
+      $contigStart=$gapStop[$i]+1;
+      my $newContig=substr($sequence,$contigStart,($contigStop-$contigStart+1));
+      my $newQual=substr($qual,$contigStart,($contigStop-$contigStart+1));
+      print OUT "$subseqId\n$newContig\n+\n$newQual\n";
+    }
+
+  }
+  close OUT;
+  close IN;
+  return $fastqOut;
+}
 
 #########################
 ### utility methods
 #########################
-
-sub makeDeletion{
-  my($sequence,$position,$nts,$settings)=@_;
-  $nts=~s/\+|\-//;
-  $position++; # 1-based
-  # check to make sure the nt is what it says it should be
-  if(substr($nts,0,1) ne $$sequence[$position]){
-    print "There is a mismatch in the deletion at pos $position where it is $$sequence[$position] but the pileup file says ".substr($nts,0,1)."\n";
-  }
-  splice(@$sequence,$position,length($nts)); # remove nts starting at the ref position (?)
-}
-sub makeInsertion{
-  my($sequence,$position,$nts,$settings)=@_;
-  $nts=~s/\+|\-//;
-  splice(@$sequence,$position+1,0,$nts); # put the nts into the position after the ref position
-}
-
-# make a change in the sequence
-# 0-based coordinates
-sub makeSubstitution{
-  my($sequence,$position,$nt,$settings)=@_;
-  $$sequence[$position]=$nt;
-}
 
 sub readPileupLine{
   my($line,$settings)=@_;
@@ -345,12 +361,12 @@ Usage: perl $0 -a reference.fasta -s assembly.sam -o assembly.fasta -q
   -o (optional) final output file
     default: $0.merged.fasta
   -t (optional) This is where temporary files will be stored. 
-    Default: /tmp/$0/
+    Default: /tmp/....../
 
   No arguments should be given for the following options
   -f (optional) Force.
-  -k (optional) keep temporary files around (about 2GB of files)
-  -q to output quality files too. (asssembly.fasta.qual)
+  -k (optional) keep temporary files around (about 2GB of files in my test run)
+  -q to output quality files too. (assembly.fasta.qual)
   ";
 }
 
