@@ -41,9 +41,9 @@ sub main() {
 	$settings = AKUtils::loadConfig($settings);
 	$$settings{assembly_min_contig_length} = 100; #TODO put this into config file
 
-	die("Usage: $0 input.fastq [, input2.fastq, ...] [-o outfile.fasta] [-R references.mfa]\n  Input files can also be fasta files.  *.fasta.qual files are considered as the relevant quality files") if @ARGV < 1;
+	die(usage()) if @ARGV < 1;
 
-	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'outfile=s');
+	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'outfile=s','pairedEnd');
 	GetOptions($settings, @cmd_options) or die;
 
 	$$settings{outfile} ||= "$0.out.fasta";
@@ -254,7 +254,7 @@ sub amosShortReadMapping{
 
   logmsg "Converting $concatenatedReads to bnk";
   #my $afg=fastqToAfg($concatenatedReads,"$amosPrefix.afg",$settings);
-  system("toAmos_new -Q $concatenatedReads -b $amosPrefix.bnk") if(!-d "$amosPrefix.bnk");
+  system("toAmos_new -Q $concatenatedReads -b $amosPrefix.bnk 2>&1") if(!-d "$amosPrefix.bnk");
   die "Problem with AMOS's toAmos_new" if $?;
 
   logmsg "Running AMOScmp-shortReads on $amosPrefix";
@@ -370,3 +370,10 @@ sub command{
   return 1;
 }
 
+sub usage{
+	"Usage: $0 input.fastq [, input2.fastq, ...] [-o outfile.fasta] [-R references.mfa]
+  Input files can also be fasta files.  *.fasta.qual files are considered as the relevant quality files
+  -p
+    to indicate that the reads are paired end
+  "
+}
