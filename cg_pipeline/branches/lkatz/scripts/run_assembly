@@ -226,6 +226,11 @@ sub is_fastq($){
   return 1 if(ext($file)=~/^(fastq)$/i);
   return 0;
 }
+sub is_fastqGz($){
+  my($file)=@_;
+  return 1 if(ext($file)=~/^(fastq\.gz)$/i);
+  return 0;
+}
 
 # Wrapper for all base calling for input files
 # Separates chemistries by extension
@@ -246,6 +251,16 @@ sub baseCall($$){
       $qualfile="$file.qual" if(-e "$file.qual");
       $seqQualPair=[$file,$qualfile];
       push(@$long,$seqQualPair);
+    }
+    elsif(is_fastqGz($file)){
+      my $targetFile=$$settings{tempdir}."/".fileparse($file);
+      $targetFile=~s/\.gz$//;
+      if(!-e $targetFile && -s $targetFile < 1){
+        logmsg "I have to decompress $file to $targetFile";
+        system("gunzip -c '$file' > '$targetFile'");
+      }
+      $file=qualityControlFastq($file,$settings);
+      push(@$short,$targetFile);
     }
     elsif(is_fastq($file)){
       # quality trim fastq files
@@ -270,10 +285,12 @@ sub qualityControlFastq{
   my $command="$executable -Q33 -q 20 -p 75 -v -i '$file' -o '$outfile' 2>&1";
   system($command);
   if($?){
-    logmsg "Error with fastx. Trying again but assuming Sanger-variant fastq file";
-    $command=~s/\-Q33\s*//; # remove Q33 parameter (but not using ///g, in case it matches the infile name)
-    system($command);
-    die "Error with fastx toolkit" if $?;
+    logmsg "Error with fastx. Trying with CG-Pipeline's in-house method.";
+    system("run_assembly_trimClean.pl -i '$file' -o '$outfile' 2>&1");
+    #logmsg "Error with fastx. Trying again but assuming Sanger-variant fastq file";
+    #$command=~s/\-Q33\s*//; # remove Q33 parameter (but not using ///g, in case it matches the infile name)
+    #system($command);
+    #die "Error with fastx toolkit" if $?;
   }
   return $outfile;
 }

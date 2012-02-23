@@ -135,14 +135,31 @@ sub is_fasta($){
 sub is_fastq($){
   my($file)=@_;
   return 1 if(ext($file)=~/^fastq|fq$/i);
+  return 0;
+}
+sub is_fastqGz($){
+   my($file)=@_;
+   return 1 if(ext($file)=~/^fastq\.gz$/i);
+   return 0;
 }
 # wrapper for all base calling for input files
+# TODO find out if there are mate pairs (observed-insert-lengths program via Velvet, or maybe by reading the headers?)
+#TODO examine reads to see if the file overall belongs in "long" "short" etc: might just filter based on chemistry
 sub baseCall($$){
   my($input_files,$settings)=@_;
   my $fastqfiles;
   foreach my $file (@$input_files){
     if(is_fastq($file)){
       push(@$fastqfiles,$file);
+    }
+    elsif(is_fastqGz($file)){
+      my $targetFile=$$settings{tempdir}."/".fileparse($file);
+      $targetFile=~s/\.gz$//;
+      if(!-e $targetFile && -s $targetFile < 1){
+        logmsg "have to decompress $file to $targetFile";
+        system("gunzip -c '$file' > '$targetFile'");
+      }
+      push(@$fastqfiles,$targetFile);
     }
     elsif(is_fasta($file)){
       die "I have not implemented fasta files yet (offending file was $file)";
@@ -177,20 +194,15 @@ sub fastq2fastaqual($$) {
 sub runVelvetAssembly($$){
   my($fastqfiles,$settings)=@_;
   my $run_name = "$$settings{tempdir}/velvet";
-  system("mkdir -p $run_name") if(!-d $run_name);
+  #system("mkdir -p $run_name") if(!-d $run_name); # is made by Voptimiser
   logmsg "Executing Velvet assembly $run_name";
-  my $velvetPrefix=File::Spec->abs2rel("$run_name/auto"); # VelvetOptimiser chokes on an abs path
-  my $command="VelvetOptimiser.pl -a -v -p $velvetPrefix ";
+  my $velvetPrefix=File::Spec->abs2rel("$$settings{tempdir}/auto"); # VelvetOptimiser chokes on an abs path
+  my $command="VelvetOptimiser.pl -a -v -p $velvetPrefix -d $run_name ";
   #warn "=======Debugging: only running hashes of 29 and 31\n"; $command.=" -s 29 -e 31 ";
   $command.="-f '";
   foreach my $fqFiles (@$fastqfiles){
     my $fileFormat="fastq"; # per the Velvet manual
     #TODO detect the chemistry of each run and treat them differently (454, Illumina, etc)
-    #see if the reads are mate pairs (454)
-    my $isMatePairs=0;
-    # TODO find out if there are mate pairs (observed-insert-lengths program via Velvet, or maybe by reading the headers?)
-    #TODO remove reads with an overall bad quality (about <20)
-    #TODO examine reads to see if the file overall belongs in "long" "short" etc: might just filter based on chemistry
     my $readLength="short"; # per velvet docs
     $command.="-$readLength -$fileFormat $fqFiles ";
   }
@@ -199,18 +211,22 @@ sub runVelvetAssembly($$){
   # warn "Warning: Skipping velvet command"; goto CLEANUP;
   system($command); die if $?;
 
+  # this section is invalidated by the -d option in velvetoptimiser
   CLEANUP:
-  my $logfile="$run_name/auto_logfile.txt";
-  my $optimiserOutDir=`tail -1 $logfile`;
-  chomp($optimiserOutDir);
-  if($optimiserOutDir && -d $optimiserOutDir){
-    logmsg "The log file indicates this is the final output directory for VelvetOptimiser: $optimiserOutDir";
-  } else {
-    my @velvetTempDir=glob("$velvetPrefix*"); # find the output directory
-    logmsg "Could not determine the VelvetOptimiser output directory. I'll have to guess.  Velvet directory(ies) found: ".join(", ",@velvetTempDir) ." . Assuming $velvetTempDir[0] is the best Velvet assembly.";
-    $optimiserOutDir=$velvetTempDir[0];
+  if(0){
+    my $logfile="$run_name/auto_logfile.txt";
+    my $optimiserOutDir=`tail -1 $logfile`;
+    chomp($optimiserOutDir);
+    if($optimiserOutDir && -d $optimiserOutDir){
+      logmsg "The log file indicates this is the final output directory for VelvetOptimiser: $optimiserOutDir";
+    } else {
+      my @velvetTempDir=glob("$velvetPrefix*"); # find the output directory
+      logmsg "Could not determine the VelvetOptimiser output directory. I'll have to guess.  Velvet directory(ies) found: ".join(", ",@velvetTempDir) ." . Assuming $velvetTempDir[0] is the best Velvet assembly.";
+      $optimiserOutDir=$velvetTempDir[0];
+    }
+    system("cp -rv $optimiserOutDir/* $run_name/"); # copy the output directory contents to the actual directory
   }
-  system("cp -rv $optimiserOutDir/* $run_name/"); # copy the output directory contents to the actual directory
+  logmsg "Done. Velvet output is in $run_name";
 
   #TODO create dummy qual file (phred qual for each base is probably about 60-65). Or, if Velvet outputs it in the future, add in the qual parameter.
 
