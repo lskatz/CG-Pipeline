@@ -243,7 +243,11 @@ sub nesoni{
   mkdir($nesoni_run) if(!-d $nesoni_run);
 
   system("nesoni samshrimp: $nesoni_run $concatenatedReferences reads: $concatenatedReads --sam-unaligned no") unless (-e "$nesoni_run/alignments.bam");
-  die "Problem with Nesoni and/or SHRiMP" if $?;
+  if($?){
+    logmsg "Problem with Nesoni and/or SHRiMP. Exiting nesoni.";
+    system("touch $nesoni_run/contigs.fasta");
+    return "$nesoni_run/contigs.fasta";
+  }
   logmsg "Running nesoni samconsensus";
   system("nesoni samconsensus: $nesoni_run --majority 0.7 --cutoff 0.7") unless(-e "$nesoni_run/consensus.fa");
   die "Problem with Nesoni and/or Samtools" if $?;
