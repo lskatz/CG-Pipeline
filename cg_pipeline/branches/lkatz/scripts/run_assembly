@@ -287,6 +287,7 @@ sub qualityControlFastq{
   if($?){
     logmsg "Error with fastx. Trying with CG-Pipeline's in-house method.";
     system("run_assembly_trimClean.pl -i '$file' -o '$outfile' 2>&1");
+    die if $?;
     #logmsg "Error with fastx. Trying again but assuming Sanger-variant fastq file";
     #$command=~s/\-Q33\s*//; # remove Q33 parameter (but not using ///g, in case it matches the infile name)
     #system($command);
