@@ -10,7 +10,6 @@ prediction_transl_table = 11
 prediction_use_genemark = 1
 
 annotation_blast_db = "/home/lkatz/bin/cg_pipeline/data/uniprot_sprot_trembl"
-annotation_uniprot_xml = "fixme"
 annotation_uniprot_db3 = "/home/lkatz/bin/cg_pipeline/data/cgpipeline.db3"
 annotation_uniprot_evidence_db3 = "/home/lkatz/bin/cg_pipeline/data/cgpipeline.evidence.db3"
 
@@ -21,9 +20,6 @@ prot2cogid = "/home/lkatz/bin/cg_pipeline/data/prot2cogid.tsv"
 reporting_email = "lskatz+cgpipeline@gmail.com"
 
 vfdb_blast_db = "/home/lkatz/bin/cg_pipeline/data/vfdb_VFs_aa"
-min_vfdb_aa_coverage = 0.8
-min_vfdb_aa_identity = 0.40
-min_vfdb_aa_similarity= 0.70
 
 
 author1="Lee Katz|L.S.|Centers for Disease Control and Prevention|Listeria, Yersinia, Vibrio and Enterobacteriaceae Reference Laboratory|lkatz@cdc.gov|Atlanta|GA|United States|1600 Clifton Rd NE|1-404-639-3875|30333
