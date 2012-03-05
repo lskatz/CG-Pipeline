@@ -29,19 +29,25 @@ sub main(){
 my $settings = {
 	appname => 'cgpipeline',
 };
+  # blastFields is for any output from run_annotation_blast.pl
+  my @blastFields=qw(locus_tag target_id evalue coverage db_name identity length description rank score bits percent_conserved hit_accession hit_name);
 	my %map = (
-		blast => [qw/locus_tag uniprot_id length name rank score bits evalue identity positives/],
-		vfdb_hits => [qw/locus_tag target_id evalue coverage db_name identity/],
-		cogs_hits => [qw/locus_tag target_id evalue coverage db_name identity/],
+		blast => [@blastFields],
+		vfdb_hits => [@blastFields],
+		cogs_hits => [@blastFields],
+		is_hits => [@blastFields],
 		ipr_matches => [qw/locus_tag accession_num product database_name start end evalue status evidence/],
 		signalp_hmm	=> [ qw/locus_tag prediction signal_peptide_probability max_cleavage_site_probability start end/],
 		signalp_nn => [ qw/locus_tag measure_type start end value cutoff is_signal_peptide/],
 		tmhmm => [ qw/locus_tag length predicted_number expected_number_aa expected_number_aa_60 total_prob_n_in/],
 		tmhmm_location => [qw/locus_tag location start end/],
-		uniprot => [qw/ac ac2 source product pro_type gene_type gene_name gene_id/]
+		uniprot => [qw/ac ac2 source product pro_type gene_type gene_name gene_id/],
+
+		#blast => [qw/locus_tag uniprot_id length name rank score bits evalue identity positives/],
 		#ipr_hits => [qw/locus_tag length domain_id product type/],
 		#ipr_classifications => [qw/locus_tag go_id class_type category description/],
 		#ipr_childrefs => [qw/locus_tag interpro_hit_id interpro_child_reference/],
+		#cogs_hits => [qw/locus_tag target_id evalue coverage db_name identity/],
 	);
 
 	$settings = AKUtils::loadConfig($settings);
