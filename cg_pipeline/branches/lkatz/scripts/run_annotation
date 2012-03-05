@@ -104,47 +104,40 @@ sub main() {
   }
 
   # IS elements
-  system("run_annotation_isElements.pl -i $aa_file -o $aa_file.is_hits.sql"); die if$?;
+  logmsg "Finding IS elements";
+  system("run_annotation_blast.pl $aa_file -d $$settings{annotation_is_blast_db} -o $aa_file.is_hits.sql --min_aa_coverage 80 --min_aa_identity 40 --min_aa_similarity 70 -p '-W 2 -F F -e 1E-5 -b 1 -v 1'");
+  #system("run_annotation_isElements.pl -i $aa_file -o $aa_file.is_hits.sql"); die if$?;
+  flushSql($settings);
 
 	# Run SignalP on all proteins
 	system("run_annotation_signalp.pl $aa_file"); die if $?;
-	foreach my $file (glob "$$settings{tempdir}/*.sql") {
-		move($file, $$settings{outdir});
-	}
-  logmsg "Output files have been moved to $$settings{outdir}";
+	flushSql($settings);
 
 	# Run TMHMM on all proteins
   TMHMM:
 	system("run_annotation_tmhmm.pl $aa_file"); die if $?;
-	foreach my $file (glob "$$settings{tempdir}/*.sql") {
-		move($file, $$settings{outdir});
-	}
-  logmsg "Output files have been moved to $$settings{outdir}";
+	flushSql($settings);
 
 	# Check all proteins against VFDB
   VFDB:
 	system("run_annotation_vfdb.pl $aa_file"); die if $?;
-	foreach my $file (glob "$$settings{tempdir}/*.sql") {
-		move($file, $$settings{outdir});
-	}
-  logmsg "Output files have been moved to $$settings{outdir}";
+	flushSql($settings);
 
 	# Check all proteins against COGs 
   COGS:
-	system("run_annotation_cogs.pl -tempdir=$$settings{tempdir} $aa_file"); die if $?;
-	foreach my $file (glob "$$settings{tempdir}/*.sql") {
-		move($file, $$settings{outdir});
-	}
-  logmsg "Output files have been moved to $$settings{outdir}";
+  system("run_annotation_blast.pl $aa_file -d $$settings{cogs_blast_db} -o $aa_file.cogs_hits.sql --min_aa_coverage 80 --min_aa_identity 40 --min_aa_similarity 70 -p '-b 10 -v 10'");
+	#system("run_annotation_cogs.pl -tempdir=$$settings{tempdir} $aa_file"); die if $?;
+	flushSql($settings);
 
 	# Run BLAST on all proteins vs. Uniprot
   BLAST_VS_UNIPROT:
-	my $invoke_string = "run_annotation_blast.pl $aa_file -blast_db=$$settings{blast_db}";
+	my $invoke_string = "run_annotation_blast.pl $aa_file -db=$$settings{blast_db}";
 	$invoke_string .= " -outfile='$$settings{tempdir}/blast.sql'";
 	$invoke_string .= " -keep" if $$settings{keep};
 	$invoke_string .= " -tempdir='$$settings{tempdir}'";
-	system($invoke_string); die if $?;
-	move("$$settings{tempdir}/blast.sql", $$settings{outdir});
+  $invoke_string .= " --min_aa_coverage 70 --min_aa_identity 50 -p '-b 15 -v 15'";
+	system($invoke_string) if(!-e "$$settings{outdir}/blast.sql"); die if $?;
+	flushSql($settings);
 
 	# TODO: auto-build uniprot database (and VFDB database)
 
@@ -154,28 +147,26 @@ sub main() {
 	$invoke_string .= " -uniprot_evidence_db3='$$settings{uniprot_evidence_db3}'";
 	$invoke_string .= " -uniprot_sql_outfile='$$settings{tempdir}/uniprot.sql'";
 	$invoke_string .= " -uniprot_evidence_sql_outfile='$$settings{tempdir}/uniprot_evidence.sql'";
+  logmsg "Parsing the uniprot result with\n    $invoke_string";
 	system($invoke_string); die if $?;
-	foreach my $file (glob "$$settings{tempdir}/*.sql") {
-		move($file, $$settings{outdir});
-	}
+	flushSql($settings);
 
   INTERPRO:
 	# Run InterProScan on all proteins
 	$invoke_string = "run_annotation_interpro.pl $aa_file";
 	system($invoke_string); die if $?;
+  flushSql($settings);
 
-	foreach my $file (glob "$$settings{tempdir}/*.sql") {
-		move($file, $$settings{outdir});
-	}
-	logmsg "Output is in $$settings{outdir}";
-	# maybe perform the load of all the sql files
+  logmsg "Annotation complete! SQL results are in $$settings{outdir}";
+
+  return 0;
 }
 
-#	$invoke_string = "run_annotation_interpro_batch.py $aa_file";
-#	$invoke_string .= " --interpro_domain_sql_outfile='$$settings{tempdir}/interpro_domain.sql'";
-#	$invoke_string .= " --interpro_evidence_sql_outfile='$$settings{tempdir}/interpro_evidence.sql'";
-#	$invoke_string .= " --reporting_email=$$settings{reporting_email}";
-
-#	system("sort '$$settings{tempdir}/interpro_domain.sql' | uniq > '$$settings{tempdir}/interpro_domain_unique.sql'");
-	# Fetch InterPro metadata for InterProScan hits
-#	system("cd '$$settings{tempdir}'; run_annotation_interpro_dbfetch.py -f '$$settings{tempdir}/interpro_domain_unique.sql'"); die if $?;
+sub flushSql{
+  my($settings)=@_;
+  foreach my $file (glob "$$settings{tempdir}/*.sql") {
+    move($file, $$settings{outdir});
+  }
+  logmsg "SQL files have been moved to $$settings{outdir}";
+  return 1;
+}

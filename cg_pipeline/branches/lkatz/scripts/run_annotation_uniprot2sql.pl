@@ -18,6 +18,8 @@ use File::Copy;
 use File::Basename;
 use BerkeleyDB;
 
+my $uniqueString="xyxyxyxyunique"; # for escaped pipes
+
 my $usage = "$0 -uniprot_db3=u.db3 -uniprot_evidence_db3=ue.db3 [-uniprot_sql_outfile=u.sql] [-uniprot_evidence_sql_outfile=e.sql] blast.sql";
 
 my @cmd_options = ('blast_db=s', 'uniprot_db3=s', 'uniprot_evidence_db3=s', 'uniprot_sql_outfile=s', 'uniprot_evidence_sql_outfile=s');
@@ -48,8 +50,12 @@ logmsg "Extracting Uniprot records for BLAST results in $$settings{blast_sql_fil
 my $i;
 open(IN, '<', $$settings{blast_sql_file}) or die;
 while (<IN>) {
+  s/\Q\|\E/$uniqueString/g; # protect the escaped pipes
 	chomp;
-	my (undef, $accession) = split /\|/;
+  # query_id target_id evalue query_coverage db_name percent_identity hspLength description rank score bits percent_conserved hit_accession hit_name
+  my $accession=(split /\|/)[12];
+	#my (undef, $accession) = split /\|/;
+  $accession=~s/$uniqueString/|/g; # revert the escaped pipes
 	my $uniprot_line = $uniprot_h{$accession};
 	my $uniprot_evidence_line = $uniprot_evidence_h{$accession};
 	die("No record found for accession $accession") unless $uniprot_line;
