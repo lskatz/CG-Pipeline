@@ -104,8 +104,9 @@ sub main() {
   }
 
   # IS elements
-  logmsg "Finding IS elements";
-  system("run_annotation_blast.pl $aa_file -d $$settings{annotation_is_blast_db} -o $aa_file.is_hits.sql --min_aa_coverage 80 --min_aa_identity 40 --min_aa_similarity 70 -p '-W 2 -F F -e 1E-5 -b 1 -v 1'");
+  my $is_command="run_annotation_blast.pl $aa_file -d $$settings{is_blast_db} -o $aa_file.is_hits.sql --min_aa_coverage 80 --min_aa_identity 40 --min_aa_similarity 70 -p '-W 2 -F F -e 1E-5 -b 1 -v 1' 2>&1";
+  logmsg "Finding IS elements with command\n  $is_command";
+  system($is_command); die if $?;
   #system("run_annotation_isElements.pl -i $aa_file -o $aa_file.is_hits.sql"); die if$?;
   flushSql($settings);
 
@@ -120,12 +121,14 @@ sub main() {
 
 	# Check all proteins against VFDB
   VFDB:
-	system("run_annotation_vfdb.pl $aa_file"); die if $?;
+  logmsg "Finding virulence factors";
+	system("run_annotation_blast.pl $aa_file -d $$settings{vfdb_blast_db} -o $aa_file.vfdb_hits.sql --min_aa_coverage 80 --min_aa_identity 40 --min_aa_similarity 70 -p '-b 1 -v 1' 2>&1"); die "Problem with vfdb" if $?;
 	flushSql($settings);
 
 	# Check all proteins against COGs 
   COGS:
-  system("run_annotation_blast.pl $aa_file -d $$settings{cogs_blast_db} -o $aa_file.cogs_hits.sql --min_aa_coverage 80 --min_aa_identity 40 --min_aa_similarity 70 -p '-b 10 -v 10'");
+  logmsg "Finding COGs";
+  system("run_annotation_blast.pl $aa_file -d $$settings{cogs_blast_db} -o $aa_file.cogs_hits.sql --min_aa_coverage 80 --min_aa_identity 40 --min_aa_similarity 70 -p '-b 10 -v 10'"); die if $?;
 	#system("run_annotation_cogs.pl -tempdir=$$settings{tempdir} $aa_file"); die if $?;
 	flushSql($settings);
 
