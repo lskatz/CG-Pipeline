@@ -135,6 +135,7 @@ sub main() {
 
   # Run BLAST on all proteins vs. Uniprot
   BLAST_VS_UNIPROT:
+  logmsg "BLASTp vs Uniprot (this might take a while)";
   my $invoke_string = "run_annotation_blast.pl $aa_file -db=$$settings{blast_db}";
   $invoke_string .= " -outfile='$$settings{tempdir}/blast.sql'";
   $invoke_string .= " -keep" if $$settings{keep};
