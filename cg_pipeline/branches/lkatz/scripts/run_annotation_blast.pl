@@ -2,12 +2,13 @@
 
 # run-assembly: Perform standard assembly protocol operations on 454 pyrosequenced flowgram file(s)
 # Author: Andrey Kislyuk (kislyuk@gatech.edu)
+# Author: Lee Katz <lkatz@cdc.gov>
 
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 
 my $settings = {
-	appname => 'cgpipeline',
+  appname => 'cgpipeline',
 };
 my $stats;
 
@@ -36,65 +37,65 @@ local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\n
 exit(main());
 
 sub main() {
-	$settings = AKUtils::loadConfig($settings);
+  $settings = AKUtils::loadConfig($settings);
 
-	my @cmd_options = qw(outfile=s blastfile=s db=s parametersForBlast=s min_aa_coverage=i min_aa_identity=i min_aa_similarity=i tempdir=s keep);
-	GetOptions($settings, @cmd_options) or die;
+  my @cmd_options = qw(outfile=s blastfile=s db=s parametersForBlast=s min_aa_coverage=i min_aa_identity=i min_aa_similarity=i tempdir=s keep);
+  GetOptions($settings, @cmd_options) or die;
 
   $$settings{blast_db}||=File::Spec->rel2abs($$settings{db});
 
-	die(usage()) if @ARGV != 1;
-  $$settings{min_aa_coverage}||=10;
-  $$settings{min_aa_identity}||=10;
-  $$settings{min_aa_similarity}||=10;
-	for (qw(blast_db)) {
-		die("Argument $_ must be supplied") unless $$settings{$_};
-	}
-	$$settings{query_mfa} = $ARGV[0];
-	die("File $$settings{query_mfa} does not exist") unless -f $$settings{query_mfa};
-	$$settings{outfile} ||= "$$settings{query_mfa}.unspecifiedhits.sql";
+  die(usage()) if @ARGV != 1;
+  $$settings{min_aa_coverage}||=1;
+  $$settings{min_aa_identity}||=1;
+  $$settings{min_aa_similarity}||=1;
+  for (qw(blast_db)) {
+    die("Argument $_ must be supplied") unless $$settings{$_};
+  }
+  $$settings{query_mfa} = $ARGV[0];
+  die("File $$settings{query_mfa} does not exist") unless -f $$settings{query_mfa};
+  $$settings{outfile} ||= "$$settings{query_mfa}.unspecifiedhits.sql";
 
-	$$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
-	logmsg "Temporary directory is $$settings{tempdir}";
+  $$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
+  logmsg "Temporary directory is $$settings{tempdir}";
 
   # don't blast if a blastfile has been given
   my $report;
   if(!$$settings{blastfile}){
     $ENV{BLASTDB} = (fileparse($$settings{blast_db}))[1];
     my $numcpus=AKUtils::getNumCPUs();
-    my $command="legacy_blast.pl blastall -p blastp -a $numcpus -o $$settings{tempdir}/$0.$$.blast_out -d $$settings{blast_db} -i $$settings{query_mfa} $$settings{parametersForBlast} -m 7";
+    my $command="legacy_blast.pl blastall -p blastp -a $numcpus -o $$settings{tempdir}/$0.$$.blast_out -d $$settings{blast_db} -i $$settings{query_mfa} $$settings{parametersForBlast} -m 0";
     logmsg "Running BLAST on $$settings{query_mfa} vs. $$settings{blast_db}...\n  $command";
     system($command);
     die "Problem with blast" if $?;
     logmsg "Finished with BLAST";
-    $report=new Bio::SearchIO(-format=>'blastxml',-file=>"$$settings{tempdir}/$0.$$.blast_out");
+    $report=new Bio::SearchIO(-format=>'blast',-file=>"$$settings{tempdir}/$0.$$.blast_out");
   } else {
-    $report=new Bio::SearchIO(-format=>'blastxml',-file=>$$settings{blastfile});
+    $report=new Bio::SearchIO(-format=>'blast',-file=>$$settings{blastfile});
   }
 
   my $resultCounter=0;
   logmsg "Reading $$settings{query_mfa} and parsing blast result";
-	my $query_seqs = AKUtils::readMfa($$settings{query_mfa});
+  my $query_seqs = AKUtils::readMfa($$settings{query_mfa});
 
-	my %reported_hits;
+  my %reported_hits;
 
-	open(OUT, '>', $$settings{outfile}) or die;
-	while (my $result = $report->next_result) {
-		while (my $hit = $result->next_hit) {
-			HSP: while (my $hsp = $hit->next_hsp) {
-				my ($id1, $id2) = ($hsp->seq('hit')->id, $hsp->seq('query')->id);
-				die("Internal error - $id1 hit against itself") if $id1 eq $id2;
-				my $l2 = length($$query_seqs{$id2}) || $hsp->seq->length; die("Internal error - something wrong with the query seq") unless $l2;
-				my $q_coverage = $hsp->length('query') / $l2 * 100;
-#				my $t_coverage = $hsp->length('hit') / $l1;
+  open(OUT, '>', $$settings{outfile}) or die;
+  while (my $result = $report->next_result) {
+    while (my $hit = $result->next_hit) {
+      HSP: while (my $hsp = $hit->next_hsp) {
+        my ($id1, $id2) = ($hsp->seq('hit')->id, $hsp->seq('query')->id);
+        die("Internal error - $id1 hit against itself") if $id1 eq $id2;
+        my $l2 = length($$query_seqs{$id2}) || $hsp->seq->length; die("Internal error - something wrong with the query seq") unless $l2;
+        my $q_coverage = $hsp->length('query') / $l2 * 100;
+#        my $t_coverage = $hsp->length('hit') / $l1;
         my $percent_conserved=$hsp->frac_conserved*100;
         my $percent_identity=$hsp->percent_identity;
         #print join("\t",$id1,$id2,"$q_coverage>$$settings{min_aa_coverage}","$percent_conserved>= $$settings{min_aa_similarity}","$percent_identity>= $$settings{min_aa_identity}")."\n"; # debug
-				die("Internal error - coverage is > 100%") if $q_coverage > 100; 
+        die("Internal error - coverage is > 100% for the HSP between $id1 and $id2 (Coverage: $q_coverage)\nThe HSP:\n".join("\n",sprintf("%5.5s ",$id1).$hsp->hit_string,"      ".$hsp->homology_string,sprintf("%5.5s ",$id2).$hsp->query_string,"")) if $q_coverage > 100;
 
-				if ($q_coverage > $$settings{min_aa_coverage}
+        if ($q_coverage > $$settings{min_aa_coverage}
           and $percent_conserved >= $$settings{min_aa_similarity}
-					and $percent_identity  >= $$settings{min_aa_identity}) {
+          and $percent_identity  >= $$settings{min_aa_identity}) {
               my (undef, $hit_accession, $hit_name) = split(/\|/, $hit->name);
               $reported_hits{$id2}->{$id1} = {
                 query_id => $id2, target_id => $id1, evalue => $hsp->evalue,
@@ -109,25 +110,25 @@ sub main() {
                 hit_accession=>$hit_accession,
                 hit_name=>$hit_name,
               };
-				}
-			}
-		}
+        }
+      }
+    }
     $resultCounter++; logmsg "Processed $resultCounter proteins" if($resultCounter % 100 == 0);
-	}
+  }
 
-	foreach my $query_id (keys %reported_hits) {
-		my @sorted_hits = sort {$$a{evalue} <=> $$b{evalue}} values(%{$reported_hits{$query_id}});
-		foreach my $hit (@sorted_hits) {
-			my @l;
-			push(@l, $$hit{$_}) for qw(query_id target_id evalue query_coverage db_name percent_identity hspLength description rank score bits percent_conserved hit_accession hit_name);
-			s/\|/\\|/g for @l; # escape the pipe characters
-			print OUT join('|', @l)."\n";
-		}
-	}
-			
-	close OUT;
-	logmsg "Report is in $$settings{outfile}";
-	return 0;
+  foreach my $query_id (keys %reported_hits) {
+    my @sorted_hits = sort {$$a{evalue} <=> $$b{evalue}} values(%{$reported_hits{$query_id}});
+    foreach my $hit (@sorted_hits) {
+      my @l;
+      push(@l, $$hit{$_}) for qw(query_id target_id evalue query_coverage db_name percent_identity hspLength description rank score bits percent_conserved hit_accession hit_name);
+      s/\|/\\|/g for @l; # escape the pipe characters
+      print OUT join('|', @l)."\n";
+    }
+  }
+      
+  close OUT;
+  logmsg "Report is in $$settings{outfile}";
+  return 0;
 }
 
 sub usage{
@@ -141,7 +142,7 @@ sub usage{
     pipe delimited output file
 
   -b blast results file
-    Optionally to skip blast and use your own blast file
+    Optionally to skip blast and use your own blast file. In human-readable form (-m 0)
   --min_aa_coverage integer 1 to 100
   --min_aa_identity integer 1 to 100
   --min_aa_similarity integer 1 to 100
