@@ -32,6 +32,7 @@ exit(main());
 
 sub main{
   $settings=AKUtils::loadConfig($settings);
+  GetOptions($settings,qw(help errorsOnly));
 
   my $exeProblems=checkExecutables($settings);
   my $libProblems=checkPerlLib($settings);
@@ -71,7 +72,7 @@ sub reportPresenceStatus{
     logmsg "$name present, but not readable";
     $problems++;
   } elsif ($presence_code == $$settings{code_usable}){
-    logmsg "$name is good!";
+    logmsg "$name is good!" if(!$$settings{errorsOnly});
   }
   return $problems;
 }
@@ -114,6 +115,8 @@ sub is_perlLib_present{
 
 sub usage{
   "Checks to see if all CG-Pipeline prerequisites are present on the system, in your environment.
-  Usage: $0 --check
+  Usage: $0
+    -h for help
+    -e for print only errors
   "
 }
