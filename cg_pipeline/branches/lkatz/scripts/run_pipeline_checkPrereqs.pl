@@ -40,7 +40,10 @@ sub main{
 
   logmsg "$libProblems problems found with libraries";
   logmsg "$exeProblems problems found with executables";
-  return 0;
+
+  my $totalProblems=$exeProblems+$libProblems;
+  return 0 if(!$totalProblems);
+  return (1+$totalProblems);
 }
 
 sub checkPerlLib{
@@ -116,6 +119,8 @@ sub is_perlLib_present{
 
 sub usage{
   "Checks to see if all CG-Pipeline prerequisites are present on the system, in your environment.
+  This script will have an error code of 1 + the number of problems found, or 0 for no problems.
+  This script's error code will be 1 for general errors.
   Usage: $0
     -h for help
     -e for print only errors
