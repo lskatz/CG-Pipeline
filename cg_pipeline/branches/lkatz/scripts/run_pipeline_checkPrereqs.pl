@@ -33,6 +33,7 @@ exit(main());
 sub main{
   $settings=AKUtils::loadConfig($settings);
   GetOptions($settings,qw(help errorsOnly));
+  die usage() if($$settings{help});
 
   my $exeProblems=checkExecutables($settings);
   my $libProblems=checkPerlLib($settings);
