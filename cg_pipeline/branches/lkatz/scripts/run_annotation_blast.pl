@@ -26,10 +26,12 @@ use File::Copy;
 use File::Basename;
 use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
-use Bio::SeqIO;
-use Bio::Tools::Run::StandAloneBlast;
+use Bio::SearchIO;
 use Data::Dumper;
-$|++;
+
+use threads;
+use threads::shared;
+use Thread::Queue;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
@@ -57,12 +59,12 @@ sub main() {
 
   $$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
   logmsg "Temporary directory is $$settings{tempdir}";
+  my $numcpus=AKUtils::getNumCPUs();
 
   # don't blast if a blastfile has been given
   my $report;
   if(!$$settings{blastfile}){
     $ENV{BLASTDB} = (fileparse($$settings{blast_db}))[1];
-    my $numcpus=AKUtils::getNumCPUs();
     my $command="legacy_blast.pl blastall -p blastp -a $numcpus -o $$settings{tempdir}/$0.$$.blast_out -d $$settings{blast_db} -i $$settings{query_mfa} $$settings{parametersForBlast} -m 0";
     logmsg "Running BLAST on $$settings{query_mfa} vs. $$settings{blast_db}...\n  $command";
     system($command);
@@ -75,61 +77,136 @@ sub main() {
 
   my $resultCounter=0;
   logmsg "Reading $$settings{query_mfa} and parsing blast result";
-  my $query_seqs = AKUtils::readMfa($$settings{query_mfa});
+  my %query_seqs;
+  #my %query_seqs :shared;
+  my $query_seqs = AKUtils::readMfa($$settings{query_mfa}); # should be shared
+  %query_seqs=%$query_seqs;
 
   my %reported_hits;
 
-  open(OUT, '>', $$settings{outfile}) or die;
-  while (my $result = $report->next_result) {
-    while (my $hit = $result->next_hit) {
-      HSP: while (my $hsp = $hit->next_hsp) {
-        my ($id1, $id2) = ($hsp->seq('hit')->id, $hsp->seq('query')->id);
-        die("Internal error - $id1 hit against itself") if $id1 eq $id2;
-        my $l2 = length($$query_seqs{$id2}) || $hsp->seq->length; die("Internal error - something wrong with the query seq") unless $l2;
-        my $q_coverage = $hsp->length('query') / $l2 * 100;
-#        my $t_coverage = $hsp->length('hit') / $l1;
-        my $percent_conserved=$hsp->frac_conserved*100;
-        my $percent_identity=$hsp->percent_identity;
-        #print join("\t",$id1,$id2,"$q_coverage>$$settings{min_aa_coverage}","$percent_conserved>= $$settings{min_aa_similarity}","$percent_identity>= $$settings{min_aa_identity}")."\n"; # debug
-        die("Internal error - coverage is > 100% for the HSP between $id1 and $id2 (Coverage: $q_coverage)\nThe HSP:\n".join("\n",sprintf("%5.5s ",$id1).$hsp->hit_string,"      ".$hsp->homology_string,sprintf("%5.5s ",$id2).$hsp->query_string,"")) if $q_coverage > 100;
+  # launch threads for reading the output file
+  my $Q=Thread::Queue->new;
+  my $printQueue=Thread::Queue->new;
+  my @thr;
+  $thr[$_]=threads->new(\&readBlastOutputWorker,$Q,$printQueue,\%query_seqs,$settings) for(0..$numcpus-1);
+  my $printWorkerThread=threads->new(\&printWorker,$printQueue,$settings); # prints the sequences to file
 
-        if ($q_coverage > $$settings{min_aa_coverage}
-          and $percent_conserved >= $$settings{min_aa_similarity}
-          and $percent_identity  >= $$settings{min_aa_identity}) {
-              my (undef, $hit_accession, $hit_name) = split(/\|/, $hit->name);
-              $reported_hits{$id2}->{$id1} = {
-                query_id => $id2, target_id => $id1, evalue => $hsp->evalue,
-                query_coverage => sprintf("%.2f", $q_coverage), db_name => $$settings{blast_db},
-                percent_identity => sprintf("%.2f", $percent_identity),
-                hspLength=>$hit->length,
-                description=>$hit->description || '.',
-                rank=>$hit->rank,
-                score=>$hit->score,
-                bits=>$hit->bits,
-                percent_conserved=>$percent_conserved,
-                hit_accession=>$hit_accession,
-                hit_name=>$hit_name,
-              };
+  while (my $result = $report->next_result) {
+    $resultCounter++; 
+    while (my $hit = $result->next_hit) {
+      while (my $hsp = $hit->next_hsp) {
+        eval{
+          my($i1,$i2)=($hsp->seq('hit')->id, $hsp->seq('query')->id);
+        };
+        if($@){
+          logmsg "Warning: problem with an hsp. Moving on.\n";
+          next;
         }
+        my $reported_hit={
+          query_id => $hsp->seq('query')->id, 
+          target_id => $hsp->seq('hit')->id, 
+          evalue => $hsp->evalue,
+          db_name => $$settings{blast_db},
+          percent_identity => $hsp->percent_identity,
+          description=>$hit->description || '.',
+          rank=>$hit->rank,
+          score=>$hit->score,
+          bits=>$hit->bits,
+          percent_conserved=>$hsp->frac_conserved*100,
+          hitName=>$hit->name,
+          hspLength=>$hit->length,
+          hspQueryString=>$hsp->query_string,
+          hspHitString=>$hsp->hit_string,
+          hspHomologyString=>$hsp->homology_string,
+        };
+        $Q->enqueue($reported_hit);
       }
     }
-    $resultCounter++; logmsg "Processed $resultCounter proteins" if($resultCounter % 100 == 0);
+    logmsg "Processed $resultCounter proteins" if($resultCounter % 100 == 0);
+    last if $resultCounter>20;
   }
+  $Q->enqueue(undef) for(0..$numcpus-1);
+  $printQueue->enqueue(undef);
 
-  foreach my $query_id (keys %reported_hits) {
-    my @sorted_hits = sort {$$a{evalue} <=> $$b{evalue}} values(%{$reported_hits{$query_id}});
-    foreach my $hit (@sorted_hits) {
-      my @l;
-      push(@l, $$hit{$_}) for qw(query_id target_id evalue query_coverage db_name percent_identity hspLength description rank score bits percent_conserved hit_accession hit_name);
-      s/\|/\\|/g for @l; # escape the pipe characters
-      print OUT join('|', @l)."\n";
+  # status update on the queues
+  while($Q->pending || $printQueue->pending){
+    my($qPending,$pPending)=($Q->pending,$printQueue->pending);
+    logmsg "Reading blast queue pending: $qPending; Printing results pending: $pPending";
+    sleep 5;
+    if($Q->pending == $qPending && $printQueue->pending == $pPending){
+      logmsg "Warning: There hasn't been much progress with the queues. I'm finishing these queue status updates in case it hurries this script along.";
+      last;
     }
   }
-      
-  close OUT;
+
+  logmsg "Joining threads";
+  $_->join for(@thr);
+  $printWorkerThread->join;
+
   logmsg "Report is in $$settings{outfile}";
   return 0;
 }
+
+#############
+#############
+sub readBlastOutputWorker{
+  my($Q,$printQueue,$query_seqs,$settings)=@_;
+  while(defined(my $r=$Q->dequeue)){ # $r is $reported_hit
+    (undef, $$r{hit_accession}, $$r{hit_name}) = split(/\|/, $$r{hitName});
+
+    my $queryHsp=$$r{hspQueryString};
+    $queryHsp=~s/\-|\s//g;
+    my $l2=length($$query_seqs{$$r{query_id}}); die("Internal error - something wrong with the query seq") unless $l2;
+    $$r{query_coverage}=length($queryHsp)/$l2*100;
+    $$r{query_coverage}=sprintf("%.2f", $$r{query_coverage});
+    #$$r{query_coverage}=length($$r{hspQueryString})/$l2*100; 
+    #$$r{query_coverage}=100 if($$r{query_coverage}>100);
+    $$r{percent_identity} = sprintf("%.2f", $$r{percent_identity});
+
+    # sanity checks
+    if($$r{target_id} eq $$r{query_id}){
+      warn("Internal error - $$r{target_id} hit against itself. I will not parse this result.");
+      next;
+    }
+    if ($$r{query_coverage} > 100){
+      warn("Internal error - coverage is > 100% for the HSP between $$r{target_id} and $$r{query_id} (Coverage: $$r{query_coverage})\nThe HSP:\n".join("\n",sprintf("%5.5s ",$$r{target_id}).$$r{hspHitString},"      ".$$r{hspHomologyString},sprintf("%5.5s ",$$r{query_id}).$$r{hspQueryString},""));
+      next;
+    }
+
+    if ($$r{query_coverage} > $$settings{min_aa_coverage}
+      and $$r{percent_conserved} >= $$settings{min_aa_similarity}
+      and $$r{percent_identity}  >= $$settings{min_aa_identity}) {
+
+      # send this reported hit to a second Queue to write the results
+      $printQueue->enqueue($r);
+    }
+  }
+  return 1;
+}
+
+sub printWorker{
+  my($printQueue,$settings)=@_;
+
+  my $escapeCharacter="escapeXYZescape";
+  my $tmpOutfile="$$settings{tempdir}/unsorted.sql";
+  logmsg "Writing to $tmpOutfile";
+  open(OUT, '>', $tmpOutfile) or die;
+  while(defined(my $hit=$printQueue->dequeue)){
+    my @l;
+    push(@l, $$hit{$_}) for qw(query_id target_id evalue query_coverage db_name percent_identity hspLength description rank score bits percent_conserved hit_accession hit_name);
+    s/\|/$escapeCharacter/g for @l; # escape the pipe characters
+    print OUT join('|', @l)."\n";
+  }
+  close OUT;
+
+  logmsg "Sorting results to final output, $$settings{outfile}";
+  system("sort -t '|' -k 1,1 -k 3,3n $tmpOutfile > $$settings{outfile}");
+  #system("sort -k 1,3 -n $tmpOutfile | sed 's/$escapeCharacter/\\\\|/g' > $$settings{outfile}");
+  die "Problem with sort/sed: $!" if $?;
+
+  return 1;
+}
+
 
 sub usage{
   "Usage: $0 input.mfa
