@@ -63,7 +63,7 @@ sub main() {
   $$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
   logmsg "Temporary directory is $$settings{tempdir}";
   my $numcpus=AKUtils::getNumCPUs();
-  #$numcpus=6; logmsg "DEBUGGING NUMBER OF CPUS";
+  #$numcpus=1; logmsg "DEBUGGING NUMBER OF CPUS";
 
   # don't blast if a blastfile has been given
   my $report;
@@ -112,10 +112,10 @@ sub main() {
     logmsg "Enqueued $resultCounter proteins. ".$Q->pending." awaiting processing. ".$printQueue->pending." in the print queue." if($resultCounter % 100 == 0);
     
     # debugging statement if I just want to check out the first few results
-    if (1 && $resultCounter>100){
-      logmsg "DEBUGGING";
-      last;
-    }
+    #if (1 && $resultCounter>100){
+    #  logmsg "DEBUGGING";
+    #  last;
+    #}
   }
   # status update on the queues
   while($Q->pending || $printQueue->pending){
@@ -142,60 +142,66 @@ sub main() {
 sub readBlastOutputWorker{
   my($Q,$printQueue,$query_seqs,$settings)=@_;
   while(defined(my $resultFile=$Q->dequeue)){ 
-    my $completeBlastContents=`(echo '$$settings{blastHeader}' && cat $resultFile)`;
-    open(BLASTIN, "<", \$completeBlastContents) or die "Could not open string for reading: $!";
+    # This instance of SearchIO does not read a blast output file with a header.
+    # I don't THINK it's a problem but I could be wrong.
+    # If it is a problem, then the header information is found in $$settings{blastHeader}.
+    # However, concatenating the header with the infile is somehow time intensive and therefore isn't performed.
+    my $searchIn=Bio::SearchIO->new(-file=>$resultFile,-format=>"blast");
 
-    my $searchIn=Bio::SearchIO->new(-fh=>\*BLASTIN,-format=>"blast");
     while(my $result=$searchIn->next_result){
 
       while (my $hit = $result->next_hit) {
         while (my $hsp = $hit->next_hsp) {
+          #my($query_id,$target_id,$hspQueryString
           my %r=(
             query_id => $hsp->seq('query')->id,         # printed
             target_id => $hsp->seq('hit')->id,          # printed
-            evalue => $hsp->evalue,                     # printed
-            db_name => $$settings{blast_db},            # printed
-            percent_identity => $hsp->percent_identity, # printed
-            description=>$hit->description || '.',      # printed
-            rank=>$hit->rank,                           # printed
-            score=>$hit->score,                         # printed
-            bits=>$hit->bits,                           # printed
-            percent_conserved=>$hsp->frac_conserved*100,# printed
-            hitName=>$hit->name,                        # used for hit_accession and hit_name
-            hspLength=>$hit->length,                    # printed
             hspQueryString=>$hsp->query_string,         # used for coverage
           );
-          (undef, $r{hit_accession}, $r{hit_name}) = split(/\|/, $r{hitName});
-
+          # sanity check filter
+          next if($r{target_id} eq $r{query_id});
+          # coverage filter
           my $queryHsp=$r{hspQueryString};
           $queryHsp=~s/\-|\s//g;
           my $l2=length($$query_seqs{$r{query_id}}); die("Internal error - something wrong with the query seq") unless $l2;
           $r{query_coverage}=length($queryHsp)/$l2*100;
           $r{query_coverage}=sprintf("%.2f", $r{query_coverage});
+          next if($r{query_coverage} < $$settings{min_aa_coverage});
+          # percent_conserved filter
+          $r{percent_conserved}=$hsp->frac_conserved*100;
+          next if($r{percent_conserved} < $$settings{min_aa_similarity});
+          # percent_identity filter
+          $r{percent_identity}=$hsp->percent_identity;
+          next if($r{percent_identity}  < $$settings{min_aa_identity});
+
+          # PASSED: load up the rest of the variables for analysis
+          %r=(
+            evalue => $hsp->evalue,                     # printed
+            db_name => $$settings{blast_db},            # printed
+            description=>$hit->description || '.',      # printed
+            rank=>$hit->rank,                           # printed
+            score=>$hit->score,                         # printed
+            bits=>$hit->bits,                           # printed
+            hitName=>$hit->name,                        # used for hit_accession and hit_name
+            hspLength=>$hit->length,                    # printed
+            %r,
+          );
+          (undef, $r{hit_accession}, $r{hit_name}) = split(/\|/, $r{hitName});
           $r{percent_identity} = sprintf("%.2f", $r{percent_identity});
 
           # sanity checks
-          if($r{target_id} eq $r{query_id}){
-            warn("Internal error - $r{target_id} hit against itself. I will not parse this result.");
-            next;
-          }
           if ($r{query_coverage} > 100){
             warn("Internal error - coverage is > 100%. Skipping this HSP between $r{query_id} and $r{target_id}\n");
             next;
           }
 
-          if ($r{query_coverage} > $$settings{min_aa_coverage}
-            and $r{percent_conserved} >= $$settings{min_aa_similarity}
-            and $r{percent_identity}  >= $$settings{min_aa_identity}) {
-
-            # send this reported hit to a second Queue to write the results
-            my $escapeCharacter=$$settings{escapeCharacter};
-            my @l;
-            push(@l, $r{$_}) for qw(query_id target_id evalue query_coverage db_name percent_identity hspLength description rank score bits percent_conserved hit_accession hit_name);
-            s/\|/$escapeCharacter/g for @l; # escape the pipe characters
-            my $printLine=join("|", @l)."\n";
-            $printQueue->enqueue($printLine);
-          }
+          # send this reported hit to a second Queue to write the results
+          my $escapeCharacter=$$settings{escapeCharacter};
+          my @l;
+          push(@l, $r{$_}) for qw(query_id target_id evalue query_coverage db_name percent_identity hspLength description rank score bits percent_conserved hit_accession hit_name);
+          s/\|/$escapeCharacter/g for @l; # escape the pipe characters
+          my $printLine=join("|", @l)."\n";
+          $printQueue->enqueue($printLine);
         }
       } # END while($hit)
     }   # END while($result)
