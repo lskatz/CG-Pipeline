@@ -68,12 +68,27 @@ sub main() {
   # don't blast if a blastfile has been given
   my $report;
   if(!$$settings{blastfile}){
+    # Progress report for the blast that will happen
+    my $progressQ=Thread::Queue->new;
+    my $progressThread=threads->new(sub{
+      my($Q,$settings)=@_;
+      my $outfile="$$settings{tempdir}/$0.$$.blast_out";
+      while($Q->pending==0){
+        sleep 360;
+        my $numFinished=`grep -c "Query=" '$outfile'`; chomp($numFinished);
+        logmsg "Finished with $numFinished queries";
+      }
+      logmsg "Finished with BLAST";
+    },$progressQ,$settings);
+
     $ENV{BLASTDB} = (fileparse($$settings{blast_db}))[1];
     my $command="legacy_blast.pl blastall -p blastp -a $numcpus -o $$settings{tempdir}/$0.$$.blast_out -d $$settings{blast_db} -i $$settings{query_mfa} $$settings{parametersForBlast} -m 0";
     logmsg "Running BLAST on $$settings{query_mfa} vs. $$settings{blast_db}...\n  $command";
     system($command);
     die "Problem with blast" if $?;
-    logmsg "Finished with BLAST";
+    $progressQ->enqueue(undef); # send term signal to progress thread
+    $progressThread->join;
+
     $report=new Bio::SearchIO(-format=>'blast',-file=>"$$settings{tempdir}/$0.$$.blast_out");
     $$settings{blastfile}="$$settings{tempdir}/$0.$$.blast_out";
   } else {
