@@ -25,17 +25,43 @@ use File::Basename;
 use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
 use Data::Dumper;
+use Archive::Tar;
+use File::Slurp;
 
 sub logmsg {my $FH = *STDERR; print $FH "$0: ".(caller(1))[3].": @_\n";}
 exit(main());
 
 sub main{
   die usage() if @ARGV<1;
-  GetOptions($settings,qw(project=s));
+  GetOptions($settings,qw(project=s@ outfile=s));
 
   my $project=$$settings{project} or die "Error: no project given\n".usage();
-  my $file=locateFile($project,$settings);
-  printFile($file,$settings);
+  
+  $$settings{tempdir}||=AKUtils::mktempdir();
+  my @filesToCompress;
+  for my $p (@$project){
+    my $file=locateFile($p,$settings);
+    my($name,$path,$suffix)=fileparse($file,qw(.gb .gbk .fasta));
+    my $tmpfile="$$settings{tempdir}/$p$suffix";
+    copy($file,$tmpfile) or die "Could not copy $file to $tmpfile because $!";
+    push(@filesToCompress,$tmpfile);
+  }
+
+  if(my $outfile=$$settings{outfile}){
+    my $tar=Archive::Tar->new;
+    for my $file(@filesToCompress){
+      my($name,$path,$suffix)=fileparse($file,qw(.gb .gbk .fasta));
+      my $fileContents=read_file($file);
+      logmsg "Adding cgpExport/$name$suffix to the archive";
+      $tar->add_data("cgpExport/$name$suffix",$fileContents);
+      die "Could not add data to tar archive" if $?;
+    }
+    $tar->write($outfile,COMPRESS_GZIP);
+    die "Error: Problem with 'tar zcvf'" if $?;
+  } else {
+    die "STDOUT not supported right now";
+  }
+  #printFile($file,$settings);
 
   return 0;
 }
@@ -49,7 +75,7 @@ sub locateFile{
       return $file;
     }
   }
-  die "Could not locate a genome project file out of ".join(" ",@desiredFile);
+  die "Could not locate a genome project file in $project out of ".join(" ",@desiredFile);
 }
 
 sub printFile{
@@ -64,6 +90,10 @@ sub printFile{
 
 sub usage{
   "Exports the results from a genome annotation project (created by 'run_pipeline create')
-  Usage: $0 -p project > file
+  Usage: $0 -p project [-p project2 ...] -o outfile.tar.gz
+  -p a cg_pipeline project directory
+  -o outfile
+    The file will be compressed into a tar.gz file
+    Uncompress with 'tar zxvf file.tar.gz' and the results will be in the cgpExport directory
   ";
 }
