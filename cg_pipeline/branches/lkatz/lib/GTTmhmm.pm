@@ -294,7 +294,23 @@ sub _run {
      $str .= " -basedir=".$self->program_dir." -workdir=".$self->tempdir()." ".$self->_input." > ".$outfile;
      
      my $status = system($str);
-     $self->throw( "Tmhmm call ($str) crashed: $? \n") unless $status==0;
+     if($status!=0){
+       mkdir("tmhmmTmpFiles");
+       print "TMHMM Making temporary directory tmhmmTmpFiles";
+       my $oldWorkDir=$self->tempdir();
+       my $oldInput=$self->_input;
+       my $newInput="tmhmmTmpFiles/in.fasta";
+       
+       my $oldStr=$str;
+       $str=~s/$oldWorkDir/tmhmmTmpFiles/;
+       $str=~s/$oldInput/$newInput/;
+       $str=~s/[12]?>.*$//; # remove redirect
+       system("cp $oldInput $newInput"); 
+       print "!!!Warning: Could not copy over temporary input to $newInput" if $?;
+
+       system("ls -lh ".$self->tempdir() ." `dirname $outfile`");
+       $self->throw( "Tmhmm call ($oldStr) crashed: $?, $! \n  To try this command again, try $str\n  Also try setting the TMHMMDIR variable to the TMHMM executable directory.");
+     }
     
      my $filehandle;
      if (ref ($outfile) !~ /GLOB/) {
