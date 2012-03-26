@@ -4,7 +4,7 @@
 # Author: Andrey Kislyuk (kislyuk@gatech.edu)
 
 package AKUtils;
-require 5.8.0;
+require 5.005;
 my ($VERSION) = ('$Id$' =~ /,v\s+(\d+\S+)/o);
 
 use strict;
@@ -27,6 +27,9 @@ use Data::Dumper; # useful for printing deep structures, e.g. to print %hash: pr
 
 # TODO: allpairs method: all adjacent pairs in an array, also implement with checking for in-place modification
 # TODO: seqwiz -> AKGenomeUtils (how to maintain processivity?)
+
+use threads;
+use Thread::Queue;
 
 use Exporter;
 our @ISA = "Exporter";
@@ -1310,6 +1313,7 @@ sub getSignalPPredictions($$) {
 	die("Invalid value of setting signalp_pred_method, must be one of nn (neural networks), hmm (hidden Markov models), nn+hmm")
 		if defined $$settings{signalp_pred_method} and $$settings{signalp_pred_method} !~ /^(nn|hmm|nn\+hmm)$/;
 	$$settings{signalp_trunc_length} = 70 if not defined $$settings{signalp_trunc_length};
+  $$settings{numcpus}||=AKUtils::getNumCPUs();
 	die("Invalid value of setting signalp_trunc_length, must be an integer between 0 and 1000")
 		if int($$settings{signalp_trunc_length}) != $$settings{signalp_trunc_length}
 	        or $$settings{signalp_trunc_length} < 0 or $$settings{signalp_trunc_length} > 1000;
@@ -1327,26 +1331,57 @@ sub getSignalPPredictions($$) {
 	$signalp_opts .= " -method $$settings{signalp_pred_method}" if defined $$settings{signalp_pred_method};
 	$signalp_opts .= " -trunc $$settings{signalp_trunc_length}";
 	
+  my $Q=Thread::Queue->new;
+  my @thr;
+  for(0..$$settings{numcpus}-1){
+    $thr[$_]=threads->new(\&signalPWorker,$signalp_opts,$Q,$settings);
+  }
 	my $predictions = {};
 	my $i;
 	foreach my $seqname (sort alnum keys %$seqs) {
 		$i++;
-		if (length($$seqs{$seqname}) < 20 or length($$seqs{$seqname}) > 2000) {
-			logmsg "Peptide sequence $seqname length ".length($$seqs{$seqname})." out of bounds";
-			next;
+    next if(!$$seqs{$seqname});
+    $Q->enqueue({$seqname=>$$seqs{$seqname}});
+		logmsg "Processed $i proteins" if $i % 100 == 0;
+	}
+  $Q->enqueue(undef) for(@thr);
+  for(0..$$settings{numcpus}-1){
+    my $t=$thr[$_];
+    logmsg "Waiting on thread ".$t->tid;
+    my $thrPred=$t->join;
+    $predictions={%$predictions,$thrPred};
+  }
+	logmsg "Processed $i proteins, done";
+  logmsg "Warning: due to multithreading, results are not guaranteed to be sorted by locus tag anymore!";
+	return $predictions;
+}
+
+sub signalPWorker{
+  my ($signalp_opts,$Q,$settings)=@_;
+  my $tid=threads->tid;
+  my $tempdir=$$settings{tempdir};
+  my $predictions = {};
+  my $i=0;
+  while(defined(my $seq=$Q->dequeue)){
+    $i++;
+    my ($seqid,$sequence)=each(%$seq);
+		if (length($sequence) < 20 or length($sequence) > 2000) {
+			logmsg "Peptide sequence $seqid length ".length($sequence)." out of bounds (20-2000 residues)";
+			next if(length($sequence) < 20);
+      logmsg "  I truncated $seqid to 2000 residues";
+      $sequence=substr($sequence,0,2000);
 		}
-		printSeqsToFile({$seqname => $$seqs{$seqname}}, "$$settings{tempdir}/signalp.$i.in.fasta") or die;
-		my $invoke_string = "$$settings{signalp_exec} $signalp_opts < $$settings{tempdir}/signalp.$i.in.fasta > $$settings{tempdir}/signalp.$i.out";
+    my $signalpInfile="$tempdir/signalp.TID$tid.$i.in.fasta";
+    my $signalpOutfile="$tempdir/signalp.TID$tid.$i.out";
+		printSeqsToFile({$seqid => $sequence}, $signalpInfile) or die "Could not print seqs to file $signalpInfile";
+		my $invoke_string = "$$settings{signalp_exec} $signalp_opts < $signalpInfile > $signalpOutfile";
 		system($invoke_string);
 		die("Error running signalp: $!") if $?;
 
-		my $result = loadSignalPPredictions("$$settings{tempdir}/signalp.$i.out");
+		my $result = loadSignalPPredictions($signalpOutfile);
 		$predictions = {%$predictions, %$result};
-
-		logmsg "Processed $i proteins" if $i % 100 == 0;
-	}
-	logmsg "Processed $i proteins, done";
-	return $predictions;
+  }
+  return $predictions;
 }
 
 sub loadSignalPPredictions($) {
@@ -1699,8 +1734,7 @@ sub printSeqsToFile($$;$) {
 
 sub getNumCPUs() {
 	my $num_cpus;
-  open(IN, '<', '/proc/cpuinfo') or warn "Warning: tried to get num cpus from /proc/cpuinfo but couldn't. Setting numcpus to 1.";
-  while (<IN>) { /processor\s*\:\s*\d+/ or next; $num_cpus++; } close IN;
+	open(IN, '<', '/proc/cpuinfo'); while (<IN>) { /processor\s*\:\s*\d+/ or next; $num_cpus++; } close IN;
 	return $num_cpus || 1;
 }
 
@@ -1770,9 +1804,8 @@ sub blastSeqs($$$) {
 	my $blast_outfile = "$$settings{tempdir}/blastseqs.out";
 	printSeqsToFile($seqs, $blast_infile);
 
-	my $blast_qs = "legacy_blast.pl blastall -p $mode -d $$settings{blast_db} -m 8 -a $$settings{num_cpus} -i $blast_infile -o $blast_outfile ";
+	my $blast_qs = "blastall -p $mode -d $$settings{blast_db} -m 8 -a $$settings{num_cpus} -i $blast_infile -o $blast_outfile ";
 	$blast_qs .= $$settings{blast_xopts};
-  $blast_qs .= " 2>&1 ";
 
 	logmsg "Running $blast_qs" unless $$settings{quiet};
 	system($blast_qs);
@@ -1780,7 +1813,6 @@ sub blastSeqs($$$) {
 		my $er_str = "Error running \"$blast_qs\": $!";
 		$$settings{ignore_blast_errors} ? warn($er_str) : die($er_str);
 	}
-  logmsg "flushing $blast_outfile and reading results"; open(BLS,$blast_outfile) or die "Could not open $blast_outfile because $!";;close(BLS,$blast_outfile);
 #	open(BLAST_OUT, "$blast_qs |") or die "Unable to run \"$blast_qs\": $!";
 	return loadBLAST8($blast_outfile);
 }
@@ -1816,7 +1848,7 @@ sub getBLASTGenePredictions($$) {
     }
   }
   logmsg "$numOrfs ORFs found.";
-  my $reportEvery=int($numOrfs/10); # send out 10 total updates
+  my $reportEvery=int($numOrfs/100); # send out 100 total updates
   my $orfCount=0;
 
 	$$settings{min_default_db_coverage} ||= 0.7;
@@ -1829,8 +1861,7 @@ sub getBLASTGenePredictions($$) {
 	$$settings{blast_db} ||= $$settings{prediction_blast_db};
 #	$$settings{blast_db} ||= $$settings{default_blast_db};
 	$$settings{blast_xopts} = " -e $$settings{min_default_db_evalue}";
-	#$$settings{quiet} = 1;
-  $$settings{num_cpus}||=AKUtils::getNumCPUs();
+	$$settings{quiet} = 1;
 
 	my %blast_preds;
 
@@ -1839,47 +1870,16 @@ sub getBLASTGenePredictions($$) {
 	foreach my $seqname (sort keys %$orfs) {
     #logmsg "Checking contig $seqname. ".scalar(keys(%$orfs))." ORFs to check.";
 		foreach my $frame (sort keys %{$$orfs{$seqname}}) {
-      my @stop=sort keys %{$$orfs{$seqname}->{$frame}};
-      my %blsQuery=();
-      my %orfInfo=();
-      my ($best_hit, $best_hit_coverage);
-      for(1..@stop){
-        my $stop=shift(@stop);
+			foreach my $stop (sort keys %{$$orfs{$seqname}->{$frame}}) {
 				my $orf = $$orfs{$seqname}->{$frame}->{$stop};
 				my $aa_seq = $orf->{aa_seq};
-        $orfInfo{"seq$_"}={aa_seq=>$aa_seq,stop=>$stop,orf=>$orf,length=>length($aa_seq)};
-        $blsQuery{"seq$_"}=$aa_seq;
-      }
-      logmsg "BLASTing frame $frame";
-      my $bh = AKUtils::blastSeqs(\%blsQuery, 'blastp', $settings);
-
-      # group the blast hits by name1
-      my @blast_hits_allSeqs=sort({$$a{name1} cmp $$b{name1}} @$bh);
-      next if(!@blast_hits_allSeqs);
-      my $name1=$blast_hits_allSeqs[-1]{name1};
-      my @blast_hits;
-      for(my $i=@blast_hits_allSeqs-1;$i>=0;$i--){
-        my $name1a=$blast_hits_allSeqs[$i]{name1};
-        next if($name1a eq $name1);
-        my @tmp=splice(@blast_hits_allSeqs,$i+1);
-        push(@blast_hits,\@tmp);
-        #print Dumper \@tmp;
-        #die "Spliced from 0 to $i with $name1 to $$hit{name1}";
-        $name1=$name1a;
-      }
-      push(@blast_hits,\@blast_hits_allSeqs);
-
-      foreach my $blast_hits (@blast_hits){
-        my $seqId=$$blast_hits[0]{name1};
-        my $stop=$orfInfo{$seqId}{stop};
-        my $orf=$orfInfo{$seqId}{orf};
-        my $aa_seq=$orfInfo{$seqId}{aa_seq};
-        my $aa_length=$orfInfo{$seqId}{length};
+				my $blast_hits = AKUtils::blastSeqs({seq1 => $aa_seq}, 'blastp', $settings);
+				my ($best_hit, $best_hit_coverage);
 				# TODO: treat truncated orfs separately, relax metrics for them and remove irrelevant sanity checks for them
 				# TODO: this selects best hit by coverage, but for purposes of homolog finding max e-value may be better
 				foreach my $hit (@$blast_hits) {
 					next unless $$hit{start1};
-					$$hit{coverage} = $$hit{al_len} / $aa_length; # query coverage (not db coverage)
+					$$hit{coverage} = $$hit{al_len} / length($aa_seq); # query coverage (not db coverage)
 					next if $$hit{coverage} < $$settings{min_default_db_coverage};
 					next if $$hit{percent_id} < $$settings{min_default_db_identity} * 100;
 					$best_hit_coverage = $$hit{coverage} if $best_hit_coverage < $$hit{coverage} or not defined $best_hit_coverage;
