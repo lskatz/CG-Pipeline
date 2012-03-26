@@ -30,7 +30,7 @@ my $settings = {
 	appname => 'cgpipeline',
 };
   # blastFields is for any output from run_annotation_blast.pl
-  my @blastFields=qw(locus_tag target_id evalue coverage db_name identity length description rank score bits percent_conserved hit_accession hit_name);
+  my @blastFields=qw(locus_tag target_id evalue coverage db_name identity length description rank score bits percent_conserved hit_accession hit_name );
 	my %map = (
 		blast => [@blastFields],
 		vfdb_hits => [@blastFields],
@@ -41,9 +41,9 @@ my $settings = {
 		signalp_nn => [ qw/locus_tag measure_type start end value cutoff is_signal_peptide/],
 		tmhmm => [ qw/locus_tag length predicted_number expected_number_aa expected_number_aa_60 total_prob_n_in/],
 		tmhmm_location => [qw/locus_tag location start end/],
-		uniprot => [qw/ac ac2 source product pro_type gene_type gene_name gene_id/],
-
-		#blast => [qw/locus_tag uniprot_id length name rank score bits evalue identity positives/],
+    uniprot => [qw/ac ac2 source product pro_type gene_type gene_name gene_id/],
+		
+    #blast => [qw/locus_tag uniprot_id length name rank score bits evalue identity positives/],
 		#ipr_hits => [qw/locus_tag length domain_id product type/],
 		#ipr_classifications => [qw/locus_tag go_id class_type category description/],
 		#ipr_childrefs => [qw/locus_tag interpro_hit_id interpro_child_reference/],
@@ -72,7 +72,7 @@ my $settings = {
 	my $atndir;
 	opendir($atndir,$$settings{'inputdir'}) or die "unable to open directory $$settings{'inputdir'}:$!\n";
 	my @atnfiles=readdir($atndir);
-	foreach $type ((qw/uniprot blast ipr_matches signalp_hmm signalp_nn tmhmm.sql tmhmm_location vfdb_hits cogs_hits/)){
+	foreach $type ((qw/uniprot ipr_matches signalp_hmm signalp_nn tmhmm.sql tmhmm_location vfdb_hits cogs_hits/)){ # took out "blast" because uniprot performs better -LK
 		my @files=grep(/$type/,@atnfiles);
 		if(@files){push(@sqlfiles,$$settings{'inputdir'} . "/" . $files[0]);}
 	}
@@ -98,7 +98,7 @@ my $settings = {
 		if(!defined($type) || !defined($map{$type})){ print STDERR "Input filename rejected: $type\n";next;}
 		@params = @{$map{$type}};
 		open (FH, "<$sqlfile") or die $!; #one prediction file containing locus tags
-    print ("parsing $sqlfile");
+    print ("parsing $sqlfile\n");
 		while (<FH>){
 			chomp;
 			# skip a row of empties
@@ -107,8 +107,8 @@ my $settings = {
 				
 			$newftr = Bio::SeqFeature::Generic->new(-primary=>$type,-start=>'0',-end=>'0');
 			s/\\\|/::/g;
-			my @values = split('\|');
-			if(scalar @values != scalar @params){if($type ne 'uniprot'){print STDERR "Wrong number of fields:" . scalar @values . "\n";next;}}
+			my @values = split(/\|/);
+			if(scalar @values != scalar @params){if($type ne 'uniprot'){print STDERR "Wrong number of fields in $sqlfile:" . scalar @values . "\n"."  ".join("____",@values)."\n";next;}}
 			if($type eq 'uniprot'){
 				@{$uniprot{$values[0]}}{@params}=@values;#Wow! So that's how you make a hash out of two arrays.
 				next;
@@ -155,8 +155,11 @@ my $settings = {
 		#$seq->flush_SeqFeatures(); # try removing this.....
 		foreach my $ftr (@feats){ # each feature in the contig---each locus
 			if($ftr->primary_tag() eq 'gene'){next;} # we get two features, gene and CDS, duplicates
+			if($ftr->primary_tag() eq 'source'){next;} # not interested in the source tag here
+      if(!$ftr->has_tag('locus_tag')){
+        die "Error: could not find a locus tag for ".join("_",$seq->id,$ftr->start,$ftr->end);
+      }
 			my $locus_tag = ($ftr->get_tag_values('locus_tag'))[0];
-			#if (!(defined($spfeats{$locus_tag}) && (0<scalar @{$spfeats{$locus_tag}}))){print STDERR "skipping due to having no features:$locus_tag\n"; next;}
 			if (!(defined($spfeats{$locus_tag}))){
 #				print STDERR "skipping due to having no features:$locus_tag\n";
 				$seq->add_SeqFeature(@feats);# put predictions back in
@@ -177,11 +180,13 @@ my $settings = {
 				#	my $evalue=($newftr->get_tag_values('evalue'))[0];
 				#	my $product=($newftr->get_tag_values('name'))[0];
 				#	my $locus_tag=($newftr->get_tag_values('locus_tag'))[0];
-					$newftr->remove_tag('name');#particularly shitty tag riddled with '='
+					$newftr->remove_tag('name') if($newftr->has_tag('name'));#particularly shitty tag riddled with '='
 					my $source =$newftr->source_tag();
 					my $gene="unnamed";
 					if($$tags{'identity'}<91 || $$tags{'evalue'}>1e-9){ next; }
 					if(	($data{'evalue'} >= $$tags{'evalue'} || $data{'identity'} <= $$tags{'identity'} ) ){ #compare this blast hit to the previous one
+            my $product=$uniprot{$$tags{'uniprot_id'}}{'product'}; 
+            die "Could not find product for $$tags{'uniprot_id'}, ".Dumper $tags if(!$product);
 						$$tags{'product'}=$uniprot{$$tags{'uniprot_id'}}{'product'};
 						%data=(type=>'blast',count=>$data{'count'}+1,%$tags);
 						$gene=$uniprot{$$tags{'uniprot_id'}}{'gene_name'};
