@@ -141,6 +141,7 @@ sub main() {
   $invoke_string .= " -keep" if $$settings{keep};
   $invoke_string .= " -tempdir='$$settings{tempdir}'";
   $invoke_string .= " --min_aa_coverage 70 --min_aa_identity 50 -p '-b 15 -v 15'";
+  logmsg "COMMAND\n  $invoke_string";
   system($invoke_string) if(!-e "$$settings{outdir}/blast.sql"); die if $?;
   flushSql($settings);
 
