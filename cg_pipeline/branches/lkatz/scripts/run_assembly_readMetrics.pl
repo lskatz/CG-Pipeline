@@ -38,14 +38,19 @@ sub main() {
   $settings = AKUtils::loadConfig($settings);
   die(usage($settings)) if @ARGV<1;
 
-  my @cmd_options=qw(help);
+  my @cmd_options=qw(help fast);
   GetOptions($settings, @cmd_options) or die;
 
   for my $input_file(@ARGV){
     my $file=File::Spec->rel2abs($input_file);
     die("Input or file $file not found") unless -f $file;
   
-    my %metrics=readMetrics($file,$settings);
+    my %metrics;
+    if($$settings{fast}){
+      %metrics=fastFastqStats($file,$settings);
+    } else {
+      %metrics=readMetrics($file,$settings);
+    }
     print Dumper \%metrics;
   }
   return 0;
@@ -58,8 +63,8 @@ sub readMetrics{
   my($seqs,$qual);
   my $ext=(split(/\./,$file))[-1];
   my($name,$path,$ext)=fileparse($file,qw(.fastq.gz .fastq .fq .fa .fa .fas .fasta .fna .mfa));
-  if($ext=~/fastq|fq|gz/){
-    die "Cannot support fastq.gz right now" if($ext eq 'gz');
+  $$settings{is_fastqGz}=1 if($ext=~/fastq.gz/);
+  if($ext=~/fastq|fq|fastq.gz/){
     ($seqs,$qual)=readFastq($file,$settings);
   }
   elsif($ext=~/fa|fas|fasta|fna|mfa/i){
@@ -131,7 +136,11 @@ sub readFastq{
   my $seqs={};
   my $quals={};
   my $i=0;
-  open(FASTQ,"<",$fastq) or die "Could not open the fastq $fastq because $!";
+  if($$settings{is_fastqGz}){
+    open(FASTQ,"gunzip -c $fastq|") or die "Could not open the fastq $fastq because $!";
+  } else {
+    open(FASTQ,"<",$fastq) or die "Could not open the fastq $fastq because $!";
+  }
   while(my $id=<FASTQ>){
     my $sequence=<FASTQ>;
     my $plus=<FASTQ>;
@@ -144,6 +153,26 @@ sub readFastq{
   close FASTQ;
   return ($seqs,$quals);
 }
+sub fastFastqStats{
+  my($fastq,$settings)=@_;
+  my($name,$path,$ext)=fileparse($fastq,qw(.fastq.gz .fastq .fq .fa .fa .fas .fasta .fna .mfa));
+  $$settings{is_fastqGz}=1 if($ext=~/fastq.gz/);
+  my %metrics;
+  my $command="wc -l $fastq";
+    $command="gunzip -c $fastq | wc -l" if($$settings{is_fastqGz});
+  my $lines=`$command`; die "problem with wc -l" if $?;
+  $metrics{numReads}=$lines/4;
+  
+  # bases in the first read
+  $command="head -2 $fastq|tail -1";
+  $command="gunzip -c $fastq | head -2 |tail -1" if($$settings{is_fastqGz});
+  my $firstLine=`$command`; die "Problem with head or tail" if $?;
+  chomp($firstLine);
+  my $basesInFirstLine=length($firstLine);
+  $metrics{totalBases}=$metrics{numReads}*$basesInFirstLine;
+
+  return %metrics;
+}
 
 sub usage{
   my ($settings)=@_;
@@ -151,5 +180,7 @@ sub usage{
   Usage: $0 reads.fasta
     A reads file can be fasta or fastq
     The quality file for a fasta file is assumed to be reads.fasta.qual
+  --fast for fast mode: fewer stats but much faster!
+  --help for this help menu
   "
 }
