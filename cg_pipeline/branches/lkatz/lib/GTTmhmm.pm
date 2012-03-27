@@ -296,7 +296,7 @@ sub _run {
      my $status = system($str);
      if($status!=0){
        mkdir("tmhmmTmpFiles");
-       print "TMHMM Making temporary directory tmhmmTmpFiles";
+       print "Error detected: TMHMM Making temporary directory tmhmmTmpFiles";
        my $oldWorkDir=$self->tempdir();
        my $oldInput=$self->_input;
        my $newInput="tmhmmTmpFiles/in.fasta";
@@ -308,8 +308,8 @@ sub _run {
        system("cp $oldInput $newInput"); 
        print "!!!Warning: Could not copy over temporary input to $newInput" if $?;
 
-       system("ls -lh ".$self->tempdir() ." `dirname $outfile`");
-       $self->throw( "Tmhmm call ($oldStr) crashed: $?, $! \n  To try this command again, try $str\n  Also try setting the TMHMMDIR variable to the TMHMM executable directory.");
+       #system("ls -lh ".$self->tempdir() ." `dirname $outfile`");
+       $self->throw( "Tmhmm call ($oldStr) crashed: $?, $! \n  To try this command again, try $str");
      }
     
      my $filehandle;
