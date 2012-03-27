@@ -1345,7 +1345,7 @@ sub getSignalPPredictions($$) {
     $Q->enqueue({$seqname=>$$seqs{$seqname}});
 		logmsg "Enqueued $i proteins" if $i % 100 == 0;
     #last if($i>60); # DEBUG
-	} local $|++; local $|--; # flush output
+	} $|++; $|--; # flush output
   $Q->enqueue(undef) for(@thr);
   while((my $pending=$Q->pending)>$$settings{numcpus}){
     logmsg "Waiting on $pending seqs to be processed";
