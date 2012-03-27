@@ -8,7 +8,14 @@ use AKUtils qw(logmsg);
 
 use GTTmhmm;
 
-$ENV{TMHMMDIR} ||= "/opt/tmhmm";
+# If TMHMM isn't set, it's the directory one level up from the bin directory
+if(!$ENV{TMHMMDIR}){
+  $ENV{TMHMMDIR} = `dirname \`which tmhmm\``;
+  $ENV{TMHMMDIR}=~s/\/\w+$//i;
+  logmsg "Warning: ENV variable for TMHMMDIR is not set.  Setting it here as $ENV{TMHMMDIR}. Avoid this message in the future by adding the following line to ~/.bashrc\n  export TMHMMDIR=$ENV{TMHMMDIR}";
+} else {
+  logmsg "TMHMMDIR is set as $ENV{TMHMMDIR}";
+}
 
 die("Usage: $0 input.faa") unless -f $ARGV[0];
 
