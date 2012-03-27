@@ -1314,13 +1314,14 @@ sub getSignalPPredictions($$) {
 		if defined $$settings{signalp_pred_method} and $$settings{signalp_pred_method} !~ /^(nn|hmm|nn\+hmm)$/;
 	$$settings{signalp_trunc_length} = 70 if not defined $$settings{signalp_trunc_length};
   $$settings{numcpus}||=AKUtils::getNumCPUs();
+  #$$settings{numcpus}=4; # DEBUG
 	die("Invalid value of setting signalp_trunc_length, must be an integer between 0 and 1000")
 		if int($$settings{signalp_trunc_length}) != $$settings{signalp_trunc_length}
 	        or $$settings{signalp_trunc_length} < 0 or $$settings{signalp_trunc_length} > 1000;
 	$$settings{signalp_exec} ||= AKUtils::fullPathToExec('signalp');
 	die("SignalP executable not found") unless -x $$settings{signalp_exec};
 
-	logmsg "Running SignalP on ".values(%$seqs)." sequences...";
+	logmsg "Running SignalP on ".values(%$seqs)." sequences using $$settings{numcpus} threads...";
 
 	$$settings{tempdir} ||= AKUtils::mktempdir($settings);
 
@@ -1342,17 +1343,21 @@ sub getSignalPPredictions($$) {
 		$i++;
     next if(!$$seqs{$seqname});
     $Q->enqueue({$seqname=>$$seqs{$seqname}});
-		logmsg "Processed $i proteins" if $i % 100 == 0;
-	}
+		logmsg "Enqueued $i proteins" if $i % 100 == 0;
+    #last if($i>60); # DEBUG
+	} local $|++; local $|--; # flush output
   $Q->enqueue(undef) for(@thr);
+  while((my $pending=$Q->pending)>$$settings{numcpus}){
+    logmsg "Waiting on $pending seqs to be processed";
+    sleep 10;
+  }
   for(0..$$settings{numcpus}-1){
     my $t=$thr[$_];
     logmsg "Waiting on thread ".$t->tid;
     my $thrPred=$t->join;
-    $predictions={%$predictions,$thrPred};
+    $predictions={%$predictions,%$thrPred};
   }
 	logmsg "Processed $i proteins, done";
-  logmsg "Warning: due to multithreading, results are not guaranteed to be sorted by locus tag anymore!";
 	return $predictions;
 }
 
@@ -1368,7 +1373,8 @@ sub signalPWorker{
 		if (length($sequence) < 20 or length($sequence) > 2000) {
 			logmsg "Peptide sequence $seqid length ".length($sequence)." out of bounds (20-2000 residues)";
 			next if(length($sequence) < 20);
-      logmsg "  I truncated $seqid to 2000 residues";
+      # this next part runs if it is in the >2000aa realm
+      logmsg "  I truncated $seqid to 2000 residues just for SignalP";
       $sequence=substr($sequence,0,2000);
 		}
     my $signalpInfile="$tempdir/signalp.TID$tid.$i.in.fasta";
