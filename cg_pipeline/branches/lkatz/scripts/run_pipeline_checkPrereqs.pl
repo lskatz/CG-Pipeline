@@ -20,7 +20,8 @@ use AKUtils qw/logmsg/;
 my $settings={
   appname=>'cgpipeline',
   perllibs=>[qw(AKUtils BerkeleyDB Bio::Assembly::IO Bio::Assembly::Scaffold Bio::Perl Bio::Seq Bio::SeqIO Bio::Seq::Quality Bio::Seq::RichSeq Bio::SeqUtils Bio::Tools::GFF Bio::Tools::Run::StandAloneBlast CGPBase CGPipeline::SQLiteDB CGPipelineUtils Data::Dumper Date::Format File::Basename File::Copy File::Path File::Spec File::Temp FindBin Getopt::Long GTTmhmm List::Util LWP::Simple Math::Round strict Thread::Queue threads threads::shared warnings XML::LibXML::Reader)],
-  executables=>[qw(addRun amos2ace AMOScmp cat cp gunzip ln minimus2 mkdir nesoni newAssembly newMapping rm runProject setRef sfffile toAmos toAmos_new touch)],
+  executables=>[qw(addRun amos2ace AMOScmp cat cp gunzip ln minimus2 mkdir nesoni newAssembly newMapping rm runProject setRef sfffile toAmos toAmos_new touch tmhmm signalp)],
+  environmentalVariables=>[qw(TMHMMDIR)],
 
   # presence/absence codes
   code_missing=>0,
@@ -35,6 +36,7 @@ sub main{
   GetOptions($settings,qw(help errorsOnly));
   die usage() if($$settings{help});
 
+  my $envProblems=checkEnvVars($settings);
   my $exeProblems=checkExecutables($settings);
   my $libProblems=checkPerlLib($settings);
 
@@ -44,6 +46,16 @@ sub main{
   my $totalProblems=$exeProblems+$libProblems;
   return 0 if(!$totalProblems);
   return (1+$totalProblems);
+}
+
+sub checkEnvVars{
+  my($settings)=@_;
+  my $problems=0;
+  for my $var(@{$$settings{environmentalVariables}}){
+    my $presence_code=is_envVar_present($var,$settings);
+    $problems+=reportPresenceStatus($var,$presence_code,$settings);
+  }
+  return $problems;
 }
 
 sub checkPerlLib{
@@ -113,6 +125,15 @@ sub is_perlLib_present{
         return $code;
       }
     }
+  }
+  return $code;
+}
+
+sub is_envVar_present{
+  my($env,$settings)=@_;
+  my $code=$$settings{code_missing};
+  if($ENV{$env}){
+    $code=$$settings{code_usable};
   }
   return $code;
 }

@@ -1,4 +1,4 @@
-MANIFEST = Makefile README conf doc lib scripts data
+MANIFEST = Makefile README INSTALL conf doc lib scripts data
 DIST_MANIFEST = ${MANIFEST}
 PROJECT = cg_pipeline
 HOST = topaz
@@ -13,10 +13,14 @@ init_databases:
 
 install:
 	-echo "Installing ${PROJECT} to ${DESTDIR}..."
-	mkdir -p ${DESTDIR}
-	cp -R ${MANIFEST} "${DESTDIR}"
+	make install-app
 	-echo "Initializing databases in ${DESTDIR}/data..."
 	make init_databases
+
+install-app:
+	mkdir -p ${DESTDIR}
+	cp -R ${MANIFEST} "${DESTDIR}"
+	make revise
 
 up:
 	scp -r ${MANIFEST} ${AUTHOR}@${HOST}:~/${PROJECT}/
@@ -31,3 +35,11 @@ roll-dist:
 test:
 	echo "Running test suite..."
 	./scripts/test_cg_deps
+
+config:
+	echo "Running configuration..."
+	./scripts/reconfigure.pl
+
+revise:
+	echo "revising Makefile..."
+	(./scripts/revise_make.pl ${DESTDIR}/Makefile ${DESTDIR})
