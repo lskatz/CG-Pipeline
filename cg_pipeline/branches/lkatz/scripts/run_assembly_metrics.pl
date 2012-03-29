@@ -11,7 +11,7 @@ my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 my $settings = {
     appname => 'cgpipeline',
     # these are the subroutines for all assembly metrics
-    metrics=>[qw(N50 genomeLength longestContig numContigs avgContigLength assemblyScore)],
+    metrics=>[qw(N50 genomeLength longestContig numContigs avgContigLength assemblyScore minContigLength expectedGenomeLength)],
     # these are the subroutines for all standard assembly metrics
     stdMetrics=>[qw(N50 genomeLength numContigs assemblyScore)],
 };
@@ -44,17 +44,28 @@ sub main() {
   $settings = AKUtils::loadConfig($settings);
   die(usage($settings)) if @ARGV<1;
 
-  my @cmd_options=qw(output=s expectedGenomeLength=i minContigLength=i statistic=s@ numberOnly);
+  my @cmd_options=qw(output=s expectedGenomeLength=i minContigLength=i statistic=s@ numberOnly allMetrics);
   GetOptions($settings, @cmd_options) or die;
   $$settings{minContigLength}||=500;
   $$settings{expectedGenomeLength}||=0;
 
-  my $input_file=$ARGV[0];
-  my $file=File::Spec->rel2abs($input_file);
-  die("Input or reference file $file not found") unless -f $file;
+  my @input_file;
+  for my $file(@ARGV){
+    $file=File::Spec->rel2abs($file);
+    if(!-f $file){
+      warn("Warning input or reference file $file not found") unless -f $file;
+      next;
+    }
+    push(@input_file,$file);
+  }
 
-  my $metrics=assemblyMetrics($file,$settings);
-  print "$metrics\n";
+  my %metrics;
+  for my $file(@input_file){
+    my $metrics=assemblyMetrics($file,$settings);
+    $metrics{$file}=$metrics;
+  }
+
+  printMetrics(\%metrics,$settings);
 
   return 0;
 }
@@ -86,6 +97,7 @@ sub assemblyMetrics($$){
   # calculate metrics
   foreach my $statistic (@statsToProcess){
     my $stat;
+    next if(!defined(&$statistic));
     if($statistic eq 'assemblyScore'){
       $stat=&$statistic($metrics,$settings);
     } else{
@@ -93,6 +105,7 @@ sub assemblyMetrics($$){
     }
     $$metrics{$statistic}=$stat;
   }
+  return $metrics;
 
   # set the output in the result hash
   my $statsToOutput=$$settings{statistic} || $$settings{stdMetrics};
@@ -107,6 +120,24 @@ sub assemblyMetrics($$){
   chomp($result);
 
   return $result;
+}
+
+sub printMetrics{
+  my ($metrics,$settings)=@_;
+  my $header=$$settings{statistic} || $$settings{stdMetrics};
+  $header=$$settings{metrics} if($$settings{allMetrics});
+  unshift(@$header,"File");
+  my $d="\t"; # field delimiter
+
+  print join($d,@$header)."\n" if(!$$settings{numberOnly});
+  while(my($file,$m)=each(%$metrics)){
+    my @line;
+    for(@$header){
+      push(@line,$$m{$_});
+    }
+    print join($d,@line)."\n";
+  }
+  return 1;
 }
 
 sub filterSeqs{
@@ -232,9 +263,11 @@ sub usage{
     only consider contigs of size m in the calculations
   -n
     Output only the number of the metric(s) you supplied. Works well with -s
-  -s stat
+  -s stat (in contrast, see -a)
     only print out the value for this stat (or these stats) only.
     Possible values: ".join(", ",@{$$settings{metrics}})."
+  -a
+    output all stats. To select only some stats, use -s
   The assembly score is calculated as a log of (N50/numContigs * percentOfGenomeCovered)
     The percent of the genome covered is 1 if you do not supply an expected genome length.
     The percent of the genome covered counts against you if you assemble higher than the expected genome size.
