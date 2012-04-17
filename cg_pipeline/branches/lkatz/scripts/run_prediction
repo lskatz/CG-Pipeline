@@ -89,7 +89,7 @@ sub loadInputs($$) {
   foreach my $file (@$input_files) {
     my $contigSeqs=AKUtils::readMfa($file);
     $_=~s/^($linker)?|($linker)?$/$linker/g for(values(%$contigSeqs));
-    print Dumper $contigSeqs;die;
+    #print Dumper $contigSeqs;die;
     #$_=$$settings{assembly_linker}.$_.$$settings{assembly_linker} for(values(%$contigSeqs));
 		$input_seqs = {%$input_seqs, %$contigSeqs};
 	}
