@@ -73,10 +73,15 @@ sub main() {
     my $progressThread=threads->new(sub{
       my($Q,$settings)=@_;
       my $outfile="$$settings{tempdir}/$0.$$.blast_out";
+      sleep 1 while(!-e $outfile);
       while($Q->pending==0){
-        sleep 360;
+        sleep 1;
         my $numFinished=`grep -c "Query=" '$outfile'`; chomp($numFinished);
         logmsg "Finished with $numFinished queries";
+        for(1..5){
+          last if($Q->pending>0);
+          sleep 10;
+        }
       }
       logmsg "Finished with BLAST";
     },$progressQ,$settings);
@@ -103,15 +108,6 @@ sub main() {
 
   my %reported_hits;
 
-  logmsg "Splitting the blast output into chunks";
-  system("csplit -s -f '$$settings{tempdir}/xx' -b '%02d.bls' $$settings{blastfile} /Query=/ '{*}'");
-  die "Problem with splitting the blast output into chunks: $!" if $?;
-  # remove xx00 from the chunk array and add it to each chunk
-  $$settings{blastHeader}=`cat $$settings{tempdir}/xx00.bls`; 
-  die "Could not get blast header from file because $!" if $?;
-  unlink("$$settings{tempdir}/xx00.bls"); # remove this file before it's caught by glob()
-  my @chunk=glob("$$settings{tempdir}/xx*.bls");
-
   # launch threads for reading the output file
   my $Q=Thread::Queue->new;
   my $printQueue=Thread::Queue->new;
@@ -120,18 +116,22 @@ sub main() {
   my $printWorkerThread=threads->new(\&printWorker,$printQueue,$settings); # prints the sequences to file
 
   my $resultCounter=0;
-  for my $chunk(@chunk){
+  local $/="\nQuery=";
+  open(BLASTOUT,$$settings{blastfile}) or die "Could not open the blast output file for reading: $!";
+  <BLASTOUT>; # discard the first chunk because it is not a result
+  while(my $entry=<BLASTOUT>){
     $resultCounter++; 
-    my $result=Bio::SearchIO->new(-format=>"blast",-file=>$chunk)->next_result;
-    $Q->enqueue($chunk);
+    $entry="Query=$entry"; #put back in the query=
+    my $entryFile="$$settings{tempdir}/result$resultCounter.$$.bls";
+    open(ENTRY,">$entryFile") or die "Could not write to file $entryFile: $!";
+    print ENTRY $entry;
+    close ENTRY;
+
+    $Q->enqueue($entryFile);
     logmsg "Enqueued $resultCounter proteins. ".$Q->pending." awaiting processing. ".$printQueue->pending." in the print queue." if($resultCounter % 100 == 0);
-    
-    # debugging statement if I just want to check out the first few results
-    #if (1 && $resultCounter>100){
-    #  logmsg "DEBUGGING";
-    #  last;
-    #}
   }
+  close BLASTOUT;
+
   # status update on the queues
   while($Q->pending || $printQueue->pending){
     my($qPending,$pPending)=($Q->pending,$printQueue->pending);
@@ -202,6 +202,8 @@ sub readBlastOutputWorker{
             %r,
           );
           (undef, $r{hit_accession}, $r{hit_name}) = split(/\|/, $r{hitName});
+          $r{hit_accession}||=$r{hitName};
+          $r{hit_name}||=$r{hit_accession};
           $r{percent_identity} = sprintf("%.2f", $r{percent_identity});
 
           # sanity checks
@@ -242,6 +244,9 @@ sub printWorker{
   logmsg "Sorting results to final output, $$settings{outfile}";
   system("sort -t '|' -k 1,1 -k 3,3g $tmpOutfile | sed 's/$escapeCharacter/\\\\|/g' > $$settings{outfile}");
   die "Problem with sort/sed: $!" if $?;
+
+  unlink($tmpOutfile);
+  warn("Warning: could not remove temp file $tmpOutfile because $!") if $?;
 
   return 1;
 }
