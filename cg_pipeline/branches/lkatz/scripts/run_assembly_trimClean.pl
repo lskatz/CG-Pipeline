@@ -4,7 +4,6 @@
 # Author: Lee Katz <lkatz@cdc.gov>
 # TODO read .gz files
 # TODO output .gz files
-# TODO merge SE and PE subroutines
 
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
@@ -26,6 +25,7 @@ use File::Spec;
 use File::Copy;
 use File::Basename;
 use List::Util qw(min max sum shuffle);
+use Math::Round qw/nearest/;
 
 use Data::Dumper;
 use threads;
@@ -43,6 +43,8 @@ exit(main());
 sub main() {
   my $settings={
     numcpus=>getNumCPUs(),
+    poly=>1, # number of reads per group (1=SE, 2=paired end)
+    qualOffset=>33,
     # trimming
     min_quality=>35,
     bases_to_trim=>10, # max number of bases that will be trimmed on either side
@@ -51,45 +53,75 @@ sub main() {
     min_length=>62,# twice kmer length sounds good
   };
   
-  GetOptions($settings,qw(pairedEnd infile=s outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter));  
+  GetOptions($settings,qw(poly=i infile=s outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter));  
   
   my $infile=$$settings{infile} or die "Error: need an infile\n".usage($settings);
   my $outfile=$$settings{outfile} or die "Error: need an outfile\n".usage($settings);
+  
+  my @IOextensions=qw(.fastq .fastq.gz);
+  ($$settings{outBasename},undef,$$settings{outSuffix}) = fileparse($outfile,@IOextensions);
+  (undef,undef,$$settings{inSuffix}) = fileparse($infile,@IOextensions);
+  my $singletonOutfile="$$settings{outBasename}.singletons$$settings{outSuffix}";
+  
+  my $readsToCheck=5;
+  my $warnings=checkFirstXReads($infile,$readsToCheck,$settings);
+  warn "WARNING: There were $warnings warnings out of $readsToCheck" if($warnings);
 
   my $printQueue=Thread::Queue->new;
+  my $singletonPrintQueue=Thread::Queue->new;
   my $printThread=threads->new(\&printWorker,$outfile,$printQueue,$settings);
-  qualityTrimFastqPE($infile,$printQueue,$settings) if( $$settings{pairedEnd});
-  qualityTrimFastqSE($infile,$printQueue,$settings) if(!$$settings{pairedEnd});
+  my $singletonPrintThread=threads->new(\&singletonPrintWorker,$singletonOutfile,$singletonPrintQueue,$settings);
+  
+  my $entryCount=qualityTrimFastqPoly($infile,$printQueue,$singletonPrintQueue,$settings);
+  
+  $singletonPrintQueue->enqueue(undef); # term signal
+  $singletonPrintThread->join;
   $printQueue->enqueue(undef); # term signal
   $printThread->join;
+  
+  my $numGood=sum(values(%threadStatus));
+  my $freq_isClean=$numGood/$entryCount;
+  $freq_isClean=nearest(0.01,$freq_isClean);
+  logmsg "Finished! $freq_isClean pass rate.";
 
   return 0;
 }
 
 # returns a reference to an array of fastq entries.
 # These entries are each a string of the actual entry
-sub qualityTrimFastqPE($;$){
-  my($fastq,$printQueue,$settings)=@_;
+sub qualityTrimFastqPoly($;$){
+  my($fastq,$printQueue,$singletonQueue,$settings)=@_;
 
-  logmsg "Trimming and cleaning a paired end read file $fastq";
+  logmsg "Trimming and cleaning a file $fastq with poly=$$settings{poly}";
   # initialize the threads
   my (@t,$t);
   my $Q=Thread::Queue->new;
   for(0..$$settings{numcpus}-1){
-    $t[$t++]=threads->create(\&trimCleanPEWorker,$Q,$printQueue,$settings);
+    $t[$t++]=threads->create(\&trimCleanPolyWorker,$Q,$printQueue,$singletonQueue,$settings);
   }
 
   # load all reads into the threads for analysis
   my $entryCount=0;
-  open(FQ,'<',$fastq) or die "Could not open $fastq for reading: $!";
+  my $linesPerGroup=4*$$settings{poly};
+  my $moreLinesPerGroup=$linesPerGroup-1; # calculate that outside the loop to save CPU
+  if($$settings{inSuffix}=~/\.fastq$/){
+    open(FQ,'<',$fastq) or die "Could not open $fastq for reading: $!";
+  }
+  elsif($$settings{inSuffix}=~/\.fastq\.gz/){
+    open(FQ,"gunzip -c $fastq | ") or die "Could not open $fastq for reading: $!";
+  }
+  else{
+    die "Could not determine the file type for reading based on your extension $$settings{inSuffix}";
+  }
   while(my $entry=<FQ>){
-    $entry.=<FQ> for(1..7); # 8 lines total for paired end entry
+    $entry.=<FQ> for(1..$moreLinesPerGroup); # e.g. 8 lines total for paired end entry
     $Q->enqueue($entry);
     $entryCount++;
     if(!$$settings{quieter} && $entryCount%100000==0){
       my $numGood=sum(values(%threadStatus));
       my $freq_isClean=$numGood/$entryCount;
-      logmsg "Finished loading $entryCount pairs ($freq_isClean pass rate)";
+      $freq_isClean=nearest(0.01,$freq_isClean);
+      logmsg "Finished loading $entryCount pairs or singletons ($freq_isClean pass rate)";
     }
   }
   close FQ;
@@ -100,106 +132,87 @@ sub qualityTrimFastqPE($;$){
   queue_status_updater($Q,$settings);
 
   # grab all the results from the threads
-  my @entry;
   for(@t){
     my $tmp=$_->join;
-    push(@entry,@$tmp);
   }
-
-  my $numEntriesLeft=@entry;
-  my $numCleaned=$entryCount-$numEntriesLeft;
-  logmsg "$numCleaned entries out of $entryCount removed due to low quality ($numEntriesLeft left)" if(!$$settings{quieter});
-  return \@entry;
-}
-sub qualityTrimFastqSE($;$){
-  my($fastq,$printQueue,$settings)=@_;
-
-  logmsg "Trimming and cleaning a single end read file $fastq";
-  # initialize the threads
-  my (@t,$t);
-  my $Q=Thread::Queue->new;
-  for(0..$$settings{numcpus}-1){
-    $t[$t++]=threads->create(\&trimCleanSEWorker,$Q,$printQueue,$settings);
-  }
-
-  # load all reads into the threads for analysis
-  my $entryCount=0;
-  open(FQ,'<',$fastq) or die "Could not open $fastq for reading: $!";
-  while(my $entry=<FQ>){
-    $entry.=<FQ> for(1..3); # 4 lines total for single end entry
-    $Q->enqueue($entry);
-    $entryCount++;
-    logmsg "Finished loading $entryCount reads" if(!$$settings{quieter} && $entryCount%100000==0);
-  }
-  close FQ;
-  logmsg "Done loading: $entryCount entries loaded.";
-  
-  # stop the threads
-  $Q->enqueue(undef) for(1..$$settings{numcpus});
-  queue_status_updater($Q,$settings);
-
-  $_->join for(@t);
-  return 1;
-  
-  #my $numEntriesLeft=@entry;
-  #my $numCleaned=$entryCount-$numEntriesLeft;
-  #logmsg "$numCleaned entries out of $entryCount removed due to low quality ($numEntriesLeft left)";
-  
-  #return \@entry;
+  return $entryCount;
 }
 
-sub trimCleanPEWorker{
-  my($Q,$printQueue,$settings)=@_;
+sub trimCleanPolyWorker{
+  my($Q,$printQueue,$singletonQueue,$settings)=@_;
   my $tid="TID".threads->tid;
-  logmsg "Launching thread $tid" if(!$$settings{quieter});
   my(@entryOut);
+  ENTRY:
   while(defined(my $entry=$Q->dequeue)){
-    my($id1,$seq1,undef,$qual1,$id2,$seq2,undef,$qual2)=split(/\s*\n\s*/,$entry);
-    my %read1=(id=>$id1,seq=>$seq1,qual=>$qual1,length=>length($seq1));
-    my %read2=(id=>$id2,seq=>$seq2,qual=>$qual2,length=>length($seq2));
-    trimRead(\%read1,$settings);
-    trimRead(\%read2,$settings);
-
-    #cleaning stage
-    # TODO allow singletons to pass
-    next if(!read_is_good(\%read1,$settings));
-    next if(!read_is_good(\%read2,$settings));
-
-    my $entryOut="$read1{id}\n$read1{seq}\n+\n$read1{qual}\n$read2{id}\n$read2{seq}\n+\n$read2{qual}\n";
+    my @read;
+    my @entryLine=split(/\s*\n\s*/,$entry);
+    for my $i (0..$$settings{poly}-1){
+      ($read[$i]{id},$read[$i]{seq},undef,$read[$i]{qual})=splice(@entryLine,0,4);
+    }
+    
+    # this is just my dumb way of making sure I trim by reference
+    for my $read (@read){
+      trimRead($read,$settings);
+    }
+    
+    # see if these are signletons, and if so, add them to the singleton queue
+    my @singleton;
+    for(my $i=0;$i<$$settings{poly};$i++){
+      # if one is not good, then just go through them all to find out which can be retained
+      if(!read_is_good($read[$i],$settings)){
+        for my $read (@read){
+          next if(!read_is_good($read,$settings));
+          my $singletonOut="$$read{id}\n$$read{seq}\n+\n$$read{qual}\n";
+          $singletonQueue->enqueue($singletonOut);
+          $threadStatus{$tid}+=1/$$settings{poly};
+        }
+        next ENTRY;
+      }
+    }
+    
     $threadStatus{$tid}++;
+    my $entryOut="";
+    for my $read (@read){
+      $entryOut.="$$read{id}\n$$read{seq}\n+\n$$read{qual}\n";
+    }
     $printQueue->enqueue($entryOut);
-    #push(@entryOut,$entryOut);
-  }
-  #return \@entryOut;
-}
-sub trimCleanSEWorker{
-  my($Q,$printQueue,$settings)=@_;
-  logmsg "Launching thread TID".threads->tid if(!$$settings{quieter});
-  my(@entryOut);
-  while(defined(my $entry=$Q->dequeue)){
-    my($id1,$seq1,undef,$qual1)=split(/\s*\n\s*/,$entry);
-    my %read1=(id=>$id1,seq=>$seq1,qual=>$qual1,length=>length($seq1));
-    trimRead(\%read1,$settings);
-
-    #cleaning stage
-    next if(!read_is_good(\%read1,$settings));
-
-    my $entryOut="$read1{id}\n$read1{seq}\n+\n$read1{qual}\n";
-    warn "Error: $entryOut\n HAS NO \@!!!!" if($entryOut!~/^@/);
-    $printQueue->enqueue($entryOut);
-    #push(@entryOut,$entryOut);
   }
   #return \@entryOut;
 }
 
 sub printWorker{
   my($outfile,$Q,$settings)=@_;
-  open(OUT,">",$outfile) or die "Error: could not open $outfile for writing because $!";
+  if($$settings{outSuffix}=~/\.fastq$/){
+    open(OUT,">",$outfile) or die "Error: could not open $outfile for writing because $!";
+  }
+  elsif($$settings{outSuffix}=~/\.fastq\.gz/){
+    open (OUT, "| gzip -c > $outfile") or die "Error: could not open $outfile for writing because $!";
+  }
+  else{
+    die "Could not determine the file type for writing based on your extension $$settings{outSuffix}";
+  }
   while(defined(my $line=$Q->dequeue)){
     print OUT $line;
   }
   close OUT;
   logmsg "Reads are in $outfile";
+}
+sub singletonPrintWorker{
+  my($outfile,$Q,$settings)=@_;
+  if($$settings{outSuffix}=~/\.fastq$/){
+    open(OUT,">",$outfile) or die "Error: could not open $outfile for writing because $!";
+  }
+  elsif($$settings{outSuffix}=~/\.fastq\.gz/){
+    open (OUT, "| gzip -c > $outfile") or die "Error: could not open $outfile for writing because $!";
+  }
+  else{
+    die "Could not determine the file type for writing based on your extension $$settings{outSuffix}";
+  }
+  while(defined(my $line=$Q->dequeue)){
+    print OUT $line;
+  }
+  close OUT;
+  logmsg "Singleton reads are in $outfile";
 }
 
 # Trim a read using the trimming options
@@ -208,7 +221,7 @@ sub trimRead{
   my($read,$settings)=@_;
   my($numToTrim3,$numToTrim5,@qual);
   $numToTrim3=$numToTrim5=0;
-  @qual=map(ord($_)-33,split(//,$$read{qual}));
+  @qual=map(ord($_)-$$settings{qualOffset},split(//,$$read{qual}));
   for(my $i=0;$i<$$settings{bases_to_trim};$i++){
     $numToTrim3++ if(sum(@qual[0..$i])/($i+1)<$$settings{min_quality});
     last if($qual[$i]>=$$settings{min_quality});
@@ -228,8 +241,6 @@ sub trimRead{
   return %$read;
 }
 
-
-
 # Deterimine if a single read is good or bad (0 or 1)
 # judging by the cleaning options
 sub read_is_good{
@@ -240,7 +251,7 @@ sub read_is_good{
   
   # avg quality
   my $qual_is_good=1;
-  my @qual=map(ord($_)-33,split(//,$$read{qual}));
+  my @qual=map(ord($_)-$$settings{qualOffset},split(//,$$read{qual}));
   my $avgQual=sum(@qual)/$readLength;
   return 0 if($avgQual<$$settings{min_avg_quality});
   return 1;
@@ -260,6 +271,45 @@ sub queue_status_updater{
   return 1;
 }
 
+sub checkFirstXReads{
+  my($infile,$numReads,$settings)=@_;
+  my $warning=0;
+  # figure out if the min_length is larger than any of the first X reads.
+  # If so, spit out a warning. Do not change the value. The user should be allowed to make a mistake.
+  logmsg "Checking minimum sequence length param on the first 5 sequences.";
+  if($$settings{inSuffix}=~/\.fastq$/){
+    open(IN,'<',$infile) or die "Could not open $infile for reading: $!";
+  }
+  elsif($$settings{inSuffix}=~/\.fastq\.gz/){
+    open(IN,"gunzip -c $infile | ") or die "Could not open $infile for reading: $!";
+  }
+  else{
+    die "Could not determine the file type for reading based on your extension $$settings{inSuffix}";
+  }
+  my $i=1;
+  while(my $line=<IN>){
+    $line.=<IN> for (1..3);
+    my ($id,$sequence)=(split("\n",$line))[0,1];
+    my $length=length($sequence);
+    if($length<$$settings{min_length}){
+      warn "WARNING: Read $id has length greater than the minimum sequence length $$settings{min_length}. It is possible that all sequences will be filtered out.\n" if(!$$settings{quieter});
+      $warning++;
+    }
+    last if($i++>=$numReads);
+  }
+  close IN;
+  return $warning;
+}
+
+################
+## utility
+###############
+
+sub getNumCPUs() {
+  my $num_cpus;
+  open(IN, '<', '/proc/cpuinfo'); while (<IN>) { /processor\s*\:\s*\d+/ or next; $num_cpus++; } close IN;
+  return $num_cpus || 1;
+}
 
 sub usage{
   my ($settings)=@_;
@@ -269,7 +319,9 @@ sub usage{
     -o output file in fastq format
   Additional options
   
-  -p Use this switch if the reads are paired-end 
+  -s to produce a singletons output file, for when one out of a paired end read is cleaned
+  -p 1 or 2 (p for poly)
+    1 for SE, 2 for paired end (PE) 
   -q for somewhat quiet mode (use 1>/dev/null for totally quiet)
 
   Use phred scores (e.g. 20 or 30) or length in base pairs if it says P or L, respectively
@@ -284,12 +336,4 @@ sub usage{
   "
 }
 
-################
-## utility
-###############
-sub getNumCPUs() {
-  my $num_cpus;
-  open(IN, '<', '/proc/cpuinfo'); while (<IN>) { /processor\s*\:\s*\d+/ or next; $num_cpus++; } close IN;
-  return $num_cpus || 1;
-}
 
