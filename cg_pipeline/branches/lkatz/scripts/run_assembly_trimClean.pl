@@ -2,7 +2,9 @@
 
 # run_assembly_trimClean: trim and clean a set of raw reads
 # Author: Lee Katz <lkatz@cdc.gov>
-# TODO make an output queue and have one thread writing the results
+# TODO read .gz files
+# TODO output .gz files
+# TODO merge SE and PE subroutines
 
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
@@ -16,7 +18,6 @@ use strict;
 use FindBin;
 use lib "$FindBin::RealBin/../lib";
 $ENV{PATH} = "$FindBin::RealBin:".$ENV{PATH};
-use AKUtils;
 
 use Getopt::Long;
 use File::Temp ('tempdir');
@@ -25,7 +26,7 @@ use File::Spec;
 use File::Copy;
 use File::Basename;
 use List::Util qw(min max sum shuffle);
-use CGPipelineUtils;
+
 use Data::Dumper;
 use threads;
 use Thread::Queue;
@@ -40,29 +41,27 @@ my %threadStatus:shared;
 exit(main());
 
 sub main() {
-  my $settings={};
-  GetOptions($settings,qw(pairedEnd infile=s outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter));
-  $$settings{numcpus}||=AKUtils::getNumCPUs();
-
-  # trimming
-  $$settings{min_quality}||=35;
-  $$settings{bases_to_trim}||=10; # max number of bases that will be trimmed on either side
-  # cleaning
-  $$settings{min_avg_quality}||=30;
-  $$settings{min_length}||=62; # twice kmer length sounds good
+  my $settings={
+    numcpus=>getNumCPUs(),
+    # trimming
+    min_quality=>35,
+    bases_to_trim=>10, # max number of bases that will be trimmed on either side
+    # cleaning
+    min_avg_quality=>30,
+    min_length=>62,# twice kmer length sounds good
+  };
   
+  GetOptions($settings,qw(pairedEnd infile=s outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter));  
   
   my $infile=$$settings{infile} or die "Error: need an infile\n".usage($settings);
   my $outfile=$$settings{outfile} or die "Error: need an outfile\n".usage($settings);
 
-  my $seqs=[];
-  $seqs=qualityTrimFastqPE($infile,$settings) if($$settings{pairedEnd});
-  $seqs=qualityTrimFastqSE($infile,$settings) if(!$$settings{pairedEnd});
-  
-  open(OUT,">",$outfile) or die "Error: Could not open $outfile for writing";
-  print OUT $_ for(@$seqs);
-  close OUT;
-  logmsg "Reads are in $outfile";
+  my $printQueue=Thread::Queue->new;
+  my $printThread=threads->new(\&printWorker,$outfile,$printQueue,$settings);
+  qualityTrimFastqPE($infile,$printQueue,$settings) if( $$settings{pairedEnd});
+  qualityTrimFastqSE($infile,$printQueue,$settings) if(!$$settings{pairedEnd});
+  $printQueue->enqueue(undef); # term signal
+  $printThread->join;
 
   return 0;
 }
@@ -70,14 +69,14 @@ sub main() {
 # returns a reference to an array of fastq entries.
 # These entries are each a string of the actual entry
 sub qualityTrimFastqPE($;$){
-  my($fastq,$settings)=@_;
+  my($fastq,$printQueue,$settings)=@_;
 
   logmsg "Trimming and cleaning a paired end read file $fastq";
   # initialize the threads
   my (@t,$t);
   my $Q=Thread::Queue->new;
   for(0..$$settings{numcpus}-1){
-    $t[$t++]=threads->create(\&trimCleanPEWorker,$Q,$settings);
+    $t[$t++]=threads->create(\&trimCleanPEWorker,$Q,$printQueue,$settings);
   }
 
   # load all reads into the threads for analysis
@@ -113,15 +112,16 @@ sub qualityTrimFastqPE($;$){
   return \@entry;
 }
 sub qualityTrimFastqSE($;$){
-  my($fastq,$settings)=@_;
+  my($fastq,$printQueue,$settings)=@_;
 
   logmsg "Trimming and cleaning a single end read file $fastq";
   # initialize the threads
   my (@t,$t);
   my $Q=Thread::Queue->new;
   for(0..$$settings{numcpus}-1){
-    $t[$t++]=threads->create(\&trimCleanSEWorker,$Q,$settings);
+    $t[$t++]=threads->create(\&trimCleanSEWorker,$Q,$printQueue,$settings);
   }
+
   # load all reads into the threads for analysis
   my $entryCount=0;
   open(FQ,'<',$fastq) or die "Could not open $fastq for reading: $!";
@@ -129,7 +129,7 @@ sub qualityTrimFastqSE($;$){
     $entry.=<FQ> for(1..3); # 4 lines total for single end entry
     $Q->enqueue($entry);
     $entryCount++;
-    logmsg "Finished loading $entryCount pairs" if(!$$settings{quieter} && $entryCount%100000==0);
+    logmsg "Finished loading $entryCount reads" if(!$$settings{quieter} && $entryCount%100000==0);
   }
   close FQ;
   logmsg "Done loading: $entryCount entries loaded.";
@@ -138,21 +138,18 @@ sub qualityTrimFastqSE($;$){
   $Q->enqueue(undef) for(1..$$settings{numcpus});
   queue_status_updater($Q,$settings);
 
-  # grab all the results from the threads
-  my @entry;
-  for(@t){
-    my $tmp=$_->join;
-    push(@entry,@$tmp);
-  }
-
-  my $numEntriesLeft=@entry;
-  my $numCleaned=$entryCount-$numEntriesLeft;
-  logmsg "$numCleaned entries out of $entryCount removed due to low quality ($numEntriesLeft left)";
-  return \@entry;
+  $_->join for(@t);
+  return 1;
+  
+  #my $numEntriesLeft=@entry;
+  #my $numCleaned=$entryCount-$numEntriesLeft;
+  #logmsg "$numCleaned entries out of $entryCount removed due to low quality ($numEntriesLeft left)";
+  
+  #return \@entry;
 }
 
 sub trimCleanPEWorker{
-  my($Q,$settings)=@_;
+  my($Q,$printQueue,$settings)=@_;
   my $tid="TID".threads->tid;
   logmsg "Launching thread $tid" if(!$$settings{quieter});
   my(@entryOut);
@@ -170,12 +167,13 @@ sub trimCleanPEWorker{
 
     my $entryOut="$read1{id}\n$read1{seq}\n+\n$read1{qual}\n$read2{id}\n$read2{seq}\n+\n$read2{qual}\n";
     $threadStatus{$tid}++;
-    push(@entryOut,$entryOut);
+    $printQueue->enqueue($entryOut);
+    #push(@entryOut,$entryOut);
   }
-  return \@entryOut;
+  #return \@entryOut;
 }
 sub trimCleanSEWorker{
-  my($Q,$settings)=@_;
+  my($Q,$printQueue,$settings)=@_;
   logmsg "Launching thread TID".threads->tid if(!$$settings{quieter});
   my(@entryOut);
   while(defined(my $entry=$Q->dequeue)){
@@ -188,9 +186,20 @@ sub trimCleanSEWorker{
 
     my $entryOut="$read1{id}\n$read1{seq}\n+\n$read1{qual}\n";
     warn "Error: $entryOut\n HAS NO \@!!!!" if($entryOut!~/^@/);
-    push(@entryOut,$entryOut);
+    $printQueue->enqueue($entryOut);
+    #push(@entryOut,$entryOut);
   }
-  return \@entryOut;
+  #return \@entryOut;
+}
+
+sub printWorker{
+  my($outfile,$Q,$settings)=@_;
+  open(OUT,">",$outfile) or die "Error: could not open $outfile for writing because $!";
+  while(defined(my $line=$Q->dequeue)){
+    print OUT $line;
+  }
+  close OUT;
+  logmsg "Reads are in $outfile";
 }
 
 # Trim a read using the trimming options
@@ -261,6 +270,7 @@ sub usage{
   Additional options
   
   -p Use this switch if the reads are paired-end 
+  -q for somewhat quiet mode (use 1>/dev/null for totally quiet)
 
   Use phred scores (e.g. 20 or 30) or length in base pairs if it says P or L, respectively
   --min_quality P             # trimming
@@ -272,5 +282,14 @@ sub usage{
   --min_length L              # cleaning
     default: $$settings{min_length}
   "
+}
+
+################
+## utility
+###############
+sub getNumCPUs() {
+  my $num_cpus;
+  open(IN, '<', '/proc/cpuinfo'); while (<IN>) { /processor\s*\:\s*\d+/ or next; $num_cpus++; } close IN;
+  return $num_cpus || 1;
 }
 
