@@ -207,8 +207,13 @@ sub main() {
 # determine file types
 sub ext($){ # return the extension of a filename
   my($file)=@_;
-  my $ext=$file;
-  $ext=~s/^.+\.//;
+  my($name,$path,$ext)=fileparse($file,qw(.fastq.gz .sff .fasta .fna .fa .fas .fastq .ffn .mfa));
+  if(!$ext){
+    die "Extension of $file could not be determined.";
+  }
+  $ext=~s/^.//; # remove that dot
+  #my $ext=$file;
+  #$ext=~s/^.+\.//;
   return lc($ext);
 }
 sub is_sff($){
@@ -268,7 +273,7 @@ sub baseCall($$){
       push(@$short,$file);
     }
     else{
-      die "The format of $file is incompatible";
+      die "The format of $file is incompatible because its extension ".ext($file)." is not recognized";
     }
   }
   return {sff=>$sff,454=>$long,illumina=>$short};
