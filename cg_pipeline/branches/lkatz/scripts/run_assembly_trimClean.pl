@@ -59,9 +59,9 @@ sub main() {
   my $outfile=$$settings{outfile} or die "Error: need an outfile\n".usage($settings);
   
   my @IOextensions=qw(.fastq .fastq.gz);
-  ($$settings{outBasename},undef,$$settings{outSuffix}) = fileparse($outfile,@IOextensions);
+  ($$settings{outBasename},$outfileDir,$$settings{outSuffix}) = fileparse($outfile,@IOextensions);
   (undef,undef,$$settings{inSuffix}) = fileparse($infile,@IOextensions);
-  my $singletonOutfile="$$settings{outBasename}.singletons$$settings{outSuffix}";
+  my $singletonOutfile="$outfileDir/$$settings{outBasename}.singletons$$settings{outSuffix}";
   
   my $readsToCheck=5;
   my $warnings=checkFirstXReads($infile,$readsToCheck,$settings);
