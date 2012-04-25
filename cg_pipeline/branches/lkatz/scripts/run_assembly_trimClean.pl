@@ -25,7 +25,7 @@ use File::Spec;
 use File::Copy;
 use File::Basename;
 use List::Util qw(min max sum shuffle);
-use Math::Round qw/nearest/;
+#use Math::Round qw/nearest/;
 
 use Data::Dumper;
 use threads;
@@ -47,13 +47,13 @@ sub main() {
     qualOffset=>33,
     # trimming
     min_quality=>35,
-    bases_to_trim=>10, # max number of bases that will be trimmed on either side
+    bases_to_trim=>20, # max number of bases that will be trimmed on either side
     # cleaning
     min_avg_quality=>30,
     min_length=>62,# twice kmer length sounds good
   };
   
-  GetOptions($settings,qw(poly=i infile=s outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter));  
+  GetOptions($settings,qw(poly=i infile=s outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter notrim));
   
   my $infile=$$settings{infile} or die "Error: need an infile\n".usage($settings);
   my $outfile=$$settings{outfile} or die "Error: need an outfile\n".usage($settings);
@@ -217,24 +217,26 @@ sub singletonPrintWorker{
 
 # Trim a read using the trimming options
 # The read is a hash of id, sequence, and qual
+# Note: I think I mixed up 3 and 5?  Ugh.  Whatever.
 sub trimRead{
   my($read,$settings)=@_;
-  my($numToTrim3,$numToTrim5,@qual);
-  $numToTrim3=$numToTrim5=0;
+  return if($$settings{notrim});
+  my($numToTrim3,$numToTrim5,@qual)=(0,0,);
   @qual=map(ord($_)-$$settings{qualOffset},split(//,$$read{qual}));
   for(my $i=0;$i<$$settings{bases_to_trim};$i++){
-    $numToTrim3++ if(sum(@qual[0..$i])/($i+1)<$$settings{min_quality});
-    last if($qual[$i]>=$$settings{min_quality});
+    $numToTrim5++ if(sum(@qual[0..$i])/($i+1)<$$settings{min_quality});
+    #last if($qual[$i]>=$$settings{min_quality});
   }
-  my $j=0;
-  for(my $i=$$read{length}-$$settings{bases_to_trim};$i<@qual;$i++){
-    $numToTrim5++ if(sum(@qual[$i..$#qual])/(++$j)<$$settings{min_quality});
-    last if($qual[$i]>=$$settings{min_quality});
+  #for(my $i=$$read{length}-$$settings{bases_to_trim};$i<@qual;$i++){
+  for(my $i=0;$i<$$settings{bases_to_trim};$i++){
+    my $pos=$$read{length}-$i;
+    $numToTrim3++ if(sum(@qual[$pos..$#qual])/($i+1)<$$settings{min_quality});
+    #last if($qual[$i]>=$$settings{min_quality});
   }
   if($numToTrim3 || $numToTrim5){
-    #my $tmp= "TRIM  ==>$numToTrim3 ... <==$numToTrim5\n  >$$read{seq}<";
-    $$read{seq}=substr($$read{seq},$numToTrim3,$$read{length}-$numToTrim3-$numToTrim5);
-    $$read{qual}=substr($$read{qual},$numToTrim3,$$read{length}-$numToTrim3-$numToTrim5);
+    #my $tmp= "TRIM  ==>$numToTrim5 ... $numToTrim3<==\n  >$$read{seq}<\n   $$read{qual}";
+    $$read{seq}=substr($$read{seq},$numToTrim5,$$read{length}-$numToTrim5-$numToTrim3);
+    $$read{qual}=substr($$read{qual},$numToTrim5,$$read{length}-$numToTrim5-$numToTrim3);
     #print "$tmp\n  >$$read{seq}<\n\n";
   }
 
@@ -305,6 +307,10 @@ sub checkFirstXReads{
 ## utility
 ###############
 
+sub nearest{
+  return @_[0];
+}
+
 sub getNumCPUs() {
   my $num_cpus;
   open(IN, '<', '/proc/cpuinfo'); while (<IN>) { /processor\s*\:\s*\d+/ or next; $num_cpus++; } close IN;
@@ -323,6 +329,7 @@ sub usage{
   -p 1 or 2 (p for poly)
     1 for SE, 2 for paired end (PE) 
   -q for somewhat quiet mode (use 1>/dev/null for totally quiet)
+  --notrim to skip trimming of the reads. Useful for assemblers that require equal read lengths.
 
   Use phred scores (e.g. 20 or 30) or length in base pairs if it says P or L, respectively
   --min_quality P             # trimming
