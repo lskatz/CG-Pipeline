@@ -257,17 +257,7 @@ sub baseCall($$){
       $seqQualPair=[$file,$qualfile];
       push(@$long,$seqQualPair);
     }
-    elsif(is_fastqGz($file)){
-      my $targetFile=$$settings{tempdir}."/".fileparse($file);
-      $targetFile=~s/\.gz$//;
-      if(!-e $targetFile && -s $targetFile < 1){
-        logmsg "I have to decompress $file to $targetFile";
-        system("gunzip -c '$file' > '$targetFile'");
-      }
-      $file=qualityControlFastq($file,$settings);
-      push(@$short,$targetFile);
-    }
-    elsif(is_fastq($file)){
+    elsif(is_fastq($file) || is_fastqGz($file)){
       # quality trim fastq files
       $file=qualityControlFastq($file,$settings);
       push(@$short,$file);
@@ -285,9 +275,12 @@ sub qualityControlFastq{
   my($file,$settings)=@_;
   my $outfile="$$settings{tempdir}/".fileparse($file).".trimmed.fastq";
   return $outfile if(-s $outfile > 100); # skip this sub if the file already has some content
-  logmsg "Performing a quality filter on the reads in $file ==> $outfile";
+  logmsg "Performing a quality filter on the reads in $file ==> $outfile with fastx toolkit";
   my $executable=AKUtils::fullPathToExec("fastq_quality_filter");
   my $command="$executable -Q33 -q 20 -p 75 -v -i '$file' -o '$outfile' 2>&1";
+  if(is_fastqGz($file)){
+    $command="gunzip -c '$file' | $executable -Q33 -q 20 -p 75 -v -o '$outfile' 2>&1";
+  }
   system($command);
   if($?){
     logmsg "Error with fastx. Trying with CG-Pipeline's in-house method.";
