@@ -75,13 +75,22 @@ sub main() {
 	if (@ref_files) {
     # TODO use Columbus or SHRiMP
     #die "Using references for illumina assembly is not working right now";
-    logmsg "Warning: paired end reference illumina assemby is not supported right now";
+    logmsg "Warning: paired end reference illumina assemby is not supported right now (I'm not sure if you supplied a paired end parameter though)";
 
     logmsg "Concatenating the reference sequence(s) into one file. And then all reads into one file.";
     my $concatenatedReferences="$$settings{tempdir}/ref_seqs.fna";
     my $concatenatedReads="$$settings{tempdir}/reads.fastq";
     system("cat ".join(" ",@ref_files)." >$concatenatedReferences") if(!-e $concatenatedReferences); die "Could not concatenate references because $!" if $?;
-    system("cat ".join(" ",@$fastqfiles)." >$concatenatedReads") if(!-e $concatenatedReads); die "Could not concatenate reads because $!" if $?;
+
+    if(!-e $concatenatedReads){
+      system("echo -n '' > $concatenatedReads"); die "Could not create file $concatenatedReads" if $?;
+      for(@$fastqfiles){
+        system("gunzip -c '$_' >> $concatenatedReads") if(is_fastqGz($_));
+        system("cat '$_' >> $concatenatedReads") if(is_fastq($_));
+        #system("cat ".join(" ",@$fastqfiles)." >$concatenatedReads");
+        die "Could not concatenate reads because $!" if $?;
+      }
+    }
     
     # grab the consensus sequence
     my $amos_assembly=amosShortReadMapping($concatenatedReferences,$concatenatedReads,$settings);
@@ -116,12 +125,17 @@ sub main() {
 }
 
 # determine file types
+# determine file types
 sub ext($){ # return the extension of a filename
   my($file)=@_;
-  my $ext=$file;
-  $ext=~s/^.+\.//;
+  my($name,$path,$ext)=fileparse($file,qw(.fastq.gz .sff .fasta .fna .fa .fas .fastq .ffn .mfa));
+  if(!$ext){
+    die "Extension of $file could not be determined.";
+  }
+  $ext=~s/^.//; # remove that dot
   return lc($ext);
 }
+
 sub is_sff($){
   my($file)=@_;
   return 1 if(ext($file) eq 'sff');
@@ -134,7 +148,7 @@ sub is_fasta($){
 }
 sub is_fastq($){
   my($file)=@_;
-  return 1 if(ext($file)=~/^fastq|fq$/i);
+  return 1 if(ext($file)=~/^(fastq|fq)$/i);
   return 0;
 }
 sub is_fastqGz($){
@@ -272,14 +286,31 @@ sub amosShortReadMapping{
   my($concatenatedReferences,$concatenatedReads,$settings)=@_;
   my $amosPrefix="$$settings{tempdir}/amos";
 
-  logmsg "Converting $concatenatedReads to bnk";
   #my $afg=fastqToAfg($concatenatedReads,"$amosPrefix.afg",$settings);
-  system("toAmos_new -Q $concatenatedReads -b $amosPrefix.bnk 2>&1") if(!-d "$amosPrefix.bnk");
-  die "Problem with AMOS's toAmos_new" if $?;
+  #system("bank-transact -m $afg -b $amosPrefix.bnk"); die "Problem with bank-transact: $!" if $?;
+  #logmsg "Running AMOScmp-shortReads on $amosPrefix";
+  #system("ln -f -s $concatenatedReferences $amosPrefix.1con 2>&1"); die "Could not create shortcut for references at $amosPrefix.1con" if $?;
+  #system("AMOScmp-shortReads -s 20 $amosPrefix 2>&1") if(-s "$amosPrefix.fasta" < 1);
+  #die "Error with AMOS-shortReads: $!" if $?;
+  #return "$amosPrefix.fasta";
+
+  if(!-d "$amosPrefix.bnk"){
+    logmsg "Converting $concatenatedReads to bnk";
+    my $exec=AKUtils::fullPathToExec("toAmos_new");
+    my $command="$exec -t ILLUMINA -Q $concatenatedReads -b $amosPrefix.bnk 2>&1";
+    system($command);
+    if($?){
+      logmsg "ILLUMINA encoding didn't work. Trying SANGER.";
+      system("rm -vrf $amosPrefix.bnk");
+      $command=~s/ILLUMINA/SANGER/;
+      system($command);
+      die "Problem with AMOS's toAmos_new with command \n$command\n Error: $!" if $?;
+    }
+  }
 
   logmsg "Running AMOScmp-shortReads on $amosPrefix";
-  system("ln -f -s $concatenatedReferences $amosPrefix.1con"); die "Could not create shortcut for references at $amosPrefix.1con" if $?;
-  system("AMOScmp-shortReads -s 20 $amosPrefix") if(-s "$amosPrefix.fasta" < 1);
+  system("ln -f -s $concatenatedReferences $amosPrefix.1con 2>&1"); die "Could not create shortcut for references at $amosPrefix.1con" if $?;
+  system("AMOScmp-shortReads -s 20 $amosPrefix 2>&1") if(-s "$amosPrefix.fasta" < 1);
   die "Error with AMOS-shortReads" if $?;
   return "$amosPrefix.fasta";
 }
@@ -297,7 +328,7 @@ sub fastqToAfg{
 
   my $numLines=`wc -l $fastq`;
   my $numReads=$numLines/4;
-  logmsg "Converting $numReads reads to afg";
+  logmsg "Converting $numReads reads from $fastq to afg";
 
   open(FASTQ,$fastq) or die "Could not open $fastq because $!";
   open(AFG,">",$outfile) or die "Could not open $outfile for writing because $!";
@@ -327,7 +358,7 @@ sub fastqToAfg{
     @q = map { chr( ord($_)-$$settings{qOffset} + $$settings{aOffset} ) } @q;
     my $qltAfg=join("",@q);
     $qltAfg=~s/(.{60})/\1\n/g; #newline every 60 bp
-    print AFG $qltAfg.".\n\n";
+    print AFG $qltAfg."\n.\n";
     print AFG "}\n";
     print "." if($iid % $$settings{afg_reportEvery} == 0);
     last if($iid>20);
