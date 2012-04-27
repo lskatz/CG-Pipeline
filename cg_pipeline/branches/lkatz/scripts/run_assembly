@@ -107,7 +107,7 @@ sub main() {
         my $illumina_basename=File::Spec->rel2abs("$$settings{tempdir}/$ref_name/illumina");
         mkdir($illumina_basename) if(!-d $illumina_basename);
         my $outIllumina="$illumina_basename/assembly.fasta";
-        system("run_assembly_illumina.pl ".join(" ",@{ $$fastaqualfiles{illumina} })." -R $ref_name -t $illumina_basename -o $illumina_basename/assembly.fasta 2>&1");
+        system("run_assembly_illumina.pl ".join(" ",@{ $$fastaqualfiles{illumina} })." -R $ref_file -t $illumina_basename -o $illumina_basename/assembly.fasta 2>&1");
         die "Could not perform illumina assembly" if $?;
         push(@ref_assembly,$outIllumina);
       }
@@ -277,12 +277,14 @@ sub qualityControlFastq{
   return $outfile if(-s $outfile > 100); # skip this sub if the file already has some content
   logmsg "Performing a quality filter on the reads in $file ==> $outfile with fastx toolkit";
   my $executable=AKUtils::fullPathToExec("fastq_quality_filter");
-  my $command="$executable -Q33 -q 20 -p 75 -v -i '$file' -o '$outfile' 2>&1";
-  if(is_fastqGz($file)){
-    $command="gunzip -c '$file' | $executable -Q33 -q 20 -p 75 -v -o '$outfile' 2>&1";
-  }
-  system($command);
-  if($?){
+  #if(0){
+  #  my $command="$executable -Q33 -q 20 -p 75 -v -i '$file' -o '$outfile' 2>&1";
+  #  if(is_fastqGz($file)){
+  #    $command="gunzip -c '$file' | $executable -Q33 -q 20 -p 75 -v -o '$outfile' 2>&1";
+  #  }
+  #  system($command);
+  #}
+  if(1|| $?){
     logmsg "Error with fastx. Trying with CG-Pipeline's in-house method.";
     system("run_assembly_trimClean.pl -i '$file' -o '$outfile' 2>&1");
     die if $?;
