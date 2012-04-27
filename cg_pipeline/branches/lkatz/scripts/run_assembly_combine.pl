@@ -140,8 +140,8 @@ sub combine2Assemblies{
   logmsg "Running Minimus2 with reference genome $refGenome and query genome $queryGenome";
   system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
   die "Problem with toAmos with command\n  toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'" if $?;
-  system("minimus2 -D REFCOUNT=$numContigs '$$settings{tempdir}/minimus.combined'");
-  die "Problem with Minimus2" if $?;
+  system("minimus2 -D REFCOUNT=$numContigs '$$settings{tempdir}/minimus.combined' 2>&1");
+  die "Problem with Minimus2: $!" if $?;
 
   # recover singletons that pass the filter
   my %allseqs=(); my $i=0;

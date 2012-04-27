@@ -126,7 +126,7 @@ sub printMetrics{
   my ($metrics,$settings)=@_;
   my $header=$$settings{statistic} || $$settings{stdMetrics};
   $header=$$settings{metrics} if($$settings{allMetrics});
-  unshift(@$header,"File");
+  unshift(@$header,"File") if(!$$settings{numberOnly});
   my $d="\t"; # field delimiter
 
   print join($d,@$header)."\n" if(!$$settings{numberOnly});
