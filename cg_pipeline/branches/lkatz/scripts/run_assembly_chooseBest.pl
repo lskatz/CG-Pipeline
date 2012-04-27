@@ -73,36 +73,20 @@ sub bestAssemblySeqs($$){
   my($seqs,$settings)=@_;
   my($i,%metrics);
 
-  # generate the metrics
-  @$seqs=sort{$a cmp $b} @$seqs;
-  for($i=0;$i<@$seqs;$i++){
-    my %seqMetric;
-    my $command="run_assembly_metrics.pl $$seqs[$i] -m $$settings{min_contig_length}";
-    $command.=" -e $$settings{expectedGenomeLength}" if($$settings{expectedGenomeLength});
-    logmsg "COMMAND $command";
-    my $seqMetric=`$command 2>&1`;
-    die "Problem with run_assembly_metrics.pl. Output was\n".$seqMetric."\n" if $?;
-    my @seqMetric=split(/\n/,$seqMetric);
-    for my $line (@seqMetric){
-      my($key,$value)=split(/\t/,$line);
-      $seqMetric{$key}=$value;
-    }
-    $metrics{$seqMetric{File}}=\%seqMetric;
+  for(@$seqs){
+    $metrics{$_}=`run_assembly_metrics.pl '$_' -n -s assemblyScore`+0;
   }
-
-  # rate the assemblies by the score
-  my $bestAssemblyFilename=(keys(%metrics))[0];
-  my $bestAssemblyScore=$metrics{$bestAssemblyFilename}{assemblyScore};
-  for my $file(keys(%metrics)){
-    my $assemblyScore=$metrics{$file}{assemblyScore};
-    logmsg "Comparing $bestAssemblyFilename vs $file\n  ($bestAssemblyScore vs $assemblyScore)";
-    if($assemblyScore>$bestAssemblyScore){
-      $bestAssemblyFilename=$file;
-      $bestAssemblyScore=$metrics{$bestAssemblyFilename}{assemblyScore};
-    }
+  my @metrics=values(%metrics);
+  my @files=keys(%metrics);
+  my $bestScore=shift(@metrics);
+  my $bestFile=shift(@files);
+  for($i=0;$i<@files;$i++){
+    next if($bestScore>$metrics[$i]);
+    $bestScore=$metrics[$i];
+    $bestFile=$files[$i];
   }
-  logmsg "The best assembly file is $bestAssemblyFilename";
-  return AKUtils::readMfa($bestAssemblyFilename);
+  logmsg "Best assembly is $bestFile with a score of $bestScore";
+  return AKUtils::readMfa($bestFile);
 }
 
 sub usage{
