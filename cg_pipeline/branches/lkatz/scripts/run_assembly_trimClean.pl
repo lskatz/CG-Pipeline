@@ -83,7 +83,7 @@ sub main() {
   my $numGood=sum(values(%threadStatus));
   my $freq_isClean=$numGood/$entryCount;
   $freq_isClean=nearest(0.01,$freq_isClean);
-  logmsg "Finished! $freq_isClean pass rate.";
+  logmsg "\nFinished! $freq_isClean pass rate.";
 
   return 0;
 }
@@ -306,10 +306,11 @@ sub checkFirstXReads{
 
 ################
 ## utility
-###############
+################
 
 sub nearest{
-  return @_[0];
+  my ($nearestNumber,$num)=@_;
+  return $num;
 }
 
 sub getNumCPUs() {
@@ -321,12 +322,11 @@ sub getNumCPUs() {
 sub usage{
   my ($settings)=@_;
   "trim and clean a set of raw reads
-  Usage: $0 -i reads.fastq -o reads.filteredCleaned.fastq [-p]
+  Usage: $0 -i reads.fastq -o reads.filteredCleaned.fastq [-p 2]
     -i input file in fastq format
     -o output file in fastq format
   Additional options
   
-  -s to produce a singletons output file, for when one out of a paired end read is cleaned
   -p 1 or 2 (p for poly)
     1 for SE, 2 for paired end (PE) 
   -q for somewhat quiet mode (use 1>/dev/null for totally quiet)
