@@ -69,11 +69,12 @@ sub main() {
   my ($final_seqs,$command,@assembly);
 
 	if (@ref_files) {
+    my @all_ref_assembly=(); # all assemblies from all programs and merges
     for my $ref_file(@ref_files){
       my $ref_name=fileparse($ref_file);
       system("mkdir $$settings{tempdir}/$ref_name") if(!-d "$$settings{tempdir}/$ref_name");
       die "Could not make the target directory because $!" if $?;
-      my @ref_assembly=();
+      my @ref_assembly=(); # this reference's ref assembly
       my $ref_assembly="$$settings{tempdir}/$ref_name/assembly.fasta"; # final assembly name for this ref
       MAPPING_454:
       if(@{ $$fastaqualfiles{454} }){
@@ -117,11 +118,12 @@ sub main() {
       logmsg "Combining mapping assemblies for $ref_name";
       system($command);
       push(@ref_assembly,$ref_assembly);
+      push(@all_ref_assembly,@ref_assembly);
     }
     # choose the best combined assembly
     my $finalAsm="$$settings{tempdir}/final.fna";
     logmsg "Choosing the best assembly out of all the reference assemblies. Warning: This has not been tested yet.";
-    system("run_assembly_chooseBest.pl ".join(@ref_assembly)." -o $finalAsm");
+    system("run_assembly_chooseBest.pl ".join(@all_ref_assembly)." -o $finalAsm");
     $final_seqs = AKUtils::readMfa($finalAsm);
 	} else {
     
