@@ -25,6 +25,7 @@ use File::Spec;
 use File::Copy;
 use File::Basename;
 use List::Util qw(min max sum shuffle);
+use POSIX;
 #use Math::Round qw/nearest/;
 
 use Data::Dumper;
@@ -53,7 +54,7 @@ sub main() {
     min_length=>62,# twice kmer length sounds good
   };
   
-  GetOptions($settings,qw(poly=i infile=s outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter notrim));
+  GetOptions($settings,qw(poly=i infile=s outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter notrim debug));
   
   my $infile=$$settings{infile} or die "Error: need an infile\n".usage($settings);
   my $outfile=$$settings{outfile} or die "Error: need an outfile\n".usage($settings);
@@ -92,6 +93,9 @@ sub main() {
 # These entries are each a string of the actual entry
 sub qualityTrimFastqPoly($;$){
   my($fastq,$printQueue,$singletonQueue,$settings)=@_;
+  my $verbose=!$$settings{quieter};
+  my $reportEvery=1000000;
+    $reportEvery=100000 if($$settings{debug});
 
   logmsg "Trimming and cleaning a file $fastq with poly=$$settings{poly}";
   # initialize the threads
@@ -115,14 +119,26 @@ sub qualityTrimFastqPoly($;$){
     die "Could not determine the file type for reading based on your extension $$settings{inSuffix}";
   }
   while(my $entry=<FQ>){
-    $entry.=<FQ> for(1..$moreLinesPerGroup); # e.g. 8 lines total for paired end entry
-    $Q->enqueue($entry);
-    $entryCount++;
-    if(!$$settings{quieter} && $entryCount%100000==0){
+    # get a whole array of entries before enqueuing because it is a slow step
+    my @entry;
+    for(1..ceil($reportEvery/10)){
+      $entryCount++;
+      $entry .=<FQ> for(1..$moreLinesPerGroup); # e.g. 8 lines total for paired end entry
+      push(@entry,$entry);
+      # exit this loop if at the end of the file
+      last if(!defined($entry=<FQ>));
+    }
+      
+    $Q->enqueue(@entry);
+    if($entryCount%$reportEvery==0 && $verbose){
       my $numGood=sum(values(%threadStatus));
-      my $freq_isClean=$numGood/$entryCount;
+      my $freq_isClean=$numGood/($entryCount-$Q->pending);
       $freq_isClean=nearest(0.01,$freq_isClean);
-      logmsg "Finished loading $entryCount pairs or singletons ($freq_isClean pass rate)";
+      logmsg "Finished loading $entryCount pairs or singletons ($freq_isClean pass rate).";
+      if($$settings{debug}){
+        logmsg "DEBUG";
+        last;
+      }
     }
   }
   close FQ;
@@ -130,7 +146,7 @@ sub qualityTrimFastqPoly($;$){
   
   # stop the threads
   $Q->enqueue(undef) for(1..$$settings{numcpus});
-  queue_status_updater($Q,$settings);
+  queue_status_updater($Q,$entryCount,$settings);
 
   # grab all the results from the threads
   for(@t){
@@ -141,34 +157,34 @@ sub qualityTrimFastqPoly($;$){
 
 sub trimCleanPolyWorker{
   my($Q,$printQueue,$singletonQueue,$settings)=@_;
+  my $notrim=$$settings{notrim};
   my $tid="TID".threads->tid;
   my(@entryOut);
   ENTRY:
   while(defined(my $entry=$Q->dequeue)){
+    my $is_singleton=0; # this entry is not a set of singletons until proven otherwise
     my @read;
     my @entryLine=split(/\s*\n\s*/,$entry);
     for my $i (0..$$settings{poly}-1){
-      ($read[$i]{id},$read[$i]{seq},undef,$read[$i]{qual})=splice(@entryLine,0,4);
+      my $t={};
+      ($$t{id},$$t{seq},undef,$$t{qual})=splice(@entryLine,0,4);
+      trimRead($t,$settings) if(!$notrim);
+      $is_singleton=1 if(!read_is_good($t,$settings));
+      $read[$i]=$t;
     }
     
-    # this is just my dumb way of making sure I trim by reference
-    for my $read (@read){
-      trimRead($read,$settings);
-    }
-    
-    # see if these are signletons, and if so, add them to the singleton queue
-    my @singleton;
-    for(my $i=0;$i<$$settings{poly};$i++){
-      # if one is not good, then just go through them all to find out which can be retained
-      if(!read_is_good($read[$i],$settings)){
-        for my $read (@read){
-          next if(!read_is_good($read,$settings));
-          my $singletonOut="$$read{id}\n$$read{seq}\n+\n$$read{qual}\n";
-          $singletonQueue->enqueue($singletonOut);
-          $threadStatus{$tid}+=1/$$settings{poly};
-        }
-        next ENTRY;
+    # see if these are singletons, and if so, add them to the singleton queue
+    if($is_singleton){
+      my @singleton;
+      for my $read (@read){
+        next if(!read_is_good($read,$settings));
+        my $singletonOut="$$read{id}\n$$read{seq}\n+\n$$read{qual}\n";
+        $singletonQueue->enqueue($singletonOut);
+        $threadStatus{$tid}+=1/$$settings{poly};
       }
+      # If these are singletons then they cannot be printed to the paired end output file. 
+      # Move onto the next entry.
+      next ENTRY; 
     }
     
     $threadStatus{$tid}++;
@@ -221,7 +237,6 @@ sub singletonPrintWorker{
 # Note: I think I mixed up 3 and 5?  Ugh.  Whatever.
 sub trimRead{
   my($read,$settings)=@_;
-  return if($$settings{notrim});
   my($numToTrim3,$numToTrim5,@qual)=(0,0,);
   @qual=map(ord($_)-$$settings{qualOffset},split(//,$$read{qual}));
   for(my $i=0;$i<$$settings{bases_to_trim};$i++){
@@ -240,8 +255,6 @@ sub trimRead{
     $$read{qual}=substr($$read{qual},$numToTrim5,$$read{length}-$numToTrim5-$numToTrim3);
     #print "$tmp\n  >$$read{seq}<\n\n";
   }
-
-  return %$read;
 }
 
 # Deterimine if a single read is good or bad (0 or 1)
@@ -261,22 +274,33 @@ sub read_is_good{
 }
 
 sub queue_status_updater{
-  my($Q,$settings)=@_;
+  my($Q,$entryCount,$settings)=@_;
   STATUS_UPDATE:
   while(my $p=$Q->pending){
-    logmsg "$p entries left to process";
+    my $numGood=sum(values(%threadStatus));
+    my $freq_isClean=$numGood/($entryCount-$Q->pending);
+    $freq_isClean=nearest(0.01,$freq_isClean);
+    logmsg "$p entries left to process. $freq_isClean pass rate.";
     # shave off some time if the queue empties while we are sleeping
     for(1..5){
       sleep 2;
       last STATUS_UPDATE if(!$Q->pending);
     }
+
   }
   return 1;
 }
 
+# TODO use this subroutine to find out if this is a paired-end file and set the default poly=X
 sub checkFirstXReads{
   my($infile,$numReads,$settings)=@_;
   my $warning=0;
+  die "Could not find the input file $infile" if(!-e $infile);
+  if(-s $infile < 1000){
+    warn "Warning: Your input file is pretty small";
+    $warning++;
+  }
+
   # figure out if the min_length is larger than any of the first X reads.
   # If so, spit out a warning. Do not change the value. The user should be allowed to make a mistake.
   logmsg "Checking minimum sequence length param on the first 5 sequences.";
@@ -308,8 +332,11 @@ sub checkFirstXReads{
 ## utility
 ################
 
+# until I find a better way to round
 sub nearest{
   my ($nearestNumber,$num)=@_;
+  $num=floor(($num+0.00)*100)/100;
+  $num=sprintf("%.2f",$num);
   return $num;
 }
 
