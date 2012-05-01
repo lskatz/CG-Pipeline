@@ -118,16 +118,17 @@ sub qualityTrimFastqPoly($;$){
   else{
     die "Could not determine the file type for reading based on your extension $$settings{inSuffix}";
   }
-  while(my $entry=<FQ>){
+  while(1){
     # get a whole array of entries before enqueuing because it is a slow step
     my @entry;
     for(1..ceil($reportEvery/10)){
       $entryCount++;
-      $entry .=<FQ> for(1..$moreLinesPerGroup); # e.g. 8 lines total for paired end entry
+      my $entry;
+      $entry .=<FQ> for(1..$linesPerGroup); # e.g. 8 lines total for paired end entry
+      last if(!$entry);
       push(@entry,$entry);
-      # exit this loop if at the end of the file
-      last if(!defined($entry=<FQ>));
     }
+    last if(!@entry);
       
     $Q->enqueue(@entry);
     if($entryCount%$reportEvery==0 && $verbose){
