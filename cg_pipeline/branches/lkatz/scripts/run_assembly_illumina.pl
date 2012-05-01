@@ -85,9 +85,13 @@ sub main() {
     if(!-e $concatenatedReads){
       system("echo -n '' > $concatenatedReads"); die "Could not create file $concatenatedReads" if $?;
       for(@$fastqfiles){
-        system("gunzip -c '$_' >> $concatenatedReads") if(is_fastqGz($_));
-        system("cat '$_' >> $concatenatedReads") if(is_fastq($_));
-        #system("cat ".join(" ",@$fastqfiles)." >$concatenatedReads");
+        if(is_fastqGz($_)){
+          logmsg "Gunzipping/concating $_";
+          system("gunzip -c '$_' >> $concatenatedReads");
+        } elsif(is_fastq($_)){
+          logmsg "Concating $_";
+          system("cat '$_' >> $concatenatedReads")
+        }
         die "Could not concatenate reads because $!" if $?;
       }
     }
@@ -100,7 +104,11 @@ sub main() {
 
     $combined_filename="$$settings{tempdir}/mappingAssembly_combined.fasta";
     system("run_assembly_combine.pl -a $amos_assembly -a $nesoni_assembly -o $combined_filename -m 10");
-    die "Could not combine assemblies" if $?;
+    if($?){
+      warn "Could not combine assemblies. I will just get the best assembly.";
+      system("run_assembly_chooseBest.pl '$amos_assembly' '$nesoni_assembly' -o '$combined_filename' 2>&1");
+      die "Could not combine or choose the best assembly because $!" if $?;
+    }
     
 	} else {
     my($velvet_basename,$velvet_assembly);
@@ -254,6 +262,7 @@ sub nesoni{
   my($concatenatedReferences,$concatenatedReads,$settings)=@_;
   logmsg "Running nesoni samshrimp";
   my $nesoni_run="$$settings{tempdir}/nesoni";
+  return "$nesoni_run/contigs.fasta" if(-s "$nesoni_run/contigs.fasta" > 100);
   mkdir($nesoni_run) if(!-d $nesoni_run);
 
   system("nesoni samshrimp: $nesoni_run $concatenatedReferences reads: $concatenatedReads --sam-unaligned no") unless (-e "$nesoni_run/alignments.bam");
@@ -285,14 +294,8 @@ sub nesoni{
 sub amosShortReadMapping{
   my($concatenatedReferences,$concatenatedReads,$settings)=@_;
   my $amosPrefix="$$settings{tempdir}/amos";
-
-  #my $afg=fastqToAfg($concatenatedReads,"$amosPrefix.afg",$settings);
-  #system("bank-transact -m $afg -b $amosPrefix.bnk"); die "Problem with bank-transact: $!" if $?;
-  #logmsg "Running AMOScmp-shortReads on $amosPrefix";
-  #system("ln -f -s $concatenatedReferences $amosPrefix.1con 2>&1"); die "Could not create shortcut for references at $amosPrefix.1con" if $?;
-  #system("AMOScmp-shortReads -s 20 $amosPrefix 2>&1") if(-s "$amosPrefix.fasta" < 1);
-  #die "Error with AMOS-shortReads: $!" if $?;
-  #return "$amosPrefix.fasta";
+  return "$amosPrefix.fasta" if(-s "$amosPrefix.fasta" > 100);
+  system("ln -f -s $concatenatedReferences $amosPrefix.1con 2>&1"); die "Could not create shortcut for references at $amosPrefix.1con" if $?;
 
   if(!-d "$amosPrefix.bnk"){
     logmsg "Converting $concatenatedReads to bnk";
@@ -307,11 +310,9 @@ sub amosShortReadMapping{
       die "Problem with AMOS's toAmos_new with command \n$command\n Error: $!" if $?;
     }
   }
-
   logmsg "Running AMOScmp-shortReads on $amosPrefix";
-  system("ln -f -s $concatenatedReferences $amosPrefix.1con 2>&1"); die "Could not create shortcut for references at $amosPrefix.1con" if $?;
   system("AMOScmp-shortReads -s 20 $amosPrefix 2>&1") if(-s "$amosPrefix.fasta" < 1);
-  die "Error with AMOS-shortReads" if $?;
+  die "Error with AMOS-shortReads: $!\n  Command was \n  AMOScmp-shortReads -s 20 $amosPrefix 2>&1" if $?;
   return "$amosPrefix.fasta";
 }
 
@@ -321,10 +322,9 @@ sub fastqToAfg{
   my($fastq,$outfile,$settings)=@_;
   $$settings{qOffset}||=33; # 33=sanger 64=illumina(<1.8)
   $$settings{aOffset}||=60;
-  $$settings{afg_reportEvery}=10000;
+  $$settings{afg_reportEvery}||=100000;
 
   return $outfile if(-s $outfile > 1000); # if the output file already has something in it, don't bother converting
-  $|++;
 
   my $numLines=`wc -l $fastq`;
   my $numReads=$numLines/4;
@@ -335,7 +335,7 @@ sub fastqToAfg{
   my $iid=0;
   while (my $eid = <FASTQ>) {
 
-    die "bad fastq ID line '$eid'" unless $eid =~ m/^\@/;
+    die "bad fastq ID line '$eid'\n".<FASTQ> unless $eid =~ m/^\@/;
     $eid = substr $eid, 1;  # remove '@'
 
     my $seq = scalar(<FASTQ>);
@@ -343,7 +343,7 @@ sub fastqToAfg{
     $seq=~s/(.{60})/\1\n/g; #newline every 60 bp
 
     my $id2 = scalar(<FASTQ>);
-    die "bad fastq ID2 line '$id2" unless $id2 =~ m/^\+/;
+    die "bad fastq ID2 line '$id2'" unless $id2 =~ m/^\+/;
 
     my $qlt = scalar(<FASTQ>);
     chomp $qlt;
@@ -360,12 +360,19 @@ sub fastqToAfg{
     $qltAfg=~s/(.{60})/\1\n/g; #newline every 60 bp
     print AFG $qltAfg."\n.\n";
     print AFG "}\n";
+    if($iid % $$settings{afg_reportEvery} == 0){
+      $|++;
+      print ".";
+      $|--;
+    }
     print "." if($iid % $$settings{afg_reportEvery} == 0);
-    last if($iid>20);
+    if(0 && $iid>20){
+      logmsg "DEBUG";
+      last;
+    }
   }
   print "\n";
   close FASTQ; close AFG;
-  $|--;
   return $outfile;
 }
 
