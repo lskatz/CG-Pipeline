@@ -141,7 +141,7 @@ sub combine2Assemblies{
   system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
   die "Problem with toAmos with command\n  toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'" if $?;
   system("minimus2 -D REFCOUNT=$numContigs '$$settings{tempdir}/minimus.combined' 2>&1");
-  die "Problem with Minimus2: $!" if $?;
+  die "Problem with Minimus2: $!. Used this command:\n  minimus2 -D REFCOUNT=$numContigs '$$settings{tempdir}/minimus.combined" if $?;
 
   # recover singletons that pass the filter
   my %allseqs=(); my $i=0;
@@ -169,10 +169,10 @@ sub assembly_metrics{
   my %seqMetric;
   return %seqMetric if(-s $a < 1);
   my $metrics=`run_assembly_metrics.pl '$a'`;
-  for my $line(split(/\n/,$metrics)){
-    my($key,$value)=split(/\t/,$line);
-    $seqMetric{$key}=$value;
-  }
+  my($header,$m)=split(/\n/,$metrics);
+  my @header=split(/\t/,$header);
+  my @metric=split(/\t/,$m);
+  @seqMetric{@header}=@metric;
   return %seqMetric;
 }
 
