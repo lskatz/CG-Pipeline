@@ -38,8 +38,9 @@ sub main() {
   $settings = AKUtils::loadConfig($settings);
   die(usage($settings)) if @ARGV<1;
 
-  my @cmd_options=qw(help fast);
+  my @cmd_options=qw(help fast qual_offset=i);
   GetOptions($settings, @cmd_options) or die;
+  $$settings{qual_offset}||=33;
 
   for my $input_file(@ARGV){
     my $file=File::Spec->rel2abs($input_file);
@@ -58,6 +59,7 @@ sub main() {
 
 sub readMetrics{
   my($file,$settings)=@_;
+  my $nullQual=chr($$settings{qual_offset}); # for whenever a quality score cannot be found
 
   # STEP 1: READ THE FILE
   my($seqs,$qual);
@@ -74,12 +76,14 @@ sub readMetrics{
       $qualfile=$_ if(-e $_);
     }
     # convert the quality file to Illumina qual strings
-    $qual=AKUtils::readMfa($qualfile,{keep_whitespace=>1});
-    while(my($id,$qualstr)=each(%$qual)){
-      my $newQual;
-      my @tmpQual=split(/\s+/,$qualstr);
-      $newQual.=chr($_+33) for(@tmpQual);
-      $$qual{$id}=$newQual;
+    if(-e $qualfile){
+      $qual=AKUtils::readMfa($qualfile,{keep_whitespace=>1});
+      while(my($id,$qualstr)=each(%$qual)){
+        my $newQual;
+        my @tmpQual=split(/\s+/,$qualstr);
+        $newQual.=chr($_+$$settings{qual_offset}) for(@tmpQual);
+        $$qual{$id}=$newQual;
+      }
     }
   } else {
     die "$ext extension not supported";
@@ -88,7 +92,6 @@ sub readMetrics{
   # STEP 1b: FILL IN QUALITY VALUES FOR READS WHOSE QUALITY IS NULL
   if(!keys(%$qual)){
     warn "Warning: There are no quality scores associated with $file";
-    my $nullQual=chr(33);
     $$qual{$_}=$nullQual x length($$seqs{$_}) for(keys(%$seqs));
   }
 
@@ -106,9 +109,9 @@ sub readMetrics{
     my @qual;
     if(!$qualStr){
       warn "Warning: Could not find qual for $id. Setting to 0.";
-      $qualStr=chr(33)x$readLength;
+      $qualStr=$nullQual x $readLength;
     }
-    @qual=map(ord($_)-33,split(//,$qualStr));
+    @qual=map(ord($_)-$$settings{qual_offset},split(//,$qualStr));
     my $sumReadQuality=sum(@qual);
     my $thisReadAvgQual=$sumReadQuality/$readLength;
     $avgReadQualTotal+=$thisReadAvgQual;
@@ -127,6 +130,7 @@ sub readMetrics{
     maxReadLength=>$maxReadLength,
     avgQuality=>$avgQuality,
     avgQualPerRead=>$avgQualPerRead,
+    numReads=>$seqCounter,
   );
   return %metrics;
 }
@@ -182,5 +186,7 @@ sub usage{
     The quality file for a fasta file is assumed to be reads.fasta.qual
   --fast for fast mode: fewer stats but much faster!
   --help for this help menu
+  --qual_offset 33
+    Set the quality score offset (usually it's 33, so the default is 33)
   "
 }
