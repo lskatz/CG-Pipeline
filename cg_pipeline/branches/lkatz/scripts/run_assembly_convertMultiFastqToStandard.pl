@@ -2,6 +2,7 @@
 
 # Some fastq files are nonstandard, and each entry spans more than four rows, making them difficult to parse.
 # This script converts those entries.
+# Author: Lee Katz <lkatz@cdc.gov>
 
 use strict;
 use warnings;
@@ -17,6 +18,8 @@ sub main{
   my $out=$$settings{outfile} or die usage();
 
   convert($in,$out,$settings);
+
+  return 0;
 }
 
 sub convert{
@@ -45,6 +48,8 @@ sub convert{
   }
   close OUT;
   close IN;
+
+  return 1;
 }
 
 sub usage{
