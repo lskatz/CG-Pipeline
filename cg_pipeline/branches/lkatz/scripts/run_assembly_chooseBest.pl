@@ -74,7 +74,9 @@ sub bestAssemblySeqs($$){
   my($i,%metrics);
 
   for(@$seqs){
-    $metrics{$_}=`run_assembly_metrics.pl '$_' -n -s assemblyScore`+0;
+    my $command="run_assembly_metrics.pl '$_' -n -s assemblyScore";
+    $command.=" -e $$settings{expectedGenomeLength}" if($$settings{expectedGenomeLength});
+    $metrics{$_}=`$command`+0;
   }
   my @metrics=values(%metrics);
   my @files=keys(%metrics);
