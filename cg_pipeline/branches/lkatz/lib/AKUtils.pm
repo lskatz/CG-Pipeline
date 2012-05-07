@@ -1855,7 +1855,7 @@ sub getBLASTGenePredictions($$) {
   }
   logmsg "$numOrfs ORFs found.";
   my $reportEvery=int($numOrfs/100); # send out 100 total updates
-  $reportEvery||=10; # this can't be a zero value, in case there are less than 100 orfs
+  $reportEvery=10 if($reportEvery<10);
   my $orfCount=0;
 
 	$$settings{min_default_db_coverage} ||= 0.7;
