@@ -48,8 +48,9 @@ sub main() {
   GetOptions($settings, @cmd_options) or die;
 
   $$settings{blast_db}||=File::Spec->rel2abs($$settings{db});
+  die("ERROR: cannot find a blast database at $$settings{blast_db}. Set it using blast_db in the config file (cgpipelinerc) or by using the -d setting for this script. If being run from run_annotation, it is possible that the database has not been set for this specific task. $0\n".usage()) if(!-e $$settings{blast_db});
 
-  die(usage()) if @ARGV != 1;
+  die("ERROR: ARGV!=1: ".join(" ",@ARGV)."\n".usage()) if @ARGV != 1;
   $$settings{min_aa_coverage}||=1;
   $$settings{min_aa_identity}||=1;
   $$settings{min_aa_similarity}||=1;
