@@ -1472,8 +1472,9 @@ sub getGlimmer3Predictions($;$) {
 	$glimmer_opts .= " --max_olap $$settings{gl3_max_overlap}" if $$settings{gl3_max_overlap};
 	$glimmer_opts .= " --extend" unless $$settings{gl3_no_extended_predicts};
 
-	system("long-orfs $longorfs_opts --no_header --cutoff 1.15 '$longorfs_infile' '$longorfs_infile.longorfs' 2>'$$settings{tempdir}/glimmer3.log'");
-	die("Error running long-orfs: $!") if $?;
+        my $exec=AKUtils::fullPathToExec("long-orfs");
+	system("$exec $longorfs_opts --no_header --cutoff 1.15 '$longorfs_infile' '$longorfs_infile.longorfs' 2>'$$settings{tempdir}/glimmer3.log'");
+	die("Error running long-orfs with command\n  long-orfs $longorfs_opts --no_header --cutoff 1.15 '$longorfs_infile' '$longorfs_infile.longorfs' 2>'$$settings{tempdir}/glimmer3.log'\nError was $!") if $?;
 	system("extract -t '$longorfs_infile' '$longorfs_infile.longorfs' > '$$settings{tempdir}/glimmer3.train'");
 	die("Error running extract: $!") if $?;
 	system("build-icm -r '$$settings{tempdir}/glimmer3.icm' < '$$settings{tempdir}/glimmer3.train'");
