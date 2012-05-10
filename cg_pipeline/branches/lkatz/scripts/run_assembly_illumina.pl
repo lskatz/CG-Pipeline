@@ -99,16 +99,17 @@ sub main() {
     # grab the consensus sequence
     my $amos_assembly=amosShortReadMapping($concatenatedReferences,$concatenatedReads,$settings);
     logmsg "AMOS assembly is in $amos_assembly";
-    my $nesoni_assembly=nesoni($concatenatedReferences,$concatenatedReads,$settings);
-    logmsg "Nesoni assembly is in $nesoni_assembly";
+    #my $nesoni_assembly=nesoni($concatenatedReferences,$concatenatedReads,$settings);
+    #logmsg "Nesoni assembly is in $nesoni_assembly";
 
     $combined_filename="$$settings{tempdir}/mappingAssembly_combined.fasta";
-    system("run_assembly_combine.pl -a $amos_assembly -a $nesoni_assembly -o $combined_filename -m 10");
-    if($?){
-      warn "Could not combine assemblies. I will just get the best assembly.";
-      system("run_assembly_chooseBest.pl '$amos_assembly' '$nesoni_assembly' -o '$combined_filename' 2>&1");
-      die "Could not combine or choose the best assembly because $!" if $?;
-    }
+    #system("run_assembly_combine.pl -a $amos_assembly -a $nesoni_assembly -o $combined_filename -m 10");
+    system("run_assembly_combine.pl -a $amos_assembly -o $combined_filename -m 10");
+    #if($?){
+    #  warn "Could not combine assemblies. I will just get the best assembly.";
+    #  system("run_assembly_chooseBest.pl '$amos_assembly' '$nesoni_assembly' -o '$combined_filename' 2>&1");
+    #  die "Could not combine or choose the best assembly because $!" if $?;
+    #}
     
 	} else {
     my($velvet_basename,$velvet_assembly);
@@ -293,8 +294,10 @@ sub nesoni{
 
 sub amosShortReadMapping{
   my($concatenatedReferences,$concatenatedReads,$settings)=@_;
+  my $combinedAssembly="$$settings{tempdir}/mappedAndUnmapped.fasta";
+  return $combinedAssembly if(-s $combinedAssembly > 100);
+
   my $amosPrefix="$$settings{tempdir}/amos";
-  return "$amosPrefix.fasta" if(-s "$amosPrefix.fasta" > 100);
   system("ln -f -s $concatenatedReferences $amosPrefix.1con 2>&1"); die "Could not create shortcut for references at $amosPrefix.1con" if $?;
 
   if(!-d "$amosPrefix.bnk"){
@@ -303,7 +306,7 @@ sub amosShortReadMapping{
     my $command="$exec -t ILLUMINA -Q $concatenatedReads -b $amosPrefix.bnk 2>&1";
     system($command);
     if($?){
-      logmsg "ILLUMINA encoding didn't work. Trying SANGER.";
+      logmsg "ILLUMINA quality encoding didn't work. Trying SANGER.";
       system("rm -vrf $amosPrefix.bnk");
       $command=~s/ILLUMINA/SANGER/;
       system($command);
@@ -313,7 +316,28 @@ sub amosShortReadMapping{
   logmsg "Running AMOScmp-shortReads on $amosPrefix";
   system("AMOScmp-shortReads -s 20 $amosPrefix 2>&1") if(-s "$amosPrefix.fasta" < 1);
   die "Error with AMOS-shortReads: $!\n  Command was \n  AMOScmp-shortReads -s 20 $amosPrefix 2>&1" if $?;
-  return "$amosPrefix.fasta";
+
+  # TODO should I just run this run_assembly script again without a reference, instead of re-writing velvet code?
+  # One consideration is to lower the minimum contig size because insertions might be small
+  logmsg "Finished with mapping. Now performing de novo assembly on unused reads.";
+  my $unmappedPrefix=File::Spec->abs2rel("$$settings{tempdir}/unmapped"); # VelvetOptimiser chokes on an abs path
+  my $placedReadsExec=    AKUtils::fullPathToExec("listReadPlacedStatus");
+  my $dumpreadsExec  =    AKUtils::fullPathToExec("dumpreads");
+  my $velvetOptimiserExec=AKUtils::fullPathToExec("VelvetOptimiser.pl");
+  system("$placedReadsExec -S -E $amosPrefix.bnk > $amosPrefix.singletons 2>&1 && $dumpreadsExec -e -E $amosPrefix.singletons $amosPrefix.bnk > $amosPrefix.singletons.seq") if(!-e "$amosPrefix.singletons");
+  die "ERROR: Problem with getting unmapped reads" if $?;
+  system("$velvetOptimiserExec -v -d $unmappedPrefix -p $unmappedPrefix -f '-short -fasta $amosPrefix.singletons.seq' 2>&1") if(!-e "$unmappedPrefix/contigs.fa");
+  die "ERROR: Problem with VelvetOptimiser.pl" if $?;
+  logmsg "Finished with VelvetOptimiser! Waiting for VelvetOptimiser to finish cleanup...";
+
+  # TODO remove short (<500bp?) unmapped contigs that statistically have a higher coverage than the mapped contigs.
+  # These contigs could represent contaminant DNA
+  # How would I find the coverage of those contigs...?
+
+  system("cat $amosPrefix.fasta $unmappedPrefix/contigs.fa > $combinedAssembly");
+  die "ERROR: Could not concatenate $amosPrefix.fasta and $unmappedPrefix/contigs.fa" if $?;
+
+  return $combinedAssembly;
 }
 
 # modified from Torsten Seemann <torsten@seemann.id.au>
