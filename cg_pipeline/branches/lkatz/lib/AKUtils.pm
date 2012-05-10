@@ -1088,8 +1088,9 @@ sub gettRNAscanSEPredictions($;$) {
 	$tse_opts .= " -B" if $$settings{trnascan_modeltype} eq 'bacteria';
 	$tse_opts .= " -A" if $$settings{trnascan_modeltype} eq 'archaea';
 
-	system("$$settings{tse_exec} $tse_opts -o '$$settings{tempdir}/trnascan-se.out' '$input_file_full'");
-	die("Error running $$settings{tse_exec}: $!") if $?;
+        my $command="$$settings{tse_exec} $tse_opts -o '$$settings{tempdir}/trnascan-se.out' '$input_file_full'";
+	system($command);
+	die("Error running $$settings{tse_exec} with command $command: $!") if $?;
 
 	return loadtRNAscanSEPredictions("$$settings{tempdir}/trnascan-se.out", \%seqname_working2orig);
 }
