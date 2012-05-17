@@ -47,8 +47,9 @@ sub main() {
   my @cmd_options = qw(outfile=s blastfile=s db=s parametersForBlast=s min_aa_coverage=i min_aa_identity=i min_aa_similarity=i tempdir=s keep);
   GetOptions($settings, @cmd_options) or die;
 
+  #$$settings{blast_db}=$$settings{db} if($$settings{db});
   $$settings{blast_db}||=File::Spec->rel2abs($$settings{db});
-  die("ERROR: cannot find a blast database at $$settings{blast_db}. Set it using blast_db in the config file (cgpipelinerc) or by using the -d setting for this script. If being run from run_annotation, it is possible that the database has not been set for this specific task. $0\n".usage()) if(!-e $$settings{blast_db});
+  die("ERROR: cannot find a blast database at $$settings{blast_db}. Set it using blast_db in the config file (cgpipelinerc) or by using the -d setting for this script. If being run from run_annotation, it is possible that the database has not been set for this specific task.\n".usage()) if(!-e "$$settings{blast_db}.pin");
 
   die("ERROR: ARGV!=1: ".join(" ",@ARGV)."\n".usage()) if @ARGV != 1;
   $$settings{min_aa_coverage}||=1;
@@ -75,13 +76,13 @@ sub main() {
       my($Q,$settings)=@_;
       my $outfile="$$settings{tempdir}/$0.$$.blast_out";
       sleep 1 while(!-e $outfile);
-      while($Q->pending==0){
+      while($Q->pending==0){ # the queue will have one item in it to signal for it to be done
         sleep 1;
-        my $numFinished=`grep -c "Query=" '$outfile'`; chomp($numFinished);
-        logmsg "Finished with $numFinished queries";
-        for(1..5){
+        my $numFinished=`grep -c "Query=" '$outfile'`+0;
+        logmsg "Finished with $numFinished blast queries";
+        for(1..25){
           last if($Q->pending>0);
-          sleep 10;
+          sleep 2;
         }
       }
       logmsg "Finished with BLAST";
