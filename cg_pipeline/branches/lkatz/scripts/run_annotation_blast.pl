@@ -72,21 +72,7 @@ sub main() {
   if(!$$settings{blastfile}){
     # Progress report for the blast that will happen
     my $progressQ=Thread::Queue->new;
-    my $progressThread=threads->new(sub{
-      my($Q,$settings)=@_;
-      my $outfile="$$settings{tempdir}/$0.$$.blast_out";
-      sleep 1 while(!-e $outfile);
-      while($Q->pending==0){ # the queue will have one item in it to signal for it to be done
-        sleep 1;
-        my $numFinished=`grep -c "Query=" '$outfile'`+0;
-        logmsg "Finished with $numFinished blast queries";
-        for(1..25){
-          last if($Q->pending>0);
-          sleep 2;
-        }
-      }
-      logmsg "Finished with BLAST";
-    },$progressQ,$settings);
+    my $progressThread=threads->new(\&blastProgressUpdater,$progressQ,$settings);
 
     $ENV{BLASTDB} = (fileparse($$settings{blast_db}))[1];
     my $command="legacy_blast.pl blastall -p blastp -a $numcpus -o $$settings{tempdir}/$0.$$.blast_out -d $$settings{blast_db} -i $$settings{query_mfa} $$settings{parametersForBlast} -m 0";
@@ -251,6 +237,25 @@ sub printWorker{
   warn("Warning: could not remove temp file $tmpOutfile because $!") if $?;
 
   return 1;
+}
+
+sub blastProgressUpdater{
+  my($Q,$settings)=@_;
+  my $outfile="$$settings{tempdir}/$0.$$.blast_out";
+  # wait until a file is there before updating
+  sleep 5 while(!-e $outfile);
+  sleep 5;
+  while($Q->pending==0){ # the queue will have one item in it to signal for it to be done
+    my $numFinished=`grep -c "Query=" '$outfile'`+0;
+    logmsg "Finished with $numFinished queries";
+    # give it a chance to break out of this subroutine if it has been given the term signal
+    # Hold for 1 minute before updating
+    for(1..30){
+      last if($Q->pending>0);
+      sleep 2;
+    }
+  }
+  logmsg "Finished with BLAST";
 }
 
 
