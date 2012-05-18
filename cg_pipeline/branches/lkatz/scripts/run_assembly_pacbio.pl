@@ -42,7 +42,7 @@ sub main() {
 
 	die(usage()) if @ARGV < 1;
 
-	my @cmd_options = qw(keep tempdir=s outfile=s illuminaReads=s@ sffReads=@ ccsReads=s@);
+	my @cmd_options = qw(keep tempdir=s outfile=s illuminaReads=s@ sffReads=s@ ccsReads=s@);
 	GetOptions($settings, @cmd_options) or die;
 
 	# STEP 1 receive input files
@@ -65,18 +65,18 @@ sub main() {
 		die("Input or reference file $file not found") unless -f $file;
 	}
   
-  # STEP 2 modify input files
+  # STEP 2 modify input files and create FRG files
   my $inputDir=modifyInputFiles(\@input_files,$settings);
 
   # STEP 3 create FRG file for long reads
   padLongReads($inputDir,$settings);
 
   # STEP 4 assembly
-  caAssembly($inputDir,$settings);
+  my $caAssembly=caAssembly($inputDir,$settings);
 
   # STEP 5 AHA?
 
-  $final_seqs = AKUtils::readMfa("$combined_filename");
+  my $final_seqs = AKUtils::readMfa($caAssembly);
 
 	foreach my $seq (keys %$final_seqs) {
 		delete $$final_seqs{$seq} if length($$final_seqs{$seq}) < $$settings{assembly_min_contig_length};
@@ -93,18 +93,47 @@ sub modifyInputFiles{
   my $newInputDir="$$settings{tempdir}/input";
   mkdir($newInputDir);
   # STEP 2a standardize pacbio fastq files
-  my $longreadsInputDir="$newInputDir/longreads";
-  mkdir("$longreadsInputDir");
-  for(my $i=0;$i<@$input_files;$i++){
-    my $file=$$input_files[$i];
-    my $filename=basename($file);
-    my $standardizedFile="$longreadsInputDir/$filename";
-    command("run_assembly_convertMultiFastqToStandard.pl -i '$file' -o '$standardizedFile' 2>&1") if(!-e $standardizedFile);
-    $$input_files[$i]=$standardizedFile;
+  logmsg "Reading and cleaning long reads";
+  my $longreadsFile="$newInputDir/longreads.fastq";
+  if(!-e $longreadsFile){
+    my $longreadsInputDir="$newInputDir/longreads";
+    mkdir("$longreadsInputDir");
+    for(my $i=0;$i<@$input_files;$i++){
+      my $file=$$input_files[$i];
+      my $filename=basename($file);
+      my $standardizedFile="$longreadsInputDir/$filename";
+      command("run_assembly_convertMultiFastqToStandard.pl -i '$file' -o '$standardizedFile' -m 50 2>&1") if(!-e $standardizedFile);
+      $$input_files[$i]=$standardizedFile;
+    }
+
+    # instead of just concatenating all reads, see if they can be filtered a little first
+    my $command="run_assembly_trimClean.pl --min_avg_quality 6 --notrim --min_length 50 ";
+    $command.="-i '$_' " for(@$input_files);
+    $command.="-o $longreadsFile 2>&1 ";
+    command($command);
+    # Remove these temporary intermediate files.  They are huge and not necessary, even in a temp directory
+    command("rm -rf $longreadsInputDir");
   }
+
   # STEP 2b remove CCS reads from long reads (ie remove duplication)
+  logmsg "Reading and cleaning CCS pacbio reads";
+  my $ccsreadsFile="$newInputDir/ccsreads.fastq";
+  if(!-e $ccsreadsFile){
+    my $command="run_assembly_trimClean.pl --min_avg_quality 20 --notrim --min_length 50 ";
+    $command.="-i '$_' " for(@{$$settings{ccsReads}});
+    $command.="-o $ccsreadsFile 2>&1";
+    command($command);
+  }
+
+
   # STEP 2c create FRG files for each input file except pacbio long reads
+  
+  # CCS reads
+  # illumina
   # TODO use logic to find if a file is a shuffled paired end file
+  # 454
+
+  die "Done with step 2c. I will not continue";
 
   return $newInputDir;
 }

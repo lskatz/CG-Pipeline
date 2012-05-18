@@ -38,6 +38,7 @@ local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\n
 sub logmsg {print STDOUT "$0: ".(caller(1))[3].": @_\n";}
 
 my %threadStatus:shared;
+my @IOextensions=qw(.fastq .fastq.gz .fq);
 
 exit(main());
 
@@ -54,20 +55,14 @@ sub main() {
     min_length=>62,# twice kmer length sounds good
   };
   
-  GetOptions($settings,qw(poly=i infile=s outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter notrim debug));
+  GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter notrim debug));
   
   my $infile=$$settings{infile} or die "Error: need an infile\n".usage($settings);
   my $outfile=$$settings{outfile} or die "Error: need an outfile\n".usage($settings);
   
-  my @IOextensions=qw(.fastq .fastq.gz);
   my $outfileDir;
   ($$settings{outBasename},$outfileDir,$$settings{outSuffix}) = fileparse($outfile,@IOextensions);
-  (undef,undef,$$settings{inSuffix}) = fileparse($infile,@IOextensions);
   my $singletonOutfile="$outfileDir/$$settings{outBasename}.singletons$$settings{outSuffix}";
-  
-  my $readsToCheck=5;
-  my $warnings=checkFirstXReads($infile,$readsToCheck,$settings);
-  warn "WARNING: There were $warnings warnings out of $readsToCheck" if($warnings);
 
   my $printQueue=Thread::Queue->new;
   my $singletonPrintQueue=Thread::Queue->new;
@@ -95,9 +90,8 @@ sub qualityTrimFastqPoly($;$){
   my($fastq,$printQueue,$singletonQueue,$settings)=@_;
   my $verbose=!$$settings{quieter};
   my $reportEvery=1000000;
-    $reportEvery=100000 if($$settings{debug});
+    $reportEvery=1000 if($$settings{debug});
 
-  logmsg "Trimming and cleaning a file $fastq with poly=$$settings{poly}";
   # initialize the threads
   my (@t,$t);
   my $Q=Thread::Queue->new;
@@ -105,44 +99,54 @@ sub qualityTrimFastqPoly($;$){
     $t[$t++]=threads->create(\&trimCleanPolyWorker,$Q,$printQueue,$singletonQueue,$settings);
   }
 
-  # load all reads into the threads for analysis
   my $entryCount=0;
-  my $linesPerGroup=4*$$settings{poly};
-  my $moreLinesPerGroup=$linesPerGroup-1; # calculate that outside the loop to save CPU
-  if($$settings{inSuffix}=~/\.fastq$/){
-    open(FQ,'<',$fastq) or die "Could not open $fastq for reading: $!";
-  }
-  elsif($$settings{inSuffix}=~/\.fastq\.gz/){
-    open(FQ,"gunzip -c $fastq | ") or die "Could not open $fastq for reading: $!";
-  }
-  else{
-    die "Could not determine the file type for reading based on your extension $$settings{inSuffix}";
-  }
-  while(1){
-    # get a whole array of entries before enqueuing because it is a slow step
-    my @entry;
-    for(1..ceil($reportEvery/10)){
-      $entryCount++;
-      my $entry;
-      $entry .=<FQ> for(1..$linesPerGroup); # e.g. 8 lines total for paired end entry
-      last if(!$entry);
-      push(@entry,$entry);
+  my @fastq=@$fastq;
+  for my $fastq (@fastq){
+    logmsg "Trimming and cleaning a file $fastq with poly=$$settings{poly}";
+  
+    # check the file before continuing
+    my $readsToCheck=5;
+    my $warnings=checkFirstXReads($fastq,$readsToCheck,$settings);
+    warn "WARNING: There were $warnings warnings out of $readsToCheck" if($warnings);
+
+    # load all reads into the threads for analysis
+    my $linesPerGroup=4*$$settings{poly};
+    my $moreLinesPerGroup=$linesPerGroup-1; # calculate that outside the loop to save CPU
+    if($$settings{inSuffix}=~/\.fastq$/){
+      open(FQ,'<',$fastq) or die "Could not open $fastq for reading: $!";
     }
-    last if(!@entry);
-      
-    $Q->enqueue(@entry);
-    if($entryCount%$reportEvery==0 && $verbose){
-      my $numGood=sum(values(%threadStatus));
-      my $freq_isClean=$numGood/($entryCount-$Q->pending);
-      $freq_isClean=nearest(0.01,$freq_isClean);
-      logmsg "Finished loading $entryCount pairs or singletons ($freq_isClean pass rate).";
-      if($$settings{debug}){
-        logmsg "DEBUG";
-        last;
+    elsif($$settings{inSuffix}=~/\.fastq\.gz/){
+      open(FQ,"gunzip -c $fastq | ") or die "Could not open $fastq for reading: $!";
+    }
+    else{
+      die "Could not determine the file type for reading based on your extension $$settings{inSuffix}";
+    }
+    while(1){
+      # get a whole array of entries before enqueuing because it is a slow step
+      my @entry;
+      for(1..ceil($reportEvery/10)){
+        $entryCount++;
+        my $entry;
+        $entry .=<FQ> for(1..$linesPerGroup); # e.g. 8 lines total for paired end entry
+        last if(!$entry);
+        push(@entry,$entry);
+      }
+      last if(!@entry);
+        
+      $Q->enqueue(@entry);
+      if($entryCount%$reportEvery==0 && $verbose){
+        my $numGood=sum(values(%threadStatus));
+        my $freq_isClean=$numGood/($entryCount-$Q->pending);
+        $freq_isClean=nearest(0.01,$freq_isClean);
+        logmsg "Finished loading $entryCount pairs or singletons ($freq_isClean pass rate).";
+        if($$settings{debug}){
+          logmsg "DEBUG";
+          last;
+        }
       }
     }
+    close FQ;
   }
-  close FQ;
   logmsg "Done loading: $entryCount entries loaded.";
   
   # stop the threads
@@ -295,6 +299,9 @@ sub queue_status_updater{
 # TODO use this subroutine to find out if this is a paired-end file and set the default poly=X
 sub checkFirstXReads{
   my($infile,$numReads,$settings)=@_;
+
+  (undef,undef,$$settings{inSuffix}) = fileparse($infile,@IOextensions);
+
   my $warning=0;
   die "Could not find the input file $infile" if(!-e $infile);
   if(-s $infile < 1000){
