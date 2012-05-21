@@ -287,7 +287,7 @@ sub queue_status_updater{
     $freq_isClean=nearest(0.01,$freq_isClean);
     logmsg "$p entries left to process. $freq_isClean pass rate.";
     # shave off some time if the queue empties while we are sleeping
-    for(1..5){
+    for(1..30){
       sleep 2;
       last STATUS_UPDATE if(!$Q->pending);
     }
