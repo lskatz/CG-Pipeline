@@ -10,6 +10,7 @@ my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 
 my $settings = {
 	appname => 'cgpipeline',
+  defaultGenomeSize=>5000000,
 };
 my $stats;
 
@@ -42,8 +43,13 @@ sub main() {
 
 	die(usage()) if @ARGV < 1;
 
-	my @cmd_options = qw(keep tempdir=s outfile=s illuminaReads=s@ sffReads=s@ ccsReads=s@);
+	my @cmd_options = qw(keep tempdir=s outfile=s illuminaReads=s@ sffReads=s@ ccsReads=s@ expectedGenomeSize=i);
 	GetOptions($settings, @cmd_options) or die;
+  $$settings{numcpus}||=AKUtils::getNumCPUs();
+  if(!$$settings{expectedGenomeSize}){
+    warn("WARNING: expected genome size was not given. I will set it to $$settings{defaultGenomeSize}");
+    $$settings{expectedGenomeSize}=$$settings{defaultGenomeSize};
+  }
 
 	# STEP 1 receive input files
   $$settings{outfile} ||= "$0.out.fasta";
@@ -89,6 +95,10 @@ sub main() {
 
 	return 0;
 }
+
+########################
+## Subs for major stages
+########################
 
 sub highQualityReadsToFrg{
   my($input_files,$settings)=@_;
@@ -140,61 +150,78 @@ sub highQualityReadsToFrg{
   for my $fastq (@{$$settings{illuminaReads}}){
     my $frg=illuminaToFrg($fastq,$newInputDir,$settings);
   }
-  # 454
-    # sffToCA
+  # 454: sffToCA
   warn("WARNING: sffToCA has not been implemented");
-
-  die "Done with step 2c. I will not continue";
 
   return $newInputDir;
 }
 
 sub padLongReads{
   my($inputDir,$settings)=@_;
+  my $longreadsFile="$inputDir/longreads.fastq";
+  my $libraryname="$inputDir/longreads";
+  my $frg="$libraryname.frg";
+
   # STEP 3a create or locate appropriate spec files
+  my $specFile=pacbiotocaSpecFile($inputDir,$settings);
+
   # STEP 3b pad the long reads with pacBioToCA
+  command("pacBioToCA -length 500 -partitions 200 -l $libraryname  -t $$settings{numcpus} -s $specFile -fastq $longreadsFile $inputDir/*.frg  2>&1 ") if(!-e $frg || -s $frg<100);
+
+  return $frg;
 }
 sub caAssembly{
   my($inputDir,$settings);
+  my $finalAssembly="$$settings{tempdir}/final.fasta";
   # STEP 4a create or locate appropriate spec files
+  my $specFile=runcaSpecFile($inputDir,$settings);
   # STEP 4b runCA
+  my $caPrefix="$$settings{tempdir}/asm";
+  command("runCA -p $caPrefix -d $caPrefix -s $specFile $inputDir/*.frg 2>&1");
+  # STEP 4c find the best assembly
+  logmsg "Finished with the assembly! Finding the best option now.";
+  command("run_assembly_chooseBest.pl `find $caPrefix/ -name '*.fasta'` -o '$finalAssembly' -e $$settings{expectedGenomeSize}");
+
+  return $finalAssembly;
 }
 
-##########
-## Utility
-##########
+####################
+## Nitty-gritty subs
+####################
 
 sub ccsToFrg{
   my($fastq,$newInputDir,$settings)=@_;
   my $libraryname=basename($fastq,qw(.fastq .fq));
   my $frgFile="$newInputDir/$libraryname.frg";
-  if(-e $frgFile){
+  if(-e $frgFile && -s $frgFile>100){
     warn "WARNING: frg file $frgFile already exists. I will not overwrite it";
     return $frgFile;
   }
 
   # fastq to fasta/qual
-  logmsg "Creating a fasta/qual for $fastq";
   my ($fasta,$qual)=("$newInputDir/$libraryname.fna","$newInputDir/$libraryname.qual");
-  open(IN,$fastq) or die "Could not open $fastq: $!";
-  open(FASTA,">$fasta") or die "Could not open $fasta for writing: $!";
-  open(QUAL,">$qual") or die "Could not open $qual for writing: $!";
-  while(my $id=<IN>){
-    $id=~s/^@//;
-    my $sequence=<IN>;
-    <IN>; # discard the + line
-    my $qual=<IN>;
-    chomp($qual);
-    my @qual=split(//,$qual);
-    @qual=map(ord($_)-33,@qual);
-    $qual=join(" ",@qual);
-    
-    print FASTA ">$id$sequence";
-    print QUAL  ">$id$qual\n";
+  logmsg "Creating a fasta/qual for $fastq";
+  if(!-e $fasta || -s $fasta < 100){
+    open(IN,$fastq) or die "Could not open $fastq: $!";
+    open(FASTA,">$fasta") or die "Could not open $fasta for writing: $!";
+    open(QUAL,">$qual") or die "Could not open $qual for writing: $!";
+    while(my $id=<IN>){
+      $id=~s/^@//;
+      my $sequence=<IN>;
+      <IN>; # discard the + line
+      my $qual=<IN>;
+      chomp($qual);
+      my @qual=split(//,$qual);
+      @qual=map(ord($_)-33,@qual);
+      $qual=join(" ",@qual);
+      
+      print FASTA ">$id$sequence";
+      print QUAL  ">$id$qual\n";
+    }
+    close QUAL;
+    close FASTA;
+    close IN;
   }
-  close QUAL;
-  close FASTA;
-  close IN;
 
   # fasta/qual to frg
   my $command="convert-fasta-to-v2.pl -pacbio -s '$fasta' -q '$qual' -l $libraryname > '$frgFile'";
@@ -212,11 +239,18 @@ sub illuminaToFrg{
   }
 
   my $is_PE=is_illuminaPE($fastq,$settings);
+
+  # quality trim the illumina file
+  my $cleanedFastq="$newInputDir/$libraryname.cleaned.fastq";
+  my $pParam=$is_PE+1;
+  command("run_assembly_trimClean.pl -i '$fastq' -o '$cleanedFastq' --min_quality 35 --min_avg_quality 30 --min_length 62 -p $pParam --bases_to_trim 20") if(!-e $cleanedFastq || -s $cleanedFastq <100);
+
+  # make the frg
   my $command="fastqToCA -insertsize 300 20 -libraryname $libraryname -technology illumina -innie ";
   if($is_PE){
-    $command.="-mates '$fastq' ";
+    $command.="-mates '$cleanedFastq' ";
   } else {
-    $command.="-reads '$fastq' ";
+    $command.="-reads '$cleanedFastq' ";
   }
   $command.="1> $frgFile";
   command($command);
@@ -248,6 +282,28 @@ sub is_illuminaPE{
   return 1;
 }
 
+sub pacbiotocaSpecFile{
+  my ($inputDir,$settings)=@_;
+  my $specFile="$inputDir/pacbiotoca.spec";
+  
+  open(SPEC,">$specFile") or die "Could not open $specFile for writing: $!";
+  print SPEC "";
+  close SPEC;
+  return $specFile;
+}
+sub runcaSpecFile{
+  my ($inputDir,$settings)=@_;
+  my $specFile="$inputDir/runca.spec";
+  open(SPEC,">$specFile") or die "Could not open $specFile for writing: $!";
+  print SPEC "";
+  close SPEC;
+  return $specFile;
+}
+
+##########
+## Utility
+##########
+
 # run a command
 sub command{
   my ($command)=@_;
@@ -265,6 +321,10 @@ sub usage{
     Designate each new file with a new -c, -i, or -s flag.
     Multiple files from any platform are allowed.
     Paired end illumina data can be inputted using shuffled sequences in a singled file.
+    -c is circular consensus sequence; -i is illumina; -s is SFF from 454 or iontorrent
+  -e expected genome size in bp
+    This option is used for finding the best assembly after runCA finishes.
+    Default: $$settings{defaultGenomeSize}
   -t tempdir
     Designate a different temporary directory
   -k
