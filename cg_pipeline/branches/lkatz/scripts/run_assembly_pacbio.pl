@@ -212,7 +212,6 @@ sub illuminaToFrg{
   }
 
   my $is_PE=is_illuminaPE($fastq,$settings);
-  #fastqToCA -insertsize 400 20 -libraryname 2010C-3508 -technology illumina -innie -mates
   my $command="fastqToCA -insertsize 300 20 -libraryname $libraryname -technology illumina -innie ";
   if($is_PE){
     $command.="-mates '$fastq' ";
@@ -227,7 +226,8 @@ sub illuminaToFrg{
 # return whether or not the input file is a shuffled PE fastq
 sub is_illuminaPE{
   my($fastq,$settings)=@_;
-  my $numEntriesToCheck=$$settings{pefastq_numEntriesToCheck}||10;
+  # 20 reads is probably enough to make sure that it's shuffled
+  my $numEntriesToCheck=$$settings{pefastq_numEntriesToCheck}||20;
   my $numEntries=0;
   open(IN,$fastq) or die "Could not open $fastq for reading: $!";
   while(my $read1Id=<IN>){
