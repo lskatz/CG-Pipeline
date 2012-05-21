@@ -51,7 +51,8 @@ sub main() {
     $$settings{expectedGenomeSize}=$$settings{defaultGenomeSize};
   }
 
-	# STEP 1 receive input files
+  my $stepNo=0;
+  logmsg "STEP ".++$stepNo." receive input files";
   $$settings{outfile} ||= "$0.out.fasta";
 	$$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
 	open(FH, '>', $$settings{outfile}) or die("Error writing to output file $$settings{outfile}");
@@ -73,16 +74,20 @@ sub main() {
 		die("Input file $file not found") unless -f $file;
 	}
   
-  # STEP 2 modify input files and create FRG files
+  logmsg "STEP ".++$stepNo." modify input files and create FRG files";
   my $inputDir=highQualityReadsToFrg(\@input_files,$settings);
 
-  # STEP 3 create FRG file for long reads
+  logmsg "STEP ".++$stepNo." create FRG file for long reads";
   padLongReads($inputDir,$settings);
 
-  # STEP 4 assembly
+  logmsg "STEP ".++$stepNo." assembly";
   my $caAssembly=caAssembly($inputDir,$settings);
 
-  # STEP 5 AHA?
+  logmsg "STEP ".++$stepNo." AHA";
+  my $ahaAssembly=ahaScaffolding($inputDir,$caAssembly,$settings);
+
+  logmsg "STEP ".++$stepNo." dealing with unmapped reads";
+  # STEP 6 unmapped short reads => de novo? or try to map again?
 
   my $final_seqs = AKUtils::readMfa($caAssembly);
 
@@ -151,7 +156,9 @@ sub highQualityReadsToFrg{
     my $frg=illuminaToFrg($fastq,$newInputDir,$settings);
   }
   # 454: sffToCA
-  warn("WARNING: sffToCA has not been implemented");
+  for my $sff (@{$$settings{sff}}){
+    die("ERROR: sffToCA has not been implemented and so I cannot use the input file $sff");
+  }
 
   return $newInputDir;
 }
@@ -159,20 +166,20 @@ sub highQualityReadsToFrg{
 sub padLongReads{
   my($inputDir,$settings)=@_;
   my $longreadsFile="$inputDir/longreads.fastq";
-  my $libraryname="$inputDir/longreads";
-  my $frg="$libraryname.frg";
+  my $libraryname="longreads";
+  my $frg="$inputDir/$libraryname.frg";
 
   # STEP 3a create or locate appropriate spec files
   my $specFile=pacbiotocaSpecFile($inputDir,$settings);
 
   # STEP 3b pad the long reads with pacBioToCA
-  command("pacBioToCA -length 500 -partitions 200 -l $libraryname  -t $$settings{numcpus} -s $specFile -fastq $longreadsFile $inputDir/*.frg  2>&1 ") if(!-e $frg || -s $frg<100);
+  command("cd $inputDir; pacBioToCA -length 500 -partitions 200 -l $libraryname  -t $$settings{numcpus} -s $specFile -fastq $longreadsFile $inputDir/*.frg  2>&1 ") if(!-e $frg || -s $frg<100);
 
   return $frg;
 }
 sub caAssembly{
   my($inputDir,$settings);
-  my $finalAssembly="$$settings{tempdir}/final.fasta";
+  my $finalAssembly="$$settings{tempdir}/assembly.contigs.fasta";
   # STEP 4a create or locate appropriate spec files
   my $specFile=runcaSpecFile($inputDir,$settings);
   # STEP 4b runCA
@@ -232,7 +239,7 @@ sub ccsToFrg{
 sub illuminaToFrg{
   my($fastq,$newInputDir,$settings)=@_;
   my $libraryname=basename($fastq,qw(.fastq .fq));
-  my $frgFile="$newInputDir/$libraryname.illumina.frg";
+  my $frgFile="$newInputDir/$libraryname.frg";
   if(-e $frgFile){
     warn "WARNING: frg file $frgFile already exists. I will not overwrite it";
     return $frgFile;
@@ -285,6 +292,7 @@ sub is_illuminaPE{
 sub pacbiotocaSpecFile{
   my ($inputDir,$settings)=@_;
   my $specFile="$inputDir/pacbiotoca.spec";
+  return $specFile if(-e $specFile);
   
   open(SPEC,">$specFile") or die "Could not open $specFile for writing: $!";
   print SPEC "";
@@ -294,6 +302,8 @@ sub pacbiotocaSpecFile{
 sub runcaSpecFile{
   my ($inputDir,$settings)=@_;
   my $specFile="$inputDir/runca.spec";
+  return $specFile if(-e $specFile);
+
   open(SPEC,">$specFile") or die "Could not open $specFile for writing: $!";
   print SPEC "";
   close SPEC;
@@ -319,9 +329,10 @@ sub usage{
   -c, -i, -s
     You can use multiple files. 
     Designate each new file with a new -c, -i, or -s flag.
+    -c is circular consensus sequence; -i is illumina; -s is SFF from 454 or iontorrent
     Multiple files from any platform are allowed.
     Paired end illumina data can be inputted using shuffled sequences in a singled file.
-    -c is circular consensus sequence; -i is illumina; -s is SFF from 454 or iontorrent
+
   -e expected genome size in bp
     This option is used for finding the best assembly after runCA finishes.
     Default: $$settings{defaultGenomeSize}
