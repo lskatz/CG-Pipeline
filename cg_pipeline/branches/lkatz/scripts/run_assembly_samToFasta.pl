@@ -35,13 +35,12 @@ sub main{
   GetOptions($settings,qw(assembly=s sam=s bam=s force tempdir=s keep outfile=s qual));
 
   # check for required parameters
-  for my $param (qw(assembly sam)){
+  for my $param (qw(assembly)){
     $$settings{$param} || die "Error: need $param parameter\n".usage();
   }
   # make some filenames absolute
-  for my $param (qw(assembly sam)){
+  for my $param (qw(assembly sam bam)){
     $$settings{$param} = File::Spec->rel2abs($$settings{$param});
-    die "Error: $$settings{$param} doesn't exist!" unless(-e $$settings{$param});
   }
 
   # set up the directory structure
@@ -184,7 +183,8 @@ sub bamToFastq{
     command("vcfutils.pl vcf2fq < $out2 > $fastqOutNonstandard");
   } else {logmsg "$fastqOutNonstandard exists; skipping";}
   if(!-e $fastqOut || -s $fastqOut < 1){
-    standardizeFastq($fastqOutNonstandard,$fastqOutStandard,$settings);
+    #standardizeFastq($fastqOutNonstandard,$fastqOutStandard,$settings);
+    command("run_assembly_convertMultiFastqToStandard.pl -i $fastqOutNonstandard -o $fastqOutStandard");
     splitFastqByGaps($fastqOutStandard,$fastqOut,$settings);
   }
   return $fastqOut;
@@ -192,6 +192,7 @@ sub bamToFastq{
 
 # change a fastq with tons of newlines to the standard 4-line entries
 sub standardizeFastq{
+  die "deprecated";
   my($fIn,$fOut,$settings)=@_;
   logmsg "Standardizing $fIn to $fOut";
   open(IN,$fIn) or die "Could not open $fIn because $!";
@@ -229,6 +230,7 @@ sub standardizeFastq{
 
 sub fastqToFastaQual{
   my($fastq,$settings)=@_;
+
   open(FASTQ,"<",$fastq) or die "Could not open $fastq because $!";
   my $i=0;
   my $seqId="";
@@ -268,6 +270,7 @@ sub splitFastqByGaps{
   my($fastq,$fastqOut,$settings)=@_;
   $$settings{min_gap_size}||=6;
   my $contigBreak="N"x$$settings{min_gap_size};
+  my $qualContigBreak=chr(33)x$$settings{min_gap_size};
 
   logmsg "Splitting contigs by gaps of size $$settings{min_gap_size} from $fastq to $fastqOut";
   open(IN,$fastq) or die "Could not open $fastq because $!";
@@ -279,6 +282,9 @@ sub splitFastqByGaps{
     chomp($seqId,$sequence,$qual);
     
     # look for large enough gaps to split contigs
+    # A hack: start the sequence with the gap string
+    $sequence="$contigBreak$sequence";
+    $qual="$qualContigBreak$qual";
     my $seqLength=length($sequence);
     my (@gapStart,@gapStop);
     my $contigNum=0;
