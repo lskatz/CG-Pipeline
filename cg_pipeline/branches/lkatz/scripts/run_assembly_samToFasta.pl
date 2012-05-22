@@ -32,7 +32,7 @@ sub main{
   my $settings=AKUtils::loadConfig($settings);
   die usage() if(@ARGV<1);
 
-  GetOptions($settings,qw(assembly=s sam=s force tempdir=s keep outfile=s qual));
+  GetOptions($settings,qw(assembly=s sam=s bam=s force tempdir=s keep outfile=s qual));
 
   # check for required parameters
   for my $param (qw(assembly sam)){
@@ -50,13 +50,15 @@ sub main{
   $$settings{outfile}||="$0.merged.fasta";
   logmsg "Temporary directory is $$settings{tempdir}";
 
-  my $sam=$$settings{sam};
-
-  # start the computation
-
   setupBuildDirectory($$settings{tempdir},$settings);
 
-  my ($bam,$bamIndex)=createBam($sam,$settings);
+  my $bam=$$settings{bam};
+  my $bamIndex="$bam.bai";
+  my $sam=$$settings{sam};
+  if($sam && !$bam){
+    ($bam,$bamIndex)=createBam($sam,$settings);
+  }
+
   my $fastqOut=bamToFastq($bam,$bamIndex,$settings);
   my ($newAssembly,$newAssemblyQual)=fastqToFastaQual($fastqOut,$settings);
 
@@ -354,9 +356,10 @@ sub command{
 }
 
 sub usage{
-  "This script converts a sam to an assembly.
+  "This script converts a sam or bam to an assembly.
 Usage: perl $0 -a reference.fasta -s assembly.sam -o assembly.fasta -q
   -s sam file
+  -b bam file (don't use -b and -s in the same command)
   -a assembly reference file file
   -o (optional) final output file
     default: $0.merged.fasta
