@@ -84,7 +84,7 @@ sub main() {
   my $caAssembly=caAssembly($inputDir,$settings);
 
   logmsg "STEP ".++$stepNo." AHA";
-  my $ahaAssembly=ahaScaffolding($inputDir,$caAssembly,$settings);
+  #my $ahaAssembly=ahaScaffolding($inputDir,$caAssembly,$settings);
 
   logmsg "STEP ".++$stepNo." dealing with unmapped reads";
   # STEP 6 unmapped short reads => de novo? or try to map again?
@@ -173,18 +173,27 @@ sub padLongReads{
   my $specFile=pacbiotocaSpecFile($inputDir,$settings);
 
   # STEP 3b pad the long reads with pacBioToCA
-  command("cd $inputDir; pacBioToCA -length 500 -partitions 200 -l $libraryname  -t $$settings{numcpus} -s $specFile -fastq $longreadsFile $inputDir/*.frg  2>&1 ") if(!-e $frg || -s $frg<100);
+  #local $$settings{numcpus}=1; logmsg "DEBUGGING with numcpus=1";
+  warn("NOTE: if there is any problem with pacBioToCA, please look at their development page at http://sourceforge.net/apps/mediawiki/wgs-assembler/index.php?title=PacBioToCA#Known_Issues\n");
+  command("cd $inputDir; pacBioToCA -length 500 -partitions 200 -l $libraryname  -t $$settings{numcpus} -noclean -s $specFile -fastq $longreadsFile $inputDir/*.frg  2>&1 ") if(!-e $frg || -s $frg<10000);
 
   return $frg;
 }
 sub caAssembly{
-  my($inputDir,$settings);
+  my($inputDir,$settings)=@_;
   my $finalAssembly="$$settings{tempdir}/assembly.contigs.fasta";
   # STEP 4a create or locate appropriate spec files
   my $specFile=runcaSpecFile($inputDir,$settings);
   # STEP 4b runCA
   my $caPrefix="$$settings{tempdir}/asm";
-  command("runCA -p $caPrefix -d $caPrefix -s $specFile $inputDir/*.frg 2>&1");
+  my $asmPrefix="asm";
+
+  # runCA is choking on abs paths
+  $caPrefix=File::Spec->abs2rel($caPrefix);
+  $specFile=File::Spec->abs2rel($specFile);
+  $inputDir=File::Spec->abs2rel($inputDir);
+
+  command("runCA -p $asmPrefix -d $caPrefix -s $specFile $inputDir/*.frg 2>&1");
   # STEP 4c find the best assembly
   logmsg "Finished with the assembly! Finding the best option now.";
   command("run_assembly_chooseBest.pl `find $caPrefix/ -name '*.fasta'` -o '$finalAssembly' -e $$settings{expectedGenomeSize}");
@@ -201,7 +210,7 @@ sub ccsToFrg{
   my $libraryname=basename($fastq,qw(.fastq .fq));
   my $frgFile="$newInputDir/$libraryname.frg";
   if(-e $frgFile && -s $frgFile>100){
-    warn "WARNING: frg file $frgFile already exists. I will not overwrite it";
+    warn "NOTE: frg file $frgFile already exists. I will not overwrite it";
     return $frgFile;
   }
 
@@ -241,7 +250,7 @@ sub illuminaToFrg{
   my $libraryname=basename($fastq,qw(.fastq .fq));
   my $frgFile="$newInputDir/$libraryname.frg";
   if(-e $frgFile){
-    warn "WARNING: frg file $frgFile already exists. I will not overwrite it";
+    warn "NOTE: frg file $frgFile already exists. I will not overwrite it";
     return $frgFile;
   }
 
@@ -319,7 +328,7 @@ sub command{
   my ($command)=@_;
   logmsg "RUNNING COMMAND\n  $command";
   system($command);
-  die "ERROR running command $command\n  With error code $?. Reason: $!" if($?);
+  die "ERROR running command $command\n  With error code $?. Reason: $!\n  in subroutine ".(caller(1))[3] if($?);
   return 1;
 }
 
