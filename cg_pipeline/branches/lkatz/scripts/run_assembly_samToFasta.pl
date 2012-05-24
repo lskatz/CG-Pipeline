@@ -24,7 +24,9 @@ use Getopt::Long;
 use File::Basename;
 use File::Temp qw/ tempfile tempdir /;
 use File::Spec;
+use POSIX qw/floor ceil/;
 
+local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
 exit(main());
 
 sub main{
@@ -40,6 +42,7 @@ sub main{
   }
   # make some filenames absolute
   for my $param (qw(assembly sam bam)){
+    next if(!$$settings{$param});
     $$settings{$param} = File::Spec->rel2abs($$settings{$param});
   }
 
@@ -51,11 +54,17 @@ sub main{
 
   setupBuildDirectory($$settings{tempdir},$settings);
 
+  my $bamIndex;
   my $bam=$$settings{bam};
-  my $bamIndex="$bam.bai";
+    $bamIndex="$bam.bai" if($bam);
   my $sam=$$settings{sam};
   if($sam && !$bam){
     ($bam,$bamIndex)=createBam($sam,$settings);
+  } else {
+    my $samindexed="$$settings{assembly}.fai";
+    my $alnSortedPrefix="$$settings{tempdir}/aln.sorted";
+    my $alnSorted="$alnSortedPrefix.bam"; # bam file
+    ($bam,$bamIndex)=indexBam($bam,$alnSortedPrefix,$alnSorted,$settings);
   }
 
   my $fastqOut=bamToFastq($bam,$bamIndex,$settings);
@@ -85,13 +94,16 @@ sub setupBuildDirectory{
   warn "Warning: temporary directory already exists. -f to force a fresh start\n  $$settings{tempdir}" if(-e $$settings{tempdir});
   mkdir($$settings{tempdir});
 
-  my $newSamPath="$tempdir/".basename($$settings{sam});
+  if($$settings{sam}){
+    my $newSamPath="$tempdir/".basename($$settings{sam});
+    system("ln -s $$settings{sam} $newSamPath");
+    $$settings{sam}=$newSamPath;
+  }
+
   my $newAssemblyPath="$tempdir/".basename($$settings{assembly});
 
-  system("ln -s $$settings{sam} $newSamPath");
   system("ln -s $$settings{assembly} $newAssemblyPath");
 
-  $$settings{sam}=$newSamPath;
   $$settings{assembly}=$newAssemblyPath;
 
   return 1;
@@ -158,29 +170,41 @@ sub createBam{
 
   # index the bam
   if(!-e $bamIndex){
-    command("samtools sort $bamaln $alnSortedPrefix");
-    command("samtools index $alnSorted");
+    indexBam($bamaln,$alnSortedPrefix,$alnSorted,$settings);
   } else {logmsg "Skipping indexing the bam indexing because $alnSorted already exists";}
 
+  return ($alnSorted,$bamIndex);
+}
+
+sub indexBam{
+  my ($bamaln,$alnSortedPrefix,$alnSorted,$settings)=@_;
+  my $bamIndex="$alnSorted.bai";
+  return ($alnSorted,$bamIndex) if(-e $alnSorted && -e $bamIndex && -s $bamIndex > 100);
+  command("samtools sort $bamaln $alnSortedPrefix");
+  command("samtools index $alnSorted");
   return ($alnSorted,$bamIndex);
 }
 
 sub bamToFastq{
   my($bam,$bamIndex,$settings)=@_;
 
-  my $out1="$$settings{tempdir}/mpileupout1.tmp";
-  my $out2="$$settings{tempdir}/bcftoolsout2.tmp";
+  my $out1="$$settings{tempdir}/mpileupout1.log";
+  my $out2="$$settings{tempdir}/bcftoolsout2.vcf";
+  my $variantsFile="$$settings{tempdir}/variants.vcf";
   my $fastqOutNonstandard="$$settings{tempdir}/outNonstandard.fastq";
   my $fastqOutStandard="$$settings{tempdir}/outStandard.fastq";
   my $fastqOut="$$settings{tempdir}/out.fastq";
 
+  my($minDepth,$maxDepth)=covDepth($bam);
+
   logmsg "Converting BAM to fastq";
-  if(!-e $fastqOutNonstandard){
+  if(!-e $fastqOutNonstandard || -s $fastqOutNonstandard < 10){
     #indexAssembly($$settings{assembly},$settings);
     # separate out these commands for debugging purposes
     command("samtools mpileup -uf $$settings{assembly} $bam > $out1");
     command("bcftools view -cg - < $out1 > $out2");
-    command("vcfutils.pl vcf2fq < $out2 > $fastqOutNonstandard");
+    command("vcfutils.pl vcf2fq -d $minDepth -D $maxDepth < $out2 > $fastqOutNonstandard");
+    command("vcfutils.pl varFilter -d $minDepth -D $maxDepth < $out2 > $variantsFile");
   } else {logmsg "$fastqOutNonstandard exists; skipping";}
   if(!-e $fastqOut || -s $fastqOut < 1){
     #standardizeFastq($fastqOutNonstandard,$fastqOutStandard,$settings);
@@ -190,51 +214,12 @@ sub bamToFastq{
   return $fastqOut;
 }
 
-# change a fastq with tons of newlines to the standard 4-line entries
-sub standardizeFastq{
-  die "deprecated";
-  my($fIn,$fOut,$settings)=@_;
-  logmsg "Standardizing $fIn to $fOut";
-  open(IN,$fIn) or die "Could not open $fIn because $!";
-  open(OUT,">",$fOut) or die "Could not write to $fOut because $!";
-  my $id;
-  while(my $line=<IN>){
-    if($line=~/^@/){
-      my($entrySequence,$entryQuality)=("","");
-      $id=$line;
-      chomp($id);
-      # grab the sequence
-      my $linesOfSequence=0;
-      while(<IN>){
-        last if(/^\+\s*$/);
-        $entrySequence.=$_;
-        $linesOfSequence++;
-      }
-      # grab the quality
-      my $linesOfQuality=0;
-      while(<IN>){
-        $entryQuality.=$_;
-        last if(++$linesOfQuality == $linesOfSequence);
-      }
-
-      #cleanup of the entry
-      $entrySequence=~s/\n//g;
-      $entryQuality=~s/\n//g;
-      print OUT "$id\n$entrySequence\n+\n$entryQuality\n";
-    }
-  }
-  close OUT;
-  close IN;
-  return $fOut;
-}
-
 sub fastqToFastaQual{
   my($fastq,$settings)=@_;
 
   open(FASTQ,"<",$fastq) or die "Could not open $fastq because $!";
   my $i=0;
   my $seqId="";
-  my $sequence="NNN";
   my($fasta,$qual);
   while(my $fastqEntry=<FASTQ>){
     $fastqEntry.=<FASTQ> for(1..3);
@@ -329,6 +314,23 @@ sub splitFastqByGaps{
 ### utility methods
 #########################
 
+sub covDepth{
+  my($bam,$settings)=@_;
+  my $minimumAllowedCov=$$settings{minimumAllowedCov} || 5;
+  my $depth=`samtools depth '$bam'`; die if $?;
+  my @rawdata=split(/\n/,$depth);
+  my @data=map( (split(/\s+/,$_))[2],@rawdata); # 3rd column
+  my $avgCov=average(\@data);
+  my $stdevCov=stdev(\@data);
+
+  my $max=ceil($avgCov+2*$stdevCov);
+  my $min=$avgCov-2*$stdevCov;
+  $min=$minimumAllowedCov if($min<$minimumAllowedCov);
+  $min=floor($min);
+
+  return($min,$max);
+}
+
 sub readPileupLine{
   my($line,$settings)=@_;
   my %x=(type=>'snp');
@@ -353,6 +355,33 @@ sub readPileupLine{
   
   return %x;
 }
+
+sub average{
+        my($data) = @_;
+        if (not @$data) {
+                die("Empty array\n");
+        }
+        my $total = 0;
+        foreach (@$data) {
+                $total += $_;
+        }
+        my $average = $total / @$data;
+        return $average;
+}
+sub stdev{
+        my($data) = @_;
+        if(@$data == 1){
+                return 0;
+        }
+        my $average = &average($data);
+        my $sqtotal = 0;
+        foreach(@$data) {
+                $sqtotal += ($average-$_) ** 2;
+        }
+        my $std = ($sqtotal / (@$data-1)) ** 0.5;
+        return $std;
+}
+
 sub command{
   my ($command)=@_;
   logmsg "RUNNING COMMAND\n  $command";
@@ -379,5 +408,4 @@ Usage: perl $0 -a reference.fasta -s assembly.sam -o assembly.fasta -q
   ";
 }
 
-local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
 
