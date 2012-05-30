@@ -110,7 +110,7 @@ sub highQualityReadsToFrg{
   my $newInputDir="$$settings{tempdir}/input";
   mkdir($newInputDir);
   # STEP 2a standardize pacbio fastq files
-  logmsg "Reading and cleaning long reads";
+  logmsg "Reading, standardizing, and cleaning long reads";
   my $longreadsFile="$newInputDir/longreads.fastq";
   if(!-e $longreadsFile){
     my $longreadsInputDir="$newInputDir/longreads";
@@ -133,13 +133,15 @@ sub highQualityReadsToFrg{
   }
 
   # STEP 2b remove CCS reads from long reads (ie remove duplication)
-  logmsg "Reading and cleaning CCS pacbio reads";
-  my $ccsreadsFile="$newInputDir/ccsreads.fastq";
-  if(!-e $ccsreadsFile){
-    my $command="run_assembly_trimClean.pl --min_avg_quality 20 --notrim --min_length 50 ";
-    $command.="-i '$_' " for(@{$$settings{ccsReads}});
-    $command.="-o $ccsreadsFile 2>&1";
-    command($command);
+  if(@{$$settings{ccsReads}}){
+    logmsg "Reading and cleaning CCS pacbio reads";
+    my $ccsreadsFile="$newInputDir/ccsreads.fastq";
+    if(!-e $ccsreadsFile){
+      my $command="run_assembly_trimClean.pl --min_avg_quality 20 --notrim --min_length 50 ";
+      $command.="-i '$_' " for(@{$$settings{ccsReads}});
+      $command.="-o $ccsreadsFile 2>&1";
+      command($command);
+    }
   }
 
 
