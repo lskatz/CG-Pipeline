@@ -2371,7 +2371,6 @@ sub is_fastqPE($;$){
   # it is paired end if it validates with either system
   my $is_pairedEnd=_is_fastqPECasava18($fastq,$settings) || _is_fastqPECasava17($fastq,$settings);
   
-  die "paired: $is_pairedEnd";
   return $is_pairedEnd;
 }
 
