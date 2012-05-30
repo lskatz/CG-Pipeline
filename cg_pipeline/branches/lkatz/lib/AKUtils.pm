@@ -33,7 +33,7 @@ use Thread::Queue;
 
 use Exporter;
 our @ISA = "Exporter";
-our @methods = qw(argmax compactArray concatFiles curSub filesDiffer flatten fullPathToExec nanmean safeGlob indexMfa getSeq getSubSeq printSeqsToFile lruQueue readPSL getFreeMem totalSize isFasta readMfa allIndexes startStopPos nanmin nanmax numEltsAtDepth alnum permuteRanges loadCSV intersectLength gaussian logmsg mktempdir loadConfig);
+our @methods = qw(argmax compactArray concatFiles curSub filesDiffer flatten fullPathToExec nanmean safeGlob indexMfa getSeq getSubSeq printSeqsToFile lruQueue readPSL getFreeMem totalSize isFasta readMfa allIndexes startStopPos nanmin nanmax numEltsAtDepth alnum permuteRanges loadCSV intersectLength gaussian logmsg mktempdir loadConfig is_fastqPE);
 our %EXPORT_TAGS = (all => [@methods]);
 Exporter::export_ok_tags('all');
 
@@ -1812,7 +1812,7 @@ sub blastSeqs($$$) {
 	my $blast_outfile = "$$settings{tempdir}/blastseqs.out";
 	printSeqsToFile($seqs, $blast_infile);
 
-	my $blast_qs = "blastall -p $mode -d $$settings{blast_db} -m 8 -a $$settings{num_cpus} -i $blast_infile -o $blast_outfile ";
+	my $blast_qs = "legacy_blast.pl blastall -p $mode -d $$settings{blast_db} -m 8 -a $$settings{num_cpus} -i $blast_infile -o $blast_outfile ";
 	$blast_qs .= $$settings{blast_xopts};
 
 	logmsg "Running $blast_qs" unless $$settings{quiet};
@@ -1845,6 +1845,7 @@ sub loadBLAST8($) {
 
 sub getBLASTGenePredictions($$) {
 	my ($input_seqs, $settings) = @_;
+  $$settings{num_cpus}||=AKUtils::getNumCPUs();
 	my $orfs = AKUtils::findOrfs2($input_seqs, {orftype=>'start2stop', need_seq=>1, need_aa_seq=>1});
 
   my $numOrfs;
@@ -1858,6 +1859,7 @@ sub getBLASTGenePredictions($$) {
   logmsg "$numOrfs ORFs found.";
   my $reportEvery=int($numOrfs/100); # send out 100 total updates
   $reportEvery=10 if($reportEvery<10);
+  $$settings{blast_reportEvery}=$reportEvery;
   my $orfCount=0;
 
 	$$settings{min_default_db_coverage} ||= 0.7;
@@ -1873,24 +1875,66 @@ sub getBLASTGenePredictions($$) {
 	$$settings{quiet} = 1;
 
 	my %blast_preds;
+  my %blast_settings=%$settings;
+  #$blast_settings{num_cpus}=1;
+
+  my $blastQueue=Thread::Queue->new;
+  my @thread;
+  push(@thread, threads->new(\&blastGenePredictionWorker,$orfs,$blastQueue,\%blast_settings)) for(1..$$settings{num_cpus});
 
 	logmsg "Using database $$settings{blast_db}";
 	logmsg "Running BLAST gene prediction on ".keys(%$input_seqs)." sequences...";
 	foreach my $seqname (sort keys %$orfs) {
-    #logmsg "Checking contig $seqname. ".scalar(keys(%$orfs))." ORFs to check.";
-		foreach my $frame (sort keys %{$$orfs{$seqname}}) {
-			foreach my $stop (sort keys %{$$orfs{$seqname}->{$frame}}) {
-				my $orf = $$orfs{$seqname}->{$frame}->{$stop};
+    $blastQueue->enqueue($seqname);
+    #$|++;print ".";$|--;
+	}
+
+  $blastQueue->enqueue(undef) for(@thread);
+  while($blastQueue->pending>$$settings{num_cpus} && !$thread[0]->is_joinable){
+    logmsg "Waiting on ".$blastQueue->pending." contigs.";
+    sleep 60;
+  }
+  for(@thread){
+    logmsg "Joining TID".$_->tid."...";
+    my $tmp=$_->join;
+    %blast_preds=(%blast_preds,%$tmp);
+  }
+
+  logmsg "Finished BLASTing $orfCount BLASTs";
+	return \%blast_preds;
+}
+
+# TODO how can I have multiple blast queries happening against
+# the same blast database? I need to get past this issue.
+sub blastGenePredictionWorker{
+  my($orfs,$queue,$settings)=@_;
+	#$$settings{tempdir} = AKUtils::mktempdir($settings);
+  my %settings=(%$settings,(tempdir=>AKUtils::mktempdir));
+
+  my %orfs=%$orfs; # copy the orfs over to not share them
+  my $orfCount=0;
+  my $reportEvery=$settings{blast_reportEvery};
+  my %blast_preds=();
+  my $tid="TID".threads->tid;
+  logmsg "$tid: using tempdir $settings{tempdir}";
+  while(defined(my $seqname=$queue->dequeue)){
+    #logmsg "Checking contig $seqname. ".scalar(keys(%orfs))." ORFs to check.";
+    my %contigOrfs=%{$orfs{$seqname}};
+		foreach my $frame (sort keys %contigOrfs) {
+      my $frameHash=$contigOrfs{$frame};
+			foreach my $stop (sort keys %$frameHash) {
+        my $orf=$$frameHash{$stop};
 				my $aa_seq = $orf->{aa_seq};
-				my $blast_hits = AKUtils::blastSeqs({seq1 => $aa_seq}, 'blastp', $settings);
+        #print "$tid $stop $aa_seq $orf\n";
+				my $blast_hits = AKUtils::blastSeqs({seq1 => $aa_seq}, 'blastp', \%settings);
 				my ($best_hit, $best_hit_coverage);
 				# TODO: treat truncated orfs separately, relax metrics for them and remove irrelevant sanity checks for them
 				# TODO: this selects best hit by coverage, but for purposes of homolog finding max e-value may be better
 				foreach my $hit (@$blast_hits) {
 					next unless $$hit{start1};
 					$$hit{coverage} = $$hit{al_len} / length($aa_seq); # query coverage (not db coverage)
-					next if $$hit{coverage} < $$settings{min_default_db_coverage};
-					next if $$hit{percent_id} < $$settings{min_default_db_identity} * 100;
+					next if $$hit{coverage} < $settings{min_default_db_coverage};
+					next if $$hit{percent_id} < $settings{min_default_db_identity} * 100;
 					$best_hit_coverage = $$hit{coverage} if $best_hit_coverage < $$hit{coverage} or not defined $best_hit_coverage;
 					$best_hit = $hit if $best_hit_coverage == $$hit{coverage};
 				}
@@ -1922,15 +1966,15 @@ sub getBLASTGenePredictions($$) {
 					die("bad orf $$orf{lo}..$$orf{hi}") if ($$orf{hi}-$$orf{lo}+1) % 3 != 0;
 					die("bad pred $$pred{lo} .. $$pred{hi} (orf $$orf{lo}..$$orf{hi}, in-hit coords $$best_hit{start1}..$$best_hit{end1})") if ($$pred{hi} - $$pred{lo} + 1 ) % 3 != 0;
 				}
-        
         if(++$orfCount % $reportEvery==0){
-          logmsg "Finished with $orfCount blasts";
+          my $percent_done=int($orfCount*AKUtils::getNumCPUs()/$reportEvery);
+          logmsg "$tid: Finished with $orfCount blasts ($percent_done% done)";
         }
 			}
 		}
-	}
-  logmsg "Finished BLASTing $orfCount BLASTs";
-	return \%blast_preds;
+    #logmsg "DEBUGGING by returning everything from this seqname ($tid)";return \%blast_preds;
+  }
+  return \%blast_preds;
 }
 
 # Run commands using the PBS scheduler.
@@ -2308,6 +2352,101 @@ sub snapToStart($$$$$;$) {
 
 	return $best_start;
 }
+
+#################
+## LK subs
+#################
+# See whether a fastq file is paired end or not. It must be in a velvet-style shuffled format.
+# In other words, the left and right sides of a pair follow each other in the file.
+# params: fastq file and settings
+# fastq file can be gzip'd
+# settings:  checkFirst is an integer to check the first X deflines
+sub is_fastqPE($;$){
+  my($fastq,$settings)=@_;
+
+  # if checkFirst is undef or 0, this will cause it to check at least the first 20 entries.
+  $$settings{checkFirst}||=20;
+  $$settings{checkFirst}=20 if($$settings{checkFirst}<2);
+
+  # it is paired end if it validates with either system
+  my $is_pairedEnd=_is_fastqPECasava18($fastq,$settings) || _is_fastqPECasava17($fastq,$settings);
+  
+  die "paired: $is_pairedEnd";
+  return $is_pairedEnd;
+}
+
+sub _is_fastqPECasava18{
+  my($fastq,$settings)=@_;
+  my $numEntriesToCheck=$$settings{checkFirst}||20;
+  
+  my $numEntries=0;
+  my $fp;
+  if($fastq=~/\.gz$/){
+    open($fp,"gunzip -c '$fastq' |") or die "Could not open $fastq for reading: $!";
+  }else{
+    open($fp,"<",$fastq) or die "Could not open $fastq for reading: $!";
+  }
+  while(<$fp>){
+    chomp;
+    s/^@//;
+    my($instrument,$runid,$flowcellid,$lane,$tile,$x,$yandmember,$is_failedRead,$controlBits,$indexSequence)=split(/:/,$_);
+    my $discard;
+    $discard=<$fp> for(1..3); # discard the sequence and quality of the read for these purposes
+    my($y,$member)=split(/\s+/,$yandmember);
+    
+    # if all information is the same, except the member (1 to 2), then it is still paired until this point.
+    my $secondId=<$fp>;
+    chomp $secondId;
+    $secondId=~s/^@//;
+    my($inst2,$runid2,$fcid2,$lane2,$tile2,$x2,$yandmember2,$is_failedRead2,$controlBits2,$indexSequence2)=split(/:/,$secondId);
+    $discard=<$fp> for(1..3); # discard the sequence and quality of the read for these purposes
+    my($y2,$member2)=split(/\s+/,$yandmember2);
+
+    if($instrument ne $inst2 || $runid ne $runid2 || $flowcellid ne $fcid2 || $tile ne $tile2 || $member!=1 || $member2!=2){
+      #logmsg "Failed!\n$instrument,$runid,$flowcellid,$lane,$tile,$x,$yandmember,$is_failedRead,$controlBits,$indexSequence\n$inst2,$runid2,$fcid2,$lane2,$tile2,$x2,$yandmember2,$is_failedRead2,$controlBits2,$indexSequence2\n";
+      close $fp;
+      return 0;
+    }
+
+    $numEntries+=2;
+    last if($numEntries>$numEntriesToCheck);
+  }
+
+  close $fp;
+
+  return 1;
+}
+
+sub _is_fastqPECasava17{
+  my($fastq,$settings)=@_;
+  # 20 reads is probably enough to make sure that it's shuffled (1/2^20 chance I'm wrong)
+  my $numEntriesToCheck=$$settings{checkFirst}||20;
+  my $numEntries=0;
+  my $fp;
+  if($fastq=~/\.gz$/){
+    open($fp,"gunzip -c '$fastq' |") or die "Could not open $fastq for reading: $!";
+  }else{
+    open($fp,"<",$fastq) or die "Could not open $fastq for reading: $!";
+  }
+  while(my $read1Id=<$fp>){
+    my $discard;
+    $discard=<$fp> for(1..3);
+    my $read2Id=<$fp>;
+    $discard=<$fp> for(1..3);
+
+    if($read1Id!~/\/1$/ || $read2Id!~/\/2$/){
+      close $fp;
+      return 0;
+    }
+
+    $numEntries+=2;
+    last if($numEntries>=$numEntriesToCheck);
+  }
+  close $fp;
+
+  return 1;
+}
+
 
 __END__
 
