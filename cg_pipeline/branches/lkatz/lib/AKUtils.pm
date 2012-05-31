@@ -29,6 +29,7 @@ use Data::Dumper; # useful for printing deep structures, e.g. to print %hash: pr
 # TODO: seqwiz -> AKGenomeUtils (how to maintain processivity?)
 
 use threads;
+use threads::shared;
 use Thread::Queue;
 
 use Exporter;
@@ -1812,11 +1813,13 @@ sub blastSeqs($$$) {
 	my $blast_outfile = "$$settings{tempdir}/blastseqs.out";
 	printSeqsToFile($seqs, $blast_infile);
 
-	my $blast_qs = "legacy_blast.pl blastall -p $mode -d $$settings{blast_db} -m 8 -a $$settings{num_cpus} -i $blast_infile -o $blast_outfile ";
+	my $blast_qs = "legacy_blast.pl blastall -p $mode -d $$settings{blast_db} -m 8 -a $$settings{num_cpus} -i $blast_infile ";
+  $blast_qs .= "-o $blast_outfile ";
 	$blast_qs .= $$settings{blast_xopts};
 
 	logmsg "Running $blast_qs" unless $$settings{quiet};
-	system($blast_qs);
+	#system($blast_qs);
+  my $blsOut=`$blast_qs`;
 	if ($?) {
 		my $er_str = "Error running \"$blast_qs\": $!";
 		$$settings{ignore_blast_errors} ? warn($er_str) : die($er_str);
@@ -1848,85 +1851,190 @@ sub getBLASTGenePredictions($$) {
   $$settings{num_cpus}||=AKUtils::getNumCPUs();
 	my $orfs = AKUtils::findOrfs2($input_seqs, {orftype=>'start2stop', need_seq=>1, need_aa_seq=>1});
 
+  my $blastIn="$$settings{tempdir}/blastin.faa";
+  my $blast_outfile="$$settings{tempdir}/blastout.bls";
+  open(BLSIN,">$blastIn") or die "Could not write to $blastIn:$!";
   my $numOrfs;
   foreach my $seqname(keys %$orfs){
     foreach my $frame(keys %{$$orfs{$seqname}}){
       foreach my $stop (keys %{$$orfs{$seqname}->{$frame}}){
+        my %seq=%{$$orfs{$seqname}{$frame}{$stop}};
+        # Due to the format, if there is any newlines in $seq{seq}, this format is screwed
+        print BLSIN ">".join("_",$seqname,$seq{start},$seq{stop},$seq{strand},$seq{ustop},$seq{length},$seq{lo},$seq{hi},$seq{seq},$seq{aa_seq})."\n$seq{aa_seq}\n";
         $numOrfs++;
       }
+      logmsg "Skipping rest of orfs. DEBUGGING";last;
     }
+    logmsg "Skipping rest of orfs. DEBUGGING";last;
   }
+  close BLSIN;
   logmsg "$numOrfs ORFs found.";
-  my $reportEvery=int($numOrfs/100); # send out 100 total updates
-  $reportEvery=10 if($reportEvery<10);
-  $$settings{blast_reportEvery}=$reportEvery;
-  my $orfCount=0;
 
+  # TODO limit number of results with -p -v ?
+  # run with -m 9 to delimit each result with # lines
+  logmsg "Running blast";
 	$$settings{min_default_db_coverage} ||= 0.7;
 	$$settings{min_reference_coverage} ||= 0.85;
 	$$settings{ignore_blast_errors} ||= 1;
 	$$settings{min_default_db_evalue} ||= 1e-8;
 	$$settings{min_default_db_identity} ||= 0;
-	my ($total, $good_cov, $rc_best); my %cov_hist;
-
 	$$settings{blast_db} ||= $$settings{prediction_blast_db};
-#	$$settings{blast_db} ||= $$settings{default_blast_db};
 	$$settings{blast_xopts} = " -e $$settings{min_default_db_evalue}";
 	$$settings{quiet} = 1;
+  system("echo DEBUGGING; #legacy_blast.pl blastall -p blastp -d $$settings{blast_db} -m 9 -a $$settings{num_cpus} -i $blastIn -o $blast_outfile $$settings{blast_xopts} 2>&1") if(!-e $blast_outfile);
+  die if $?;
+  #die "TODO test this blast and then also parse the output. An easy way would be to limit the number of in-entries to something like 50.";
+
+  my $reportEvery=int($numOrfs/100); # send out 100 total updates
+  $reportEvery=10 if($reportEvery<10); 
+  $$settings{blast_reportEvery}=$reportEvery;
+  my $orfCount=0;
+
+	my ($total, $good_cov, $rc_best); my %cov_hist;
 
 	my %blast_preds;
-  my %blast_settings=%$settings;
-  #$blast_settings{num_cpus}=1;
-
   my $blastQueue=Thread::Queue->new;
   my @thread;
-  push(@thread, threads->new(\&blastGenePredictionWorker,$orfs,$blastQueue,\%blast_settings)) for(1..$$settings{num_cpus});
-
-	logmsg "Using database $$settings{blast_db}";
-	logmsg "Running BLAST gene prediction on ".keys(%$input_seqs)." sequences...";
-	foreach my $seqname (sort keys %$orfs) {
-    $blastQueue->enqueue($seqname);
-    #$|++;print ".";$|--;
-	}
-
+  my %tmpOrfs=%$orfs; # pass a new copy of orfs to each thread to avoid sharing/freezing issues
+  push(@thread, threads->new(\&blastGenePredictionWorker,\%tmpOrfs,$blastQueue,$settings)) for(1..$$settings{num_cpus});
+  open(BLSOUT,"<",$blast_outfile) or die "Could not open blast outfile $blast_outfile: $!";
+  while(<BLSOUT>){
+    next if(/^#/);
+    my @blsResult=();
+    while(<BLSOUT>){
+      if(/^#/){
+        $blastQueue->enqueue(\@blsResult) if(@blsResult);
+        last;
+      }
+      push(@blsResult,$_);
+    }
+  }
+  close BLSOUT;
+  
   $blastQueue->enqueue(undef) for(@thread);
   while($blastQueue->pending>$$settings{num_cpus} && !$thread[0]->is_joinable){
     logmsg "Waiting on ".$blastQueue->pending." contigs.";
     sleep 60;
   }
+  my @blast_hits=();
   for(@thread){
     logmsg "Joining TID".$_->tid."...";
     my $tmp=$_->join;
-    %blast_preds=(%blast_preds,%$tmp);
+    die Dumper $tmp;
+    push(@blast_hits,@$tmp);
   }
+  die Dumper \@blast_hits;
+
+  # @blast_hits have the best hit for every orf.
+  # $blast_hits[$i]{name1} contains all the metadata.
+  foreach my $best_hit (@blast_hits) {
+    my($seqname,$start,$stop,$strand,$ustop,$length,$lo,$hi,$nt_seq,$aa_seq)=split(/_/,$$best_hit{name1});
+    my ($lo_in_seq, $hi_in_seq);
+    if ($strand eq '+') {
+      $lo_in_seq = $start + ($$best_hit{start1}-1)*3;
+      $hi_in_seq = $start + ($$best_hit{end1}-1)*3;
+    } else {
+      $lo_in_seq = $start - ($$best_hit{end1}-1)*3;
+      $hi_in_seq = $start - ($$best_hit{start1}-1)*3;
+    }
+    # TODO: scan up to upstream Met from hit location, but not if truncated
+    my $pred = { seqname => $seqname,
+      lo => ($strand eq '+' ? $lo_in_seq : $stop), # snap to stop
+      hi => ($strand eq '+' ? $stop : $hi_in_seq), # snap to stop
+      strand => $strand,
+      blast_score => $$best_hit{bitscore},
+      type => 'CDS',
+      start => ($strand eq '+' ? $lo_in_seq : $hi_in_seq),
+      stop => $stop,
+      predictor => 'BLAST', };
+    die Dumper [$pred,$best_hit]; 
+    my $orf;
+
+      push(@{$blast_preds{$seqname}}, $pred);
+#					print "\@stop: $stop\n"; foreach my $k(sort keys %{$blast_preds{$seqname}->{$$orf{strand}}->{$stop}}) { print "\t$k\t$blast_preds{$seqname}->{$$orf{strand}}->{$stop}->{$k}\n"; }
+					die("bad orf $$orf{lo}..$$orf{hi}") if ($$orf{hi}-$$orf{lo}+1) % 3 != 0;
+					die("bad pred $$pred{lo} .. $$pred{hi} (orf $$orf{lo}..$$orf{hi}, in-hit coords $$best_hit{start1}..$$best_hit{end1})") if ($$pred{hi} - $$pred{lo} + 1 ) % 3 != 0;
+  }
+
 
   logmsg "Finished BLASTing $orfCount BLASTs";
 	return \%blast_preds;
 }
 
+sub blastGenePredictionWorker{
+  my($orfs,$Q,$settings)=@_;
+  my @best_hits=();
+  while(defined(my $blsResultArr=$Q->dequeue)){
+    next if(!@$blsResultArr);
+    chomp(@$blsResultArr);
+    my @query_hits=();
+    for my $result(@$blsResultArr){
+      my %hit;
+      my @result=split(/\s+/,$result);
+      for (qw(name1 name2 percent_id al_len mismatch_bp gap_openings start1 end1 start2 end2 Evalue bitscore)) {
+        $hit{$_} = shift @result;
+
+      }
+      my($seqname,$start,$stop,$strand,$ustop,$length,$lo,$hi,$nt_seq,$aa_seq)=split(/_/,$hit{name1});
+      # query coverage (not db coverage)
+      $hit{coverage} = $hit{al_len} / $length; 
+      next if $hit{coverage} < $$settings{min_default_db_coverage};
+      next if $hit{percent_id} < $$settings{min_default_db_identity} * 100;
+      push(@query_hits,\%hit);
+    }
+    next if(!@query_hits);
+    # find the best hit to add onto @best_hits
+    @query_hits=sort{$$a{Evalue} <=> $$b{Evalue}} @query_hits;
+    push(@best_hits,$query_hits[0]);
+  }
+  return \@best_hits;
+}
+
 # TODO how can I have multiple blast queries happening against
 # the same blast database? I need to get past this issue.
-sub blastGenePredictionWorker{
+sub blastGenePredictionWorker_old{
   my($orfs,$queue,$settings)=@_;
-	#$$settings{tempdir} = AKUtils::mktempdir($settings);
-  my %settings=(%$settings,(tempdir=>AKUtils::mktempdir));
 
-  my %orfs=%$orfs; # copy the orfs over to not share them
+  my $tid="TID".threads->tid;
+  my %settings=(%$settings,(tempdir=>AKUtils::mktempdir));
+  undef($settings);
+  logmsg "$tid: using tempdir $settings{tempdir}";
+
+  $settings{num_cpus}=1;
+
+  # Make things faster by copying a dedicated database for this thread, 
+  # but only if it is less than 500 Mb. 
+  if( (-s "$settings{blast_db}.psq") < (500*10**6)){
+    logmsg "Copying blast file for $tid";
+    my $tmpBlast="$settings{tempdir}/".fileparse($settings{blast_db});
+    system("cp -v '$settings{blast_db}'.p* $settings{tempdir}/");
+    #system("ln -sv '$settings{blast_db}'.p* $settings{tempdir}/");
+    $settings{blast_db}=$tmpBlast;
+  }else {logmsg "$settings{blast_db}.psq size is ".(-s "$settings{blast_db}.psq").". Not copying";}
+
   my $orfCount=0;
   my $reportEvery=$settings{blast_reportEvery};
   my %blast_preds=();
-  my $tid="TID".threads->tid;
-  logmsg "$tid: using tempdir $settings{tempdir}";
   while(defined(my $seqname=$queue->dequeue)){
     #logmsg "Checking contig $seqname. ".scalar(keys(%orfs))." ORFs to check.";
-    my %contigOrfs=%{$orfs{$seqname}};
-		foreach my $frame (sort keys %contigOrfs) {
+    my %contigOrfs=%{$$orfs{$seqname}};
+    my @contigOrfKeys= sort keys %contigOrfs;
+		foreach my $frame (@contigOrfKeys) {
       my $frameHash=$contigOrfs{$frame};
-			foreach my $stop (sort keys %$frameHash) {
+      my @frameHashKeys=sort keys %$frameHash;
+			foreach my $stop (@frameHashKeys) {
         my $orf=$$frameHash{$stop};
 				my $aa_seq = $orf->{aa_seq};
-        #print "$tid $stop $aa_seq $orf\n";
+        #print "START BLAST $tid $stop $aa_seq $orf\n";
+        #print "START BLAST $tid \n";
+        #my $blsinfile="$$settings{tempdir}/blast$tid.in";
+        #open(IN,">$blsinfile");print IN ">seq$tid\n$aa_seq\n";close IN;
+        #my $blast_qs = "blastall -i $blsinfile -p blastp -d $settings{blast_db} -m 8 -a $settings{num_cpus} ";
+        #$blast_qs .= $$settings{blast_xopts};
+        #`$blast_qs`;
+        print "START BLAST $tid \n";
 				my $blast_hits = AKUtils::blastSeqs({seq1 => $aa_seq}, 'blastp', \%settings);
+        print "STOP  BLAST $tid \n";
 				my ($best_hit, $best_hit_coverage);
 				# TODO: treat truncated orfs separately, relax metrics for them and remove irrelevant sanity checks for them
 				# TODO: this selects best hit by coverage, but for purposes of homolog finding max e-value may be better
