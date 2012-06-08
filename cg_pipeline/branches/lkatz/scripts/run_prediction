@@ -71,6 +71,7 @@ sub main() {
 	}
 
 	$$settings{tempdir} ||= tempdir($$settings{tempdir} or File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
+  $$settings{tempdir} = File::Spec->rel2abs($$settings{tempdir});
 	logmsg "Temporary directory is $$settings{tempdir}";
 
 	my ($input_seqs, $ref_seqs) = loadInputs(\@input_files, \@ref_files);
@@ -120,12 +121,12 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 #goto RNA;
 	# Obtain ab initio predictions
 	my $genemark_predictions;
-	my $glimmer_predictions = AKUtils::getGlimmer3Predictions($input_seqs, $settings);
 	if ($$settings{prediction_use_genemark}) {
 		$genemark_predictions = AKUtils::getGenemarkPredictions($input_seqs, $settings);
 	}
-
+	my $glimmer_predictions = AKUtils::getGlimmer3Predictions($input_seqs, $settings);
 	my $blast_predictions = AKUtils::getBLASTGenePredictions($input_seqs, $settings);
+
   # TODO an extra blast here for IS elements and merge with $blast_predictions before making unified cds prediction. Database should be short terminal inverted repeat sequences
   # blastall -p blastn -W 7 -e 1e-5 -F F
 
