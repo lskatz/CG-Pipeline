@@ -1088,6 +1088,7 @@ sub gettRNAscanSEPredictions($;$) {
 	$tse_opts .= " -O" if $$settings{trnascan_modeltype} eq 'organellar';
 	$tse_opts .= " -B" if $$settings{trnascan_modeltype} eq 'bacteria';
 	$tse_opts .= " -A" if $$settings{trnascan_modeltype} eq 'archaea';
+  $tse_opts .= " -Q"; # overwright, to make it more automatic
 
         my $command="$$settings{tse_exec} $tse_opts -o '$$settings{tempdir}/trnascan-se.out' '$input_file_full'";
 	system($command);
