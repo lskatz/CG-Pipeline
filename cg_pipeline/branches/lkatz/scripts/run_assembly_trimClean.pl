@@ -45,7 +45,7 @@ exit(main());
 sub main() {
   my $settings={
     numcpus=>getNumCPUs(),
-    poly=>1, # number of reads per group (1=SE, 2=paired end)
+    #poly=>1, # number of reads per group (1=SE, 2=paired end)
     qualOffset=>33,
     # trimming
     min_quality=>35,
@@ -102,7 +102,11 @@ sub qualityTrimFastqPoly($;$){
   my $entryCount=0;
   my @fastq=@$fastq;
   for my $fastq (@fastq){
-    logmsg "Trimming and cleaning a file $fastq with poly=$$settings{poly}";
+
+    my $poly=$$settings{poly}||checkPolyness($fastq,$settings);
+    $$settings{poly}=$poly; # this line is a band-aid until I pass the parameter directly the workers later
+  
+    logmsg "Trimming and cleaning a file $fastq with poly=$poly";
   
     # check the file before continuing
     my $readsToCheck=5;
@@ -110,7 +114,7 @@ sub qualityTrimFastqPoly($;$){
     warn "WARNING: There were $warnings warnings out of $readsToCheck" if($warnings);
 
     # load all reads into the threads for analysis
-    my $linesPerGroup=4*$$settings{poly};
+    my $linesPerGroup=4*$poly;
     my $moreLinesPerGroup=$linesPerGroup-1; # calculate that outside the loop to save CPU
     if($$settings{inSuffix}=~/\.fastq$/){
       open(FQ,'<',$fastq) or die "Could not open $fastq for reading: $!";
@@ -162,6 +166,7 @@ sub qualityTrimFastqPoly($;$){
 
 sub trimCleanPolyWorker{
   my($Q,$printQueue,$singletonQueue,$settings)=@_;
+  my $poly=$$settings{poly};
   my $notrim=$$settings{notrim};
   my $tid="TID".threads->tid;
   my(@entryOut);
@@ -170,7 +175,7 @@ sub trimCleanPolyWorker{
     my $is_singleton=0; # this entry is not a set of singletons until proven otherwise
     my @read;
     my @entryLine=split(/\s*\n\s*/,$entry);
-    for my $i (0..$$settings{poly}-1){
+    for my $i (0..$poly-1){
       my $t={};
       ($$t{id},$$t{seq},undef,$$t{qual})=splice(@entryLine,0,4);
       trimRead($t,$settings) if(!$notrim);
@@ -185,7 +190,7 @@ sub trimCleanPolyWorker{
         next if(!read_is_good($read,$settings));
         my $singletonOut="$$read{id}\n$$read{seq}\n+\n$$read{qual}\n";
         $singletonQueue->enqueue($singletonOut);
-        $threadStatus{$tid}+=1/$$settings{poly};
+        $threadStatus{$tid}+=1/$poly;
       }
       # If these are singletons then they cannot be printed to the paired end output file. 
       # Move onto the next entry.
@@ -340,6 +345,23 @@ sub checkFirstXReads{
 ## utility
 ################
 
+# returns 1 for SE, 2 for PE, and -1 is for internal error
+sub checkPolyness{
+  my ($infile,$settings)=@_;
+  eval{
+    require AKUtils;
+  };
+  if($@){
+    warn "WARNING: I could not understand if the file is paired end.  I will assume not.";
+    return 1;
+  }
+
+  my $poly=AKUtils::is_fastqPE($infile,{checkFirst=>20});
+  $poly++;
+
+  return $poly;
+}
+
 # until I find a better way to round
 sub nearest{
   my ($nearestNumber,$num)=@_;
@@ -363,7 +385,7 @@ sub usage{
   Additional options
   
   -p 1 or 2 (p for poly)
-    1 for SE, 2 for paired end (PE) 
+    1 for SE, 2 for paired end (PE). 0 for automatic detection (default)
   -q for somewhat quiet mode (use 1>/dev/null for totally quiet)
   --notrim to skip trimming of the reads. Useful for assemblers that require equal read lengths.
 
