@@ -164,6 +164,7 @@ sub createBam{
 
   # import the bam
   if(!-e $bamaln){
+    logmsg "$bamaln does not exist. Creating it now.";
     command("samtools faidx $$settings{assembly}");
     command("samtools import $samindexed $sam $bamaln");
   } else {logmsg "Skipping bam import because file $bamaln already exists"; }
@@ -171,7 +172,7 @@ sub createBam{
   # index the bam
   if(!-e $bamIndex){
     indexBam($bamaln,$alnSortedPrefix,$alnSorted,$settings);
-  } else {logmsg "Skipping indexing the bam indexing because $alnSorted already exists";}
+  } else {logmsg "Skipping indexing the bam indexing because $bamIndex already exists";}
 
   return ($alnSorted,$bamIndex);
 }
@@ -188,7 +189,7 @@ sub indexBam{
 sub bamToFastq{
   my($bam,$bamIndex,$settings)=@_;
 
-  my $out1="$$settings{tempdir}/mpileupout1.log";
+  my $out1="$$settings{tempdir}/mpileupout1.bcf";
   my $out2="$$settings{tempdir}/bcftoolsout2.vcf";
   my $variantsFile="$$settings{tempdir}/variants.vcf";
   my $fastqOutNonstandard="$$settings{tempdir}/outNonstandard.fastq";
@@ -198,13 +199,14 @@ sub bamToFastq{
   my($minDepth,$maxDepth)=covDepth($bam);
 
   logmsg "Converting BAM to fastq";
+  my $vcfutilsExec=AKUtils::fullPathToExec("run_assembly_vcfutils.pl");
   if(!-e $fastqOutNonstandard || -s $fastqOutNonstandard < 10){
     #indexAssembly($$settings{assembly},$settings);
     # separate out these commands for debugging purposes
-    command("samtools mpileup -uf $$settings{assembly} $bam > $out1");
-    command("bcftools view -cg - < $out1 > $out2");
-    command("vcfutils.pl vcf2fq -d $minDepth -D $maxDepth < $out2 > $fastqOutNonstandard");
-    command("vcfutils.pl varFilter -d $minDepth -D $maxDepth < $out2 > $variantsFile");
+    command("samtools mpileup -uf $$settings{assembly} $bam > $out1") if(!-e $out1);
+    command("bcftools view -cg - < $out1 > $out2") if(!-e $out2);
+    command("$vcfutilsExec vcf2fq -d $minDepth -D $maxDepth < $out2 > $fastqOutNonstandard") if(!-e $fastqOutNonstandard);
+    command("$vcfutilsExec varFilter -d $minDepth -D $maxDepth < $out2 > $variantsFile");
   } else {logmsg "$fastqOutNonstandard exists; skipping";}
   if(!-e $fastqOut || -s $fastqOut < 1){
     #standardizeFastq($fastqOutNonstandard,$fastqOutStandard,$settings);
@@ -317,7 +319,11 @@ sub splitFastqByGaps{
 sub covDepth{
   my($bam,$settings)=@_;
   my $minimumAllowedCov=$$settings{minimumAllowedCov} || 5;
-  my $depth=`samtools depth '$bam'`; die if $?;
+  my $samtools=`which samtools`;#AKUtils::fullPathToExec("samtools");
+    chomp($samtools);
+  my $command="$samtools depth '$bam'";
+  logmsg "COMMAND\n  $command";
+  my $depth=`$command`; die if $?;
   my @rawdata=split(/\n/,$depth);
   my @data=map( (split(/\s+/,$_))[2],@rawdata); # 3rd column
   my $avgCov=average(\@data);
