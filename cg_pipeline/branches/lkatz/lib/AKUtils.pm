@@ -378,7 +378,7 @@ sub fullPathToExec($) {
 	my ($executable) = @_;
 	my $fullpath;
 	for ("", split(/:/, $ENV{PATH})) {
-		if (-x $_."/".$executable) { $fullpath = File::Spec->rel2abs($_."/".$executable); last; }
+		if (-x $_."/".$executable && !-d $_."/".$executable) { $fullpath = File::Spec->rel2abs($_."/".$executable); last; }
 	}
 	warn("Error finding full path to file ($executable)") unless -x $fullpath;
 	return $fullpath;
