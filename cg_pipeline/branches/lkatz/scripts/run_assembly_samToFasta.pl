@@ -199,13 +199,13 @@ sub bamToFastq{
 
   logmsg "Converting BAM to fastq";
   my $vcfutilsExec=AKUtils::fullPathToExec("run_assembly_vcfutils.pl");
-  if(!-e $fastqOutNonstandard || -s $fastqOutNonstandard < 10){
+  if(!-e $fastqOutNonstandard || -s $fastqOutNonstandard < 100){
     #indexAssembly($$settings{assembly},$settings);
     # separate out these commands for debugging purposes
-    command("samtools mpileup -uf $$settings{assembly} $bam > $out1") if(!-e $out1);
-    command("bcftools view -cg - < $out1 > $out2") if(!-e $out2);
+    command("samtools mpileup -uf $$settings{assembly} $bam > $out1") if(!-e $out1 || -s $out1<100);
+    command("bcftools view -cg - < $out1 > $out2") if(!-e $out2 || -s $out2<100);
     my($minDepth,$maxDepth)=covDepth($bam);
-    command("$vcfutilsExec vcf2fq -d $minDepth -D $maxDepth < $out2 > $fastqOutNonstandard") if(!-e $fastqOutNonstandard);
+    command("$vcfutilsExec vcf2fq -d $minDepth -D $maxDepth < $out2 > $fastqOutNonstandard") if(!-e $fastqOutNonstandard || -s $fastqOutNonstandard < 100);
     command("$vcfutilsExec varFilter -d $minDepth -D $maxDepth < $out2 > $variantsFile");
   } else {logmsg "$fastqOutNonstandard exists; skipping";}
   if(!-e $fastqOut || -s $fastqOut < 1){
