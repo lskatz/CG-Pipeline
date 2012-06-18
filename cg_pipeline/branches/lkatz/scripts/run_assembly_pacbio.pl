@@ -10,7 +10,7 @@ my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 
 my $settings = {
 	appname => 'cgpipeline',
-  defaultGenomeSize=>5000000,
+  defaultGenomeSize=>5000000, # default genome: 5 MB. Many bacterial genomes fall around 5 MB (but there are many exceptions!)
 };
 my $stats;
 
@@ -119,17 +119,24 @@ sub highQualityReadsToFrg{
       my $file=$$input_files[$i];
       my $filename=basename($file);
       my $standardizedFile="$longreadsInputDir/$filename";
-      command("run_assembly_convertMultiFastqToStandard.pl -i '$file' -o '$standardizedFile' -m 50 2>&1") if(!-e $standardizedFile);
+      command("run_assembly_convertMultiFastqToStandard.pl -i '$file' -o '$standardizedFile' -m 200 2>&1") if(!-e $standardizedFile);
       $$input_files[$i]=$standardizedFile;
     }
 
-    # instead of just concatenating all reads, see if they can be filtered a little first
-    my $command="run_assembly_trimClean.pl --min_avg_quality 6 --notrim --min_length 50 ";
+    # filter and concatenate long reads at the same time
+    my $command="run_assembly_trimClean.pl --min_avg_quality 6 --notrim --min_length 200 ";
     $command.="-i '$_' " for(@$input_files);
     $command.="-o $longreadsFile 2>&1 ";
     command($command);
+    
+    # One more round of filtering: keep longest reads such that there is about a 21-40x coverage.
+    # This subroutine will edit the file in-place
+    my $minRawReadLength=filterForCoverage($longreadsFile,$settings);
+    command("mv $longreadsFile $longreadsFile.tmp.fastq");
+    command("run_assembly_convertMultiFastqToStandard.pl -i $longreadsFile.tmp.fastq -o $longreadsFile -m $minRawReadLength");
+
     # Remove these temporary intermediate files.  They are huge and not necessary, even in a temp directory
-    command("rm -rf $longreadsInputDir");
+    command("rm -rfv $longreadsInputDir");
   }
 
   # STEP 2b remove CCS reads from long reads (ie remove duplication)
@@ -137,11 +144,12 @@ sub highQualityReadsToFrg{
     logmsg "Reading and cleaning CCS pacbio reads";
     my $ccsreadsFile="$newInputDir/ccsreads.fastq";
     if(!-e $ccsreadsFile){
-      my $command="run_assembly_trimClean.pl --min_avg_quality 20 --notrim --min_length 50 ";
+      my $command="run_assembly_trimClean.pl --min_avg_quality 20 --notrim --min_length 100 ";
       $command.="-i '$_' " for(@{$$settings{ccsReads}});
       $command.="-o $ccsreadsFile 2>&1";
       command($command);
     }
+    # TODO remove any ID from the long reads that appears in the short CCS reads
   }
 
 
@@ -177,7 +185,7 @@ sub padLongReads{
   # STEP 3b pad the long reads with pacBioToCA
   #local $$settings{numcpus}=1; logmsg "DEBUGGING with numcpus=1";
   warn("NOTE: if there is any problem with pacBioToCA, please look at their development page at http://sourceforge.net/apps/mediawiki/wgs-assembler/index.php?title=PacBioToCA#Known_Issues\n");
-  command("cd $inputDir; pacBioToCA -length 500 -partitions 200 -l $libraryname  -t $$settings{numcpus} -noclean -s $specFile -fastq $longreadsFile $inputDir/*.frg  2>&1 ") if(!-e $frg || -s $frg<10000);
+  command("(cd $inputDir; pacBioToCA -length 500 -partitions 200 -l $libraryname  -t $$settings{numcpus} -noclean -s $specFile -fastq $longreadsFile $inputDir/*.frg)  2>&1 ") if(!-e $frg || -s $frg<10000);
 
   return $frg;
 }
@@ -206,6 +214,53 @@ sub caAssembly{
 ####################
 ## Nitty-gritty subs
 ####################
+
+
+# Find the coverage that an X bp min will give, and keep trying shorter reads until it reaches 20-40x.
+# Arguments for settings: targetCoverage=>30
+sub filterForCoverage{
+  my($infile,$settings)=@_;
+  my $targetCoverage=$$settings{targetCoverage}||40; # a maximum coverage
+
+  # make a histogram of number of reads per length
+  my %readLengthHist;
+  open(IN,$infile) or die "Error: could not open $infile for reading: $!";
+  while(<IN>){
+    my $read=<IN>; chomp($read);
+    my $readLength=length($read);
+    $readLength=int(($readLength+449)/1000)*1000;
+    $readLengthHist{$readLength}++;
+
+    # burn two lines
+    my $plusSign=<IN>; 
+    my $qual=<IN>;
+  }
+  close IN;
+
+  logmsg "Calculating minimum read length to coverage depth histogram";
+  my @readLength=sort({$a<=>$b} keys(%readLengthHist));
+  my %coverageHist;
+  for(my $i=0;$i<@readLength;$i++){
+    my $minReadLength=$readLength[$i];
+    my $totalLength=0;
+    for(my $j=$i;$j<@readLength;$j++){
+      my $currReadLength=$readLength[$j];
+      $totalLength+=($currReadLength*$readLengthHist{$currReadLength});
+    }
+    my $coverage=$totalLength/$$settings{expectedGenomeSize};
+    $coverageHist{$minReadLength}=$coverage;
+    print "$minReadLength\t$coverage\n";
+  }
+  
+  # which coverage gives about the right target coverage?
+  for my $readLength(@readLength){
+    if($coverageHist{$readLength}<$targetCoverage){
+      return($readLength,$coverageHist{$readLength}) if wantarray;
+      return $readLength;
+    }
+  }
+  die "ERROR: Could not determine the right minimum read length cutoff";
+}
 
 sub ccsToFrg{
   my($fastq,$newInputDir,$settings)=@_;
@@ -304,21 +359,27 @@ sub pacbiotocaSpecFile{
   my ($inputDir,$settings)=@_;
   my $specFile="$inputDir/pacbiotoca.spec";
   return $specFile if(-e $specFile);
-  
-  open(SPEC,">$specFile") or die "Could not open $specFile for writing: $!";
-  print SPEC "";
-  close SPEC;
+
+  system("cp -v '$FindBin::RealBin/../conf/pacbiotoca.spec' '$specFile' 2>&1"); die if $?;
   return $specFile;
+  
+  #open(SPEC,">$specFile") or die "Could not open $specFile for writing: $!";
+  #print SPEC "";
+  #close SPEC;
+  #return $specFile;
 }
 sub runcaSpecFile{
   my ($inputDir,$settings)=@_;
   my $specFile="$inputDir/runca.spec";
   return $specFile if(-e $specFile);
 
-  open(SPEC,">$specFile") or die "Could not open $specFile for writing: $!";
-  print SPEC "";
-  close SPEC;
+  system("cp -v '$FindBin::RealBin/../conf/runca.spec' '$specFile' 2>&1"); die if $?;
   return $specFile;
+
+  #open(SPEC,">$specFile") or die "Could not open $specFile for writing: $!";
+  #print SPEC "";
+  #close SPEC;
+  #return $specFile;
 }
 
 ##########
@@ -336,7 +397,7 @@ sub command{
 
 sub usage{
 	"Usage: $0 input.fastq [, input2.fastq, ...] [-o outfile.fasta] -c pacbio.ccs.fastq -i illumina.fastq -s 454.sff
-  Input files should be the filtered subreads from pacbio
+  Input files should be the long filtered subreads from pacbio
   -c, -i, -s
     You can use multiple files. 
     Designate each new file with a new -c, -i, or -s flag.
@@ -346,7 +407,7 @@ sub usage{
 
   -e expected genome size in bp
     This option is used for finding the best assembly after runCA finishes.
-    Default: $$settings{defaultGenomeSize}
+    Default: $$settings{defaultGenomeSize} but it is STRONGLY ENCOURAGED to supply a more exact size.
   -t tempdir
     Designate a different temporary directory
   -k
