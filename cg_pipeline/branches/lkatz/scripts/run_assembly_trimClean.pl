@@ -92,6 +92,11 @@ sub qualityTrimFastqPoly($;$){
   my $reportEvery=1000000;
     $reportEvery=1000 if($$settings{debug});
 
+  # TODO check for poly with each fastq file
+  my $poly=$$settings{poly}||checkPolyness($$fastq[0],$settings);
+  $poly=1 if($poly<1); #sanity check
+  $$settings{poly}=$poly; # this line is a band-aid until I pass the parameter directly the workers later
+  
   # initialize the threads
   my (@t,$t);
   my $Q=Thread::Queue->new;
@@ -103,9 +108,6 @@ sub qualityTrimFastqPoly($;$){
   my @fastq=@$fastq;
   for my $fastq (@fastq){
 
-    my $poly=$$settings{poly}||checkPolyness($fastq,$settings);
-    $$settings{poly}=$poly; # this line is a band-aid until I pass the parameter directly the workers later
-  
     logmsg "Trimming and cleaning a file $fastq with poly=$poly";
   
     # check the file before continuing
