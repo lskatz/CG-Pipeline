@@ -17,7 +17,7 @@ ovlMinLen = 30
  
  
 merylMemory = 128000
-merylThreads = 12
+merylThreads = 6
  
 ovlStoreMemory = 8192
  
@@ -53,18 +53,15 @@ ovlCorrBatchSize = 100000
  
 # non-Grid settings, if you set useGrid to 0 above these will be used
 merylMemory = 128000
-merylThreads = 12
  
 ovlStoreMemory = 8192
  
-ovlConcurrency = 6
- 
-cnsConcurrency = 6
+ovlConcurrency = 3
  
 merOverlapperThreads = 6
 merOverlapperSeedConcurrency = 3
 merOverlapperExtendConcurrency = 3
  
-frgCorrConcurrency = 8
-ovlCorrConcurrency = 6
-cnsConcurrency = 6
+frgCorrConcurrency = 4
+ovlCorrConcurrency = 3
+cnsConcurrency = 3
