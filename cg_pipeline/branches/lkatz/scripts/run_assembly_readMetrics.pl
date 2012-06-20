@@ -38,7 +38,7 @@ sub main() {
   $settings = AKUtils::loadConfig($settings);
   die(usage($settings)) if @ARGV<1;
 
-  my @cmd_options=qw(help fast qual_offset=i);
+  my @cmd_options=qw(help fast qual_offset=i minLength=i);
   GetOptions($settings, @cmd_options) or die;
   $$settings{qual_offset}||=33;
 
@@ -97,12 +97,16 @@ sub readMetrics{
 
   # STEP 2: METRICS
   my $seqCounter=0;
+  my $minLength=$$settings{minLength} || 0;
   my($totalReadLength,$maxReadLength,$totalReadQuality,$totalQualScores,$avgReadQualTotal)=(0,0);
+  my $minReadLength=9999999999999999999999;
   while(my($id,$seq)=each(%$seqs)){
     # read metrics
     my $readLength=length($seq);
+    next if($minLength && $readLength<$minLength);
     $totalReadLength+=$readLength;
     $maxReadLength=$readLength if($readLength>$maxReadLength);
+    $minReadLength=$readLength if($readLength<$minReadLength);
     
     # quality metrics
     my $qualStr=$$qual{$id};
@@ -128,6 +132,7 @@ sub readMetrics{
     avgReadLength=>$avgReadLength,
     totalBases=>$totalReadLength,
     maxReadLength=>$maxReadLength,
+    minReadLength=>$minReadLength,
     avgQuality=>$avgQuality,
     avgQualPerRead=>$avgQualPerRead,
     numReads=>$seqCounter,
@@ -188,5 +193,7 @@ sub usage{
   --help for this help menu
   --qual_offset 33
     Set the quality score offset (usually it's 33, so the default is 33)
+  --minLength 0
+    Set the minimum read length used for calculations
   "
 }
