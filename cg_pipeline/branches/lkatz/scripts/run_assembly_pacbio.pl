@@ -83,10 +83,10 @@ sub main() {
   logmsg "STEP ".++$stepNo." assembly";
   my $caAssembly=caAssembly($inputDir,$settings);
 
-  logmsg "STEP ".++$stepNo." AHA";
+  logmsg "TODO STEP ".++$stepNo." AHA";
   #my $ahaAssembly=ahaScaffolding($inputDir,$caAssembly,$settings);
 
-  logmsg "STEP ".++$stepNo." dealing with unmapped reads";
+  logmsg "TODO STEP ".++$stepNo." dealing with unmapped reads";
   # STEP 6 unmapped short reads => de novo? or try to map again?
 
   my $final_seqs = AKUtils::readMfa($caAssembly);
@@ -134,6 +134,7 @@ sub highQualityReadsToFrg{
     my $minRawReadLength=filterForCoverage($longreadsFile,$settings);
     command("mv $longreadsFile $longreadsFile.tmp.fastq");
     command("run_assembly_convertMultiFastqToStandard.pl -i $longreadsFile.tmp.fastq -o $longreadsFile -m $minRawReadLength");
+    command("rm $longreadsFile.tmp.fastq");
 
     # Remove these temporary intermediate files.  They are huge and not necessary, even in a temp directory
     command("rm -rfv $longreadsInputDir");
@@ -185,7 +186,16 @@ sub padLongReads{
   # STEP 3b pad the long reads with pacBioToCA
   #local $$settings{numcpus}=1; logmsg "DEBUGGING with numcpus=1";
   warn("NOTE: if there is any problem with pacBioToCA, please look at their development page at http://sourceforge.net/apps/mediawiki/wgs-assembler/index.php?title=PacBioToCA#Known_Issues\n");
-  command("(cd $inputDir; pacBioToCA -length 500 -partitions 200 -l $libraryname  -t $$settings{numcpus} -noclean -s $specFile -fastq $longreadsFile $inputDir/*.frg)  2>&1 ") if(!-e $frg || -s $frg<10000);
+  my $exec=AKUtils::fullPathToExec("pacBioToCA");
+  my $command="(cd $inputDir; $exec -length 500 -partitions 200 -l $libraryname -t $$settings{numcpus} -noclean -s $specFile -fastq $longreadsFile $inputDir/*.frg)  2>&1 ";
+  if(!-e $frg || -s $frg<10000){
+    my $is_error=command($command,{warn_on_error=>1});
+    if($is_error){
+      logmsg "Trying pacBioToCA one more time with 1 cpu instead, which fixes a particular bug in some installations.";
+      $command=~s/\s+\-t\s+\d+\s+/ -t 1 /;
+      command($command);
+    }
+  } else { logmsg "Padded long reads have been finished already in $frg. Moving on.";}
 
   return $frg;
 }
@@ -202,8 +212,12 @@ sub caAssembly{
   $caPrefix=File::Spec->abs2rel($caPrefix);
   $specFile=File::Spec->abs2rel($specFile);
   $inputDir=File::Spec->abs2rel($inputDir);
+  
+  my $exec=AKUtils::fullPathToExec("runCA");
+  # TODO make an assembly with just long reads if desired, or do it in a separate thread in parallel
+  logmsg "NOTE: if you just want to run CA with just long reads, use the command $exec -p $asmPrefix -d $caPrefix -s $specFile $inputDir/longreads.frg 2>&1";
 
-  command("runCA -p $asmPrefix -d $caPrefix -s $specFile $inputDir/*.frg 2>&1");
+  command("$exec -p $asmPrefix -d $caPrefix -s $specFile $inputDir/*.frg 2>&1");
   # STEP 4c find the best assembly
   logmsg "Finished with the assembly! Finding the best option now.";
   command("run_assembly_chooseBest.pl `find $caPrefix/ -name '*.fasta'` -o '$finalAssembly' -e $$settings{expectedGenomeSize}");
@@ -217,7 +231,8 @@ sub caAssembly{
 
 
 # Find the coverage that an X bp min will give, and keep trying shorter reads until it reaches 20-40x.
-# Arguments for settings: targetCoverage=>30
+# Arguments for settings: 
+#  targetCoverage=>40 # the max coverage. The first level of coverage that is below this threshold will be used.
 sub filterForCoverage{
   my($infile,$settings)=@_;
   my $targetCoverage=$$settings{targetCoverage}||40; # a maximum coverage
@@ -255,6 +270,8 @@ sub filterForCoverage{
   # which coverage gives about the right target coverage?
   for my $readLength(@readLength){
     if($coverageHist{$readLength}<$targetCoverage){
+      logmsg "$readLength yields a genome coverage of $coverageHist{$readLength} which is less than $targetCoverage. I'll go with that.";
+      logmsg "Raw longreads coverage will be $coverageHist{$readLength}";
       return($readLength,$coverageHist{$readLength}) if wantarray;
       return $readLength;
     }
@@ -387,12 +404,21 @@ sub runcaSpecFile{
 ##########
 
 # run a command
+# settings params: warn_on_error (boolean)
+# returns error code
 sub command{
-  my ($command)=@_;
+  my ($command,$settings)=@_;
   logmsg "RUNNING COMMAND\n  $command";
   system($command);
-  die "ERROR running command $command\n  With error code $?. Reason: $!\n  in subroutine ".(caller(1))[3] if($?);
-  return 1;
+  if($?){
+    my $msg="ERROR running command $command\n  With error code $?. Reason: $!\n  in subroutine ".(caller(1))[3];
+    if($$settings{warn_on_error}){
+      logmsg $msg;
+    } else {
+      die $msg;
+    }
+  }
+  return $?;
 }
 
 sub usage{
