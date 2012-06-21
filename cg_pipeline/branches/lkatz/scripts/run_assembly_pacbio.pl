@@ -169,6 +169,8 @@ sub highQualityReadsToFrg{
   # 454: sffToCA
   for my $sff (@{$$settings{sff}}){
     die("ERROR: sffToCA has not been implemented and so I cannot use the input file $sff");
+    # suggested command: sffToCA -libraryname sff -output ${genome}454 $filename
+    # where genome is the genome name and 454 indicates that this is the 454 platform, and filename is the path
   }
 
   return $newInputDir;
