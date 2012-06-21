@@ -39,20 +39,20 @@ ovlCorrBatchSize = 100000
  
 # non-Grid settings, if you set useGrid to 0 above these will be used
 merylMemory = 128000
-merylThreads = 12
+merylThreads = 4
  
 ovlStoreMemory = 8192
  
-ovlConcurrency = 8
+ovlConcurrency = 2
  
-merOverlapperThreads = 6
+merOverlapperThreads = 3
 merOverlapperSeedConcurrency = 2
 merOverlapperExtendConcurrency = 2
  
-frgCorrConcurrency = 8
+frgCorrConcurrency = 2
  
-ovlCorrConcurrency = 16
-cnsConcurrency = 16
+ovlCorrConcurrency = 2
+cnsConcurrency = 2
  
 doToggle=0
 toggleNumInstances = 0
