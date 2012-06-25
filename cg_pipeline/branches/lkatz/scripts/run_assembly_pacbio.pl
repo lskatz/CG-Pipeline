@@ -189,6 +189,8 @@ sub padLongReads{
   #local $$settings{numcpus}=1; logmsg "DEBUGGING with numcpus=1";
   warn("NOTE: if there is any problem with pacBioToCA, please look at their development page at http://sourceforge.net/apps/mediawiki/wgs-assembler/index.php?title=PacBioToCA#Known_Issues\n");
   my $exec=AKUtils::fullPathToExec("pacBioToCA");
+  # TODO remove overlap.sh if it exists, to help pacBioToCA continue if it was killed in the middle of running
+  # TODO remove anything else to ensure continuity?
   my $command="(cd $inputDir; $exec -length 500 -partitions 200 -l $libraryname -t $$settings{numcpus} -noclean -s $specFile -fastq $longreadsFile $inputDir/*.frg)  2>&1 ";
   if(!-e $frg || -s $frg<10000){
     my $is_error=command($command,{warn_on_error=>1});
