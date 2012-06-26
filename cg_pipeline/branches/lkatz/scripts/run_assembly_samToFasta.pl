@@ -1,8 +1,8 @@
 #! /usr/bin/env perl
 
 # Original concept by Eishita Tyagi
-# Author: Eishita Tyagi <etyagi@cdc.gov>
 # Author: Lee Katz <lkatz@cdc.gov>
+# Author: Eishita Tyagi <etyagi@cdc.gov>
 
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
@@ -35,7 +35,7 @@ sub main{
   my $settings=AKUtils::loadConfig($settings);
   die usage() if(@ARGV<1);
 
-  GetOptions($settings,qw(assembly=s sam=s bam=s force tempdir=s keep outfile=s qual));
+  GetOptions($settings,qw(assembly=s sam=s bam=s force tempdir=s keep outfile=s qual mask));
 
   # check for required parameters
   for my $param (qw(assembly)){
@@ -209,10 +209,9 @@ sub bamToFastq{
     command("$vcfutilsExec varFilter -d $minDepth -D $maxDepth < $out2 > $variantsFile");
   } else {logmsg "$fastqOutNonstandard exists; skipping";}
   if(!-e $fastqOut || -s $fastqOut < 1){
-    #standardizeFastq($fastqOutNonstandard,$fastqOutStandard,$settings);
     command("run_assembly_convertMultiFastqToStandard.pl -i $fastqOutNonstandard -o $fastqOutStandard");
-    splitFastqByGaps($fastqOutStandard,$fastqOut,$settings);
   }
+    logmsg"DEBUG!!!!!!!!!!";splitFastqByGaps($fastqOutStandard,$fastqOut,$settings);
   return $fastqOut;
 }
 
@@ -226,6 +225,7 @@ sub fastqToFastaQual{
   while(my $fastqEntry=<FASTQ>){
     $fastqEntry.=<FASTQ> for(1..3);
     my($fastaEntry,$qualEntry)=fastqEntryToFastaQual($fastqEntry,$settings);
+    next if(!$fastaEntry);
     $qual.="$qualEntry\n";
     $fasta.="$fastaEntry\n";
   }
@@ -237,6 +237,7 @@ sub fastqEntryToFastaQual{
   my($entry,$settings)=@_;
   $entry=~s/^\s+|\s+$//g;
   my($id,$sequence,undef,$qualIllumina)=split(/\s*\n\s*/,$entry);
+  return 0 if(!$qualIllumina || length($sequence) < 50); # return false if there's nothing here
   $id=~s/^@/>/;
   my @qual=split(//,$qualIllumina);
   @qual=map(ord($_)-33,@qual);
@@ -267,6 +268,10 @@ sub splitFastqByGaps{
     <IN>; # + sign
     my $qual=<IN>;
     chomp($seqId,$sequence,$qual);
+
+    # Lowercase nts are low quality in either depth or mapping quality, according to samtools. 
+    # Turn them into Ns if the user requests it.
+    $sequence=~tr/atcgn/N/ if($$settings{mask});
     
     # look for large enough gaps to split contigs
     # A hack: start the sequence with the gap string
@@ -405,12 +410,13 @@ Usage: perl $0 -a reference.fasta -s assembly.sam -o assembly.fasta -q
   -o (optional) final output file
     default: $0.merged.fasta
   -t (optional) This is where temporary files will be stored. 
-    Default: /tmp/....../
+    Default: /tmp/xxxxxx/ where xxxxxx is a random directory
 
   No arguments should be given for the following options
   -f (optional) Force.
   -k (optional) keep temporary files around (about 2GB of files in my test run)
   -q to output quality files too. (assembly.fasta.qual)
+  -m to mask any bases that have a lower mapping quality or where the depth is not in 2 standard deviations of the mean
   ";
 }
 
