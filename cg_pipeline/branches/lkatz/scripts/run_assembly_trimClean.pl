@@ -113,7 +113,7 @@ sub qualityTrimFastqPoly($;$){
     # check the file before continuing
     my $readsToCheck=5;
     my $warnings=checkFirstXReads($fastq,$readsToCheck,$settings);
-    warn "WARNING: There were $warnings warnings out of $readsToCheck" if($warnings);
+    warn "WARNING: There were $warnings warnings. Judging from the first $readsToCheck reads, it is possible that many or all sequences will be filtered out." if($warnings);
 
     # load all reads into the threads for analysis
     my $linesPerGroup=4*$poly;
@@ -249,6 +249,7 @@ sub singletonPrintWorker{
 # Note: I think I mixed up 3 and 5?  Ugh.  Whatever.
 sub trimRead{
   my($read,$settings)=@_;
+  # TODO just kill off this read right away if it is less than the min_length, to save on time
   my($numToTrim3,$numToTrim5,@qual)=(0,0,);
   @qual=map(ord($_)-$$settings{qualOffset},split(//,$$read{qual}));
   for(my $i=0;$i<$$settings{bases_to_trim};$i++){
@@ -334,7 +335,7 @@ sub checkFirstXReads{
     my ($id,$sequence)=(split("\n",$line))[0,1];
     my $length=length($sequence);
     if($length<$$settings{min_length}){
-      warn "WARNING: Read $id has length greater than the minimum sequence length $$settings{min_length}. It is possible that all sequences will be filtered out.\n" if(!$$settings{quieter});
+      warn "WARNING: Read $id has length less than the minimum sequence length $$settings{min_length}.\n" if(!$$settings{quieter});
       $warning++;
     }
     last if($i++>=$numReads);
