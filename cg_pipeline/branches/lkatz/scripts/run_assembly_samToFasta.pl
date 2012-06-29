@@ -10,7 +10,7 @@ my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 my $settings = {
   appname  => 'cgpipeline',
   pileup_splitBases=>0,
-  min_gap_size=>6,         # size of gap to split any contigs on. Fewer than this size is allowed to remain in a contig.
+  min_gap_size=>10,         # size of gap to split any contigs on. Fewer than this size is allowed to remain in a contig.
 };
 
 use Data::Dumper;
@@ -36,6 +36,7 @@ sub main{
   die usage() if(@ARGV<1);
 
   GetOptions($settings,qw(assembly=s sam=s bam=s force tempdir=s keep outfile=s qual mask));
+  $$settings{min_mapping_qual}||=1; # samtools mpileup -q parameter
 
   # check for required parameters
   for my $param (qw(assembly)){
@@ -195,23 +196,23 @@ sub bamToFastq{
   my $variantsFile="$$settings{tempdir}/variants.vcf";
   my $fastqOutNonstandard="$$settings{tempdir}/outNonstandard.fastq";
   my $fastqOutStandard="$$settings{tempdir}/outStandard.fastq";
-  my $fastqOut="$$settings{tempdir}/out.fastq";
+  my $fastqOut="$$settings{tempdir}/outSplitContigs.fastq";
 
   logmsg "Converting BAM to fastq";
   my $vcfutilsExec=AKUtils::fullPathToExec("run_assembly_vcfutils.pl");
   if(!-e $fastqOutNonstandard || -s $fastqOutNonstandard < 100){
     #indexAssembly($$settings{assembly},$settings);
     # separate out these commands for debugging purposes
-    command("samtools mpileup -uf $$settings{assembly} $bam > $out1") if(!-e $out1 || -s $out1<100);
+    command("samtools mpileup -uf $$settings{assembly} $bam -q $$settings{min_mapping_qual} > $out1") if(!-e $out1 || -s $out1<100);
     command("bcftools view -cg - < $out1 > $out2") if(!-e $out2 || -s $out2<100);
     my($minDepth,$maxDepth)=covDepth($bam);
     command("$vcfutilsExec vcf2fq -d $minDepth -D $maxDepth < $out2 > $fastqOutNonstandard") if(!-e $fastqOutNonstandard || -s $fastqOutNonstandard < 100);
-    command("$vcfutilsExec varFilter -d $minDepth -D $maxDepth < $out2 > $variantsFile");
+    command("$vcfutilsExec varFilter -d $minDepth -D $maxDepth < $out2 > $variantsFile") if(!-e $variantsFile || -s $variantsFile < 100);
   } else {logmsg "$fastqOutNonstandard exists; skipping";}
   if(!-e $fastqOut || -s $fastqOut < 1){
     command("run_assembly_convertMultiFastqToStandard.pl -i $fastqOutNonstandard -o $fastqOutStandard");
+    splitFastqByGaps($fastqOutStandard,$fastqOut,$settings);
   }
-    logmsg"DEBUG!!!!!!!!!!";splitFastqByGaps($fastqOutStandard,$fastqOut,$settings);
   return $fastqOut;
 }
 
@@ -256,7 +257,8 @@ sub fastqEntryToFastaQual{
 # split contigs by gaps
 sub splitFastqByGaps{
   my($fastq,$fastqOut,$settings)=@_;
-  $$settings{min_gap_size}||=6;
+  die "ERROR: need min_gap_size" if(!$$settings{min_gap_size});
+
   my $contigBreak="N"x$$settings{min_gap_size};
   my $qualContigBreak=chr(33)x$$settings{min_gap_size};
 
@@ -324,6 +326,9 @@ sub splitFastqByGaps{
 sub covDepth{
   my($bam,$settings)=@_;
   my $minimumAllowedCov=$$settings{minimumAllowedCov} || 5;
+  my $allowedStdDeviations=3; # how many stdevs to go out for depth?
+  logmsg "Finding the min/max depth within $allowedStdDeviations standard deviations";
+
   my $samtools=`which samtools`;#AKUtils::fullPathToExec("samtools");
     chomp($samtools);
   my $command="$samtools depth '$bam'";
@@ -334,8 +339,8 @@ sub covDepth{
   my $avgCov=average(\@data);
   my $stdevCov=stdev(\@data);
 
-  my $max=ceil($avgCov+2*$stdevCov);
-  my $min=$avgCov-2*$stdevCov;
+  my $max=ceil($avgCov+$allowedStdDeviations*$stdevCov);
+  my $min=$avgCov-$allowedStdDeviations*$stdevCov;
   $min=$minimumAllowedCov if($min<$minimumAllowedCov);
   $min=floor($min);
 
