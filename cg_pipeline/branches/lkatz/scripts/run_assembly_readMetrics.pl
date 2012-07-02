@@ -8,8 +8,11 @@ my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 
 my $settings = {
     appname => 'cgpipeline',
+    # these are the subroutines for all read metrics
+    metrics=>[qw(avgReadLength totalBases maxReadLength minReadLength avgQuality avgQualPerRead numReads)],
+    # these are the subroutines for all standard read metrics
+    #stdMetrics=>[qw(N50 genomeLength numContigs assemblyScore)],
 };
-my $stats;
 
 use strict;
 no strict "refs";
@@ -42,6 +45,7 @@ sub main() {
   GetOptions($settings, @cmd_options) or die;
   $$settings{qual_offset}||=33;
 
+  my %final_metrics;
   for my $input_file(@ARGV){
     my $file=File::Spec->rel2abs($input_file);
     die("Input or file $file not found") unless -f $file;
@@ -52,10 +56,36 @@ sub main() {
     } else {
       %metrics=readMetrics($file,$settings);
     }
-    print Dumper \%metrics;
+    $final_metrics{$file}=\%metrics;
   }
+
+  printMetrics(\%final_metrics,$settings);
   return 0;
 }
+
+
+sub printMetrics{
+  my ($metrics,$settings)=@_;
+  my $header=$$settings{metrics};
+  my $d="\t"; # field delimiter
+  push(@$header,"readsScore");
+
+  print "File$d".join($d,@$header)."\n";
+  while(my($file,$m)=each(%$metrics)){
+    my $avgQuality=$$m{avgQuality} || 40;
+    my $readsScore=log($$m{totalBases}*$avgQuality); 
+    $$m{readsScore}=$readsScore;
+
+    my @line;
+    for(@$header){
+      push(@line,$$m{$_} || ".");
+    }
+
+    print $file.$d.join($d,@line)."\n";
+  }
+  return 1;
+}
+
 
 sub readMetrics{
   my($file,$settings)=@_;
@@ -72,7 +102,7 @@ sub readMetrics{
   elsif($ext=~/fa|fas|fasta|fna|mfa/i){
     $seqs=AKUtils::readMfa($file,$settings);
     my $qualfile;
-    for("$name$ext.qual","$name.qual"){
+    for("$path$name$ext.qual","$path$name.qual"){
       $qualfile=$_ if(-e $_);
     }
     # convert the quality file to Illumina qual strings
@@ -186,14 +216,16 @@ sub fastFastqStats{
 sub usage{
   my ($settings)=@_;
   "Prints useful assembly statistics
-  Usage: $0 reads.fasta
+  Usage: $0 reads.fasta 
+         $0 reads.fasta | column -t
     A reads file can be fasta or fastq
     The quality file for a fasta file is assumed to be reads.fasta.qual
   --fast for fast mode: fewer stats but much faster!
-  --help for this help menu
   --qual_offset 33
     Set the quality score offset (usually it's 33, so the default is 33)
   --minLength 0
     Set the minimum read length used for calculations
+  --help for this help menu
+  The reads score is log(numBases*avgQuality), and 40 is the default quality, if not shown
   "
 }
