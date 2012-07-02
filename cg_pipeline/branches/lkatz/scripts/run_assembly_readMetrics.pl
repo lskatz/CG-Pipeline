@@ -73,7 +73,8 @@ sub printMetrics{
   print "File$d".join($d,@$header)."\n";
   while(my($file,$m)=each(%$metrics)){
     my $avgQuality=$$m{avgQuality} || 40;
-    my $readsScore=log($$m{totalBases}*$avgQuality); 
+    my $avgReadLength=$$m{avgReadLength} || 100;
+    my $readsScore=log($$m{totalBases} * $avgQuality * $avgReadLength); 
     $$m{readsScore}=$readsScore;
 
     my @line;
@@ -226,6 +227,6 @@ sub usage{
   --minLength 0
     Set the minimum read length used for calculations
   --help for this help menu
-  The reads score is log(numBases*avgQuality), and 40 is the default quality, if not shown
+  The reads score is log(numBases*avgQuality*avgReadLength), and 40 is the default quality and 100 is the default read length, if not shown
   "
 }
