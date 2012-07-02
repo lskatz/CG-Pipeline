@@ -73,7 +73,6 @@ sub main() {
 	my ($combined_filename,$final_seqs);
 
 	if (@ref_files) {
-    # TODO use Columbus or SHRiMP
     #die "Using references for illumina assembly is not working right now";
     logmsg "Warning: paired end reference illumina assemby is not supported right now (I'm not sure if you supplied a paired end parameter though)";
 
@@ -82,6 +81,7 @@ sub main() {
     my $concatenatedReads="$$settings{tempdir}/reads.fastq";
     system("cat ".join(" ",@ref_files)." >$concatenatedReferences") if(!-e $concatenatedReferences); die "Could not concatenate references because $!" if $?;
 
+    # create a 0-byte file for reads, and then append reads
     if(!-e $concatenatedReads){
       system("echo -n '' > $concatenatedReads"); die "Could not create file $concatenatedReads" if $?;
       for(@$fastqfiles){
@@ -96,20 +96,17 @@ sub main() {
       }
     }
     
-    # grab the consensus sequence
-    my $amos_assembly=amosShortReadMapping($concatenatedReferences,$concatenatedReads,$settings);
-    logmsg "AMOS assembly is in $amos_assembly";
-    #my $nesoni_assembly=nesoni($concatenatedReferences,$concatenatedReads,$settings);
-    #logmsg "Nesoni assembly is in $nesoni_assembly";
+    # bowtie2
+    # (for p in $genomes2; do echo "Mapping $p"; run_pipeline create -p $p; mkdir -p $p/build/assembly/2010EL-1786.fasta/bowtie2; ref="$p/build/assembly/2010EL-1786.fasta/bowtie2/ref.fa"; ln -sv `pwd -P`/../refGenomes/2010EL-1786.fasta $ref; bowtie2-build $ref $ref; gunzip -c combined/$p.filtered.fastq.gz > combined/$p.filtered.fastq; bowtie2 -p 12 -x $ref -S "$p/build/assembly/2010EL-1786.fasta/bowtie2/mapping.sam" -q combined/$p.filtered.fastq; rm combined/$p.filtered.fastq; run_assembly_samToFasta.pl -s "$p/build/assembly/2010EL-1786.fasta/bowtie2/mapping.sam" -a $ref -t "$p/build/assembly/2010EL-1786.fasta/bowtie2/toFasta" -o "$p/build/assembly/2010EL-1786.fasta/bowtie2/bowtie.fasta"; echo "Finished with $p"; done;) 2>&1 | tee --append bowtie2_again.log
+    die "TODO";
+    my $bowtie_sam=bowtie2($concatenatedReferences,$concatenatedReads,$settings);
+    my $bowtie_assembly=samToFasta($bowtie_sam,$concatenatedReferences,$settings);
+    my $bowtie_unmappedContigs=assembleUnmappedContigs($bowtie_sam,$settings);
+
+    # should we concatenate unmapped contigs onto the reference assembly?  I think so, because contamination can be filtered out later.
 
     $combined_filename="$$settings{tempdir}/mappingAssembly_combined.fasta";
-    #system("run_assembly_combine.pl -a $amos_assembly -a $nesoni_assembly -o $combined_filename -m 10");
-    system("run_assembly_combine.pl -a $amos_assembly -o $combined_filename -m 10");
-    #if($?){
-    #  warn "Could not combine assemblies. I will just get the best assembly.";
-    #  system("run_assembly_chooseBest.pl '$amos_assembly' '$nesoni_assembly' -o '$combined_filename' 2>&1");
-    #  die "Could not combine or choose the best assembly because $!" if $?;
-    #}
+
     
 	} else {
     my($velvet_basename,$velvet_assembly);
@@ -292,52 +289,23 @@ sub nesoni{
   return "$nesoni_run/contigs.fasta";
 }
 
-sub amosShortReadMapping{
+sub bowtie2{
   my($concatenatedReferences,$concatenatedReads,$settings)=@_;
-  my $combinedAssembly="$$settings{tempdir}/mappedAndUnmapped.fasta";
-  return $combinedAssembly if(-s $combinedAssembly > 100);
+  my $run_name="$$settings{tempdir}/bowtie2";
+  mkdir $run_name if(!-d $run_name);
 
-  my $amosPrefix="$$settings{tempdir}/amos";
-  system("ln -f -s $concatenatedReferences $amosPrefix.1con 2>&1"); die "Could not create shortcut for references at $amosPrefix.1con" if $?;
+  my $sam="$run_name/bowtie2.sam";
+  return $sam if(-e $sam && -s $sam > 10000);
+  my $referenceLink="$run_name/ref.fasta";
+  system("ln -sv $concatenatedReferences $referenceLink");
+  die "ERROR Could not make a soft link for $concatenatedReferences to $referenceLink" if $?;
+  system("bowtie2-build $referenceLink $referenceLink 2>&1");
+  die "ERROR Could not create a bowtie2 index for $referenceLink" if $?;
 
-  if(!-d "$amosPrefix.bnk"){
-    logmsg "Converting $concatenatedReads to bnk";
-    my $exec=AKUtils::fullPathToExec("toAmos_new");
-    my $command="$exec -t ILLUMINA -Q $concatenatedReads -b $amosPrefix.bnk 2>&1";
-    system($command);
-    if($?){
-      logmsg "ILLUMINA quality encoding didn't work. Trying SANGER.";
-      system("rm -vrf $amosPrefix.bnk");
-      $command=~s/ILLUMINA/SANGER/;
-      system($command);
-      die "Problem with AMOS's toAmos_new with command \n$command\n Error: $!" if $?;
-    }
-  }
-  logmsg "Running AMOScmp-shortReads on $amosPrefix";
-  system("AMOScmp-shortReads -s 20 $amosPrefix 2>&1") if(-s "$amosPrefix.fasta" < 1);
-  die "Error with AMOS-shortReads: $!\n  Command was \n  AMOScmp-shortReads -s 20 $amosPrefix 2>&1" if $?;
+  system("bowtie2 -p $$settings{num_cpus} -x $referenceLink -S $sam -q $concatenatedReads 2>&1");
+  die "ERROR Could not run Bowtie2" if $?;
 
-  # TODO should I just run this run_assembly script again without a reference, instead of re-writing velvet code?
-  # One consideration is to lower the minimum contig size because insertions might be small
-  logmsg "Finished with mapping. Now performing de novo assembly on unused reads.";
-  my $unmappedPrefix=File::Spec->abs2rel("$$settings{tempdir}/unmapped"); # VelvetOptimiser chokes on an abs path
-  my $placedReadsExec=    AKUtils::fullPathToExec("listReadPlacedStatus");
-  my $dumpreadsExec  =    AKUtils::fullPathToExec("dumpreads");
-  my $velvetOptimiserExec=AKUtils::fullPathToExec("VelvetOptimiser.pl");
-  system("$placedReadsExec -S -E $amosPrefix.bnk > $amosPrefix.singletons 2>&1 && $dumpreadsExec -e -E $amosPrefix.singletons $amosPrefix.bnk > $amosPrefix.singletons.seq") if(!-e "$amosPrefix.singletons");
-  die "ERROR: Problem with getting unmapped reads" if $?;
-  system("$velvetOptimiserExec -v -d $unmappedPrefix -p $unmappedPrefix -f '-short -fasta $amosPrefix.singletons.seq' 2>&1") if(!-e "$unmappedPrefix/contigs.fa");
-  die "ERROR: Problem with VelvetOptimiser.pl" if $?;
-  logmsg "Finished with VelvetOptimiser! Waiting for VelvetOptimiser to finish cleanup...";
-
-  # TODO remove short (<500bp?) unmapped contigs that statistically have a higher coverage than the mapped contigs.
-  # These contigs could represent contaminant DNA
-  # How would I find the coverage of those contigs...?
-
-  system("cat $amosPrefix.fasta $unmappedPrefix/contigs.fa > $combinedAssembly");
-  die "ERROR: Could not concatenate $amosPrefix.fasta and $unmappedPrefix/contigs.fa" if $?;
-
-  return $combinedAssembly;
+  return $sam;
 }
 
 # modified from Torsten Seemann <torsten@seemann.id.au>
