@@ -1859,9 +1859,10 @@ sub getBLASTGenePredictions($$) {
   my $numOrfs;
   foreach my $seqname(keys %$orfs){
     foreach my $frame(keys %{$$orfs{$seqname}}){
-      foreach my $stop (keys %{$$orfs{$seqname}->{$frame}}){
-        next if(!defined($$orfs{$seqname}{$frame}{$stop})); # stops a crash if there are no genes on this contig
-        my %seq=%{$$orfs{$seqname}{$frame}{$stop}};
+      my $orfsInFrame=$$orfs{$seqname}{$frame};
+      foreach my $stop (keys %$orfsInFrame){
+        next if(!defined($$orfsInFrame{$stop})); # stops a crash if there are no genes on this contig
+        my %seq=%{$$orfsInFrame{$stop}};
         # Due to the format, if there is any newlines in $seq{seq}, this format is screwed
         # Also screwed if whitespace or _ is in $seqname
         $seqname=~s/_/-/g;
