@@ -94,7 +94,7 @@ sub main(){
       $organism =~ s/^([^,_]+).*$/$1/;
     }
     my $contig=$seq->primary_seq->display_id;
-    $contig =~ s/[a-zA-Z]*([0-9]+).*$/$1/;
+    $contig =~ s/\D*[a-zA-Z]*([0-9]+).*$/$1/;
     $seq->display_id(sprintf("%s_%04d",$organism,$contig));
     if(defined($$settings{'pipeline_version'})){#write pipeline version into the COMMENT field
       my $pipeline_version="CG-Pipeline version " . $$settings{'pipeline_version'};
@@ -248,7 +248,6 @@ sub main(){
           }
           $parent->add_tag_value($measure_tag,sprintf("aa_pos %s,value %s,cutoff %s",$aa_pos,$$tags{'value'},$$tags{'cutoff'}));
         }
-            
         elsif($newftr->primary_tag eq 'signalp_hmm'){
           if($newftr->start < 1){next;}
           my $parent;
@@ -315,8 +314,16 @@ sub main(){
           }
         }
       }
+      logmsg "Post-processing the annotation for this gene";
       #post-processing
       my @features = sort {$a->start<=>$b->start} sort {$a->primary_tag cmp $b->primary_tag} $seq->all_SeqFeatures();
+      #@features=sort{
+      #  return 0 if($a->start!=$b->start);
+      #  if($a->primary_tag=~/gene/i){
+      #    return 1;
+      #  }
+      #  return 0;
+      #} @features;
       my @finalfeatures = ();
       $seq->flush_SeqFeatures();
       foreach $newftr(@features){

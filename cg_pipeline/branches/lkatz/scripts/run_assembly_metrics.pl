@@ -257,6 +257,7 @@ sub usage{
   my ($settings)=@_;
   "Prints useful assembly statistics
   Usage: $0 assembly1.fasta [-e expectedGenomeLength] [-m minContigLength]
+  Usage, advanced: $0 *.fasta | sort -k 5 -n | column -t
   -e genome length
     helps with N50 calculation but not necessary
   -m size
