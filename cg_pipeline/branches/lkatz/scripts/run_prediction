@@ -350,11 +350,9 @@ sub getRRnaPredictions($$){
 sub rnammer($$){
   # usage(): rnammer -S arc/bac/euk (-multi) (-m tsu,lsu,ssu) (-f) (-k) (-gff [gff file]) (-xml [xml file]) (-f [fasta file]) (-h [HMM report]) [sequence]
   my($input_files,$settings)=@_;
-  my($predictions,$domain);
+  my($predictions,$domain)=({},"bac");
   $domain='bac'; # TODO from $settings, gather which it should be: arc/bac/euk
   $$settings{rnammer_exec} ||= AKUtils::fullPathToExec('rnammer');
-  ## possible solution to not finding the right directory... could be buggy
-  $$settings{rnammer_exec}="$$settings{rnammer_exec}/rnammer" if(-d $$settings{rnammer_exec} && -x "$$settings{rnammer_exec}/rnammer"); 
   die("RNAmmer executable not found") unless -x $$settings{rnammer_exec};
 
   foreach my $i (@$input_files){

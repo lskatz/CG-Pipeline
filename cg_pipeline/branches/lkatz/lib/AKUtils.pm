@@ -374,13 +374,18 @@ sub flatten($) {
 }
 
 # If argument is an executable in the current path, returns the full path to it, otherwise returns undef
+# arguments: die_on_error
 sub fullPathToExec($) {
-	my ($executable) = @_;
+	my ($executable,$settings) = @_;
 	my $fullpath;
 	for ("", split(/:/, $ENV{PATH})) {
 		if (-x $_."/".$executable && !-d $_."/".$executable) { $fullpath = File::Spec->rel2abs($_."/".$executable); last; }
 	}
-	warn("Error finding full path to file ($executable)") unless -x $fullpath;
+  if(! -x $fullpath){
+	  my $errStr="Error finding full path to file ($executable)";
+    warn $errStr if(!$$settings{die_on_error});
+    die $errStr if($$settings{die_on_error});
+  }
 	return $fullpath;
 }
 
@@ -1876,7 +1881,7 @@ sub getBLASTGenePredictions($$) {
   close BLSIN;
   logmsg "$numOrfs ORFs found.";
 
-  # TODO limit number of results with -p -v ?
+  # TODO limit number of results with -b -v ?
   # run with -m 9 to delimit each result with # lines
   logmsg "Running blast";
 	$$settings{min_default_db_coverage} ||= 0.7;
@@ -1926,7 +1931,6 @@ sub getBLASTGenePredictions($$) {
   }
   my @blast_hits=();
   for(@thread){
-    logmsg "Joining TID".$_->tid."...";
     my $tmp=$_->join;
     push(@blast_hits,@$tmp);
   }
@@ -1959,7 +1963,20 @@ sub getBLASTGenePredictions($$) {
 
     push(@{$blast_preds{$seqname}}, $pred);
   }
-  logmsg "Finished analyzing $orfCount BLAST results";
+
+  # Make the blast results unique.
+  # TODO figure out why they are redundant and simply prevent it.
+  while(my ($seqid,$p)=each(%blast_preds)){
+    my %tmpPred=();
+    for(@$p){
+      my $key=join("_",$$_{start},$$_{stop},$$_{strand},$$_{seqname});
+      $tmpPred{$key}=$_;
+    }
+    $blast_preds{$seqid}=[values(%tmpPred)];
+    $orfCount+=values(%tmpPred);
+  }
+
+  logmsg "Finished analyzing. Found $orfCount orfs with a good BLAST result";
 
 	return \%blast_preds;
 }
