@@ -140,6 +140,12 @@ sub qualityTrimFastqPoly($;$){
       last if(!@entry);
         
       $Q->enqueue(@entry);
+
+      # pause if/while there's too much in memory
+      while($Q->pending > $reportEvery*$$settings{numcpus}){
+        sleep 2;
+      }
+
       if($entryCount%$reportEvery==0 && $verbose){
         my $numGood=sum(values(%threadStatus));
         my $freq_isClean=$numGood/($entryCount-$Q->pending);
