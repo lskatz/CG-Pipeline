@@ -10,6 +10,7 @@ my $settings = {
   appname  => 'cgpipeline',
   pileup_splitBases=>0,
   min_gap_size=>10,         # size of gap to split any contigs on. Fewer than this size is allowed to remain in a contig.
+  use_ambiguity_codes=>0,
 };
 
 use Data::Dumper;
@@ -193,9 +194,17 @@ sub indexBam{
 sub findVariants{
   my($bam,$bamIndex,$settings)=@_;
   logmsg "Generating a pileup";
+  warn "WARNING: all ambiguity codes are not implemented\n";
+  warn "WARNING: all SAM CIGAR codes are not implemented. Only 'M' so far.\n";
   $$settings{pileup_min_frequency}||=0.90;
   my $minimumAllowedCov=$$settings{minimumAllowedCov} || 5;
   my $allowedStdDeviations=3; # how many stdevs to go out for depth?
+  my %ambiguity=("AG"=>"R","CT"=>"Y","CG"=>"S","AT"=>"W",
+                 "GT"=>"K","AC"=>"M","CGT"=>"B","ACG"=>"V",
+                 "ACT"=>"H","AGT"=>"D","GATC"=>"N");
+  
+  # make a more complete ambiguity hash
+  # TODO use a more standardized combo maker
 
   my %pileup;
   open(BAM,"samtools view $bam |") or die "Could not open bam file $bam for reading: $!";
@@ -262,6 +271,18 @@ sub findVariants{
     }
     $baseCall{$pos}=$baseCall || "N";
   }
+
+  die "Need to make VCF file";
+  #my($qname,$flag,$rname,$pos,$mapq,$cigar,$rnext,$pnext,$tlen,$seq,$qual,$opt)=split /\t/;
+
+  # VCF fields, http://samtools.sourceforge.net/samtools.shtml
+  # ($chrom, $pos, $id, $ref, $alt, $qual, $filter, $info, $format, $sample)
+  # info tags to use
+  # DP DP4 FQ 
+
+  for(my $i=1;$i<1000;$i++){
+    print "$baseCall{$i}";
+  }die;
   return \%baseCall;
 }
 sub bamToFastq{
