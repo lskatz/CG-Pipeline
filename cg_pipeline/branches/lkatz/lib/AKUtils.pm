@@ -1894,8 +1894,8 @@ sub getBLASTGenePredictions($$) {
 	$$settings{quiet} = 1;
   system("legacy_blast.pl blastall -p blastp -d $$settings{blast_db} -m 9 -a $$settings{num_cpus} -i $blastIn -o $blast_outfile $$settings{blast_xopts} 2>&1") if(!-e $blast_outfile);
   die if $?;
-  #die "TODO test this blast and then also parse the output. An easy way would be to limit the number of in-entries to something like 50.";
 
+  logmsg "Reading blast results";
   my $reportEvery=int($numOrfs/100); # send out 100 total updates
   $reportEvery=10 if($reportEvery<10); 
   $$settings{blast_reportEvery}=$reportEvery;
@@ -1914,7 +1914,9 @@ sub getBLASTGenePredictions($$) {
     my @blsResult=();
     while(<BLSOUT>){
       if(/^#/){
+        # TODO to make this safe with perl 5.8 (I think), send a string instead of an array.
         $blastQueue->enqueue(\@blsResult) if(@blsResult);
+        @blsResult=();
         last;
       }
       push(@blsResult,$_);
@@ -2003,8 +2005,8 @@ sub blastGenePredictionWorker{
       push(@query_hits,\%hit);
     }
     next if(!@query_hits);
-    # find the best hit to add onto @best_hits
-    @query_hits=sort{$$a{Evalue} <=> $$b{Evalue}} @query_hits;
+    # find the best hit to add onto @best_hits. Bitscore will indicate a higher coverage and more matches.
+    @query_hits=sort{$$a{bitscore} <=> $$b{bitscore}} @query_hits;
     push(@best_hits,$query_hits[0]);
   }
   return \@best_hits;
