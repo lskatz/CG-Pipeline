@@ -221,9 +221,10 @@ sub findVariants{
     my $length=length($seq);
     for(my $i=0;$i<$length;$i++){
       my $tmpPos=$i+$pos;
+      my $posKey=join("::::",$rname,$tmpPos);
 
       if($longhandCigar[$i] eq 'M'){
-        $pileup{$tmpPos}.=substr($seq,$i,1);
+        $pileup{$posKey}.=substr($seq,$i,1);
       }
       # TODO do other things based on the cigar code
     }
@@ -251,28 +252,67 @@ sub findVariants{
 
   # Call bases
   my %baseCall;
-  while(my ($pos,$basePileup)=each(%pileup)){
+  while(my ($posKey,$basePileup)=each(%pileup)){
+    my($rname,$pos)=split(/::::/,$posKey);
     my $baseCall;
-    if($depth{$pos}>$maxDepth || $depth{$pos}<$minDepth){
-      $baseCall="N";
+    if($depth{$posKey}>$maxDepth || $depth{$posKey}<$minDepth){
+      $baseCall="";
     } else {
       # get a percent of each base
       # for each base, is it above a % threshold?
       my $seq=$basePileup;
       my %baseCount;
       for my $nt ("A","T","C","G","N"){
-        $baseCount{$nt}=($seq=~s/$nt//g)/$depth{$pos};
+        $baseCount{$nt}=($seq=~s/$nt//g)/$depth{$posKey};
         if($baseCount{$nt}>$$settings{pileup_min_frequency}){
-          $baseCall=$nt;
-          last;
+          $baseCall.=$nt;
           # TODO deal with ambiguous bases, esp if min_percent<50
         }
       }
     }
-    $baseCall{$pos}=$baseCall || "N";
+    if($$settings{use_ambiguity_codes} && length($baseCall)>1){
+      die "ERROR: An ambiguity code is required but is not implemented yet";
+    }
+    $baseCall{$posKey}=$baseCall || "N";
   }
 
-  die "Need to make VCF file";
+  # read the assembly file to find reference bases
+  my $seqin=Bio::SeqIO->new(-file=>$$settings{assembly});
+  my %referenceSeq;
+  while(my $seq=$seqin->next_seq){
+    $referenceSeq{$seq->id}=$seq;
+  }
+
+  my @pos=sort({
+    my($rnameA,$posA)=split(/::::/,$a);
+    my($rnameB,$posB)=split(/::::/,$b);
+    return 0 if($rnameA ne $rnameB);
+    return $posA <=> $posB;
+  } keys(%baseCall));
+
+  my $vcf="$$settings{tempdir}/variants.vcf";
+  open(VCF,">$vcf") or die "Cannot open $vcf for writing";
+  #while(my($posKey,$baseCall)=each(%baseCall)){
+  for(my $i=0;$i<@pos;$i++){
+    my $posKey=$pos[$i];
+    my($rname,$pos)=split(/::::/,$posKey);
+    my $refBase=$referenceSeq{$rname}->subseq($pos,$pos);
+    my $altBase=$baseCall{$posKey};
+    my $id=".";
+    my $qual=".";
+    my $filter=".";
+    my $format=".";
+    my $sample=".";
+    my $info=join(";","DP=".$depth{$posKey});
+
+    next if($refBase eq $altBase);
+
+    print VCF join("\t",$rname,$pos,$id,$refBase,$altBase,$qual,
+       $filter,$info,$format,$sample)."\n";
+  }
+  close VCF;
+  die "need to finish implementing vcf and all its columns";
+
   #my($qname,$flag,$rname,$pos,$mapq,$cigar,$rnext,$pnext,$tlen,$seq,$qual,$opt)=split /\t/;
 
   # VCF fields, http://samtools.sourceforge.net/samtools.shtml
