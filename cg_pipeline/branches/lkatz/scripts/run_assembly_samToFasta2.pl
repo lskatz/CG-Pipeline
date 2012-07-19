@@ -252,6 +252,7 @@ sub findVariants{
 
   # Call bases
   my %baseCall;
+  my %baseCount;
   while(my ($posKey,$basePileup)=each(%pileup)){
     my($rname,$pos)=split(/::::/,$posKey);
     my $baseCall;
@@ -261,10 +262,9 @@ sub findVariants{
       # get a percent of each base
       # for each base, is it above a % threshold?
       my $seq=$basePileup;
-      my %baseCount;
       for my $nt ("A","T","C","G","N"){
-        $baseCount{$nt}=($seq=~s/$nt//g)/$depth{$posKey};
-        if($baseCount{$nt}>$$settings{pileup_min_frequency}){
+        $baseCount{$posKey}{$nt}=($seq=~s/$nt//g)/$depth{$posKey};
+        if($baseCount{$posKey}{$nt}>$$settings{pileup_min_frequency}){
           $baseCall.=$nt;
           # TODO deal with ambiguous bases, esp if min_percent<50
         }
@@ -292,17 +292,19 @@ sub findVariants{
 
   my $vcf="$$settings{tempdir}/variants.vcf";
   open(VCF,">$vcf") or die "Cannot open $vcf for writing";
-  #while(my($posKey,$baseCall)=each(%baseCall)){
+  print VCF "##fileformat=VCFv4.1\n";
+  print VCF "##INFO=<ID=ID,Number=number,Type=type,Description=”description”>\n"; # TODO modify this line
+  print VCF "##FILTER=<ID=ID,Description=”description”>\n";
   for(my $i=0;$i<@pos;$i++){
     my $posKey=$pos[$i];
     my($rname,$pos)=split(/::::/,$posKey);
     my $refBase=$referenceSeq{$rname}->subseq($pos,$pos);
     my $altBase=$baseCall{$posKey};
-    my $id=".";
-    my $qual=".";
-    my $filter=".";
-    my $format=".";
-    my $sample=".";
+    my $id=$posKey; $id=~s/::::/_/;
+    my $qual="20"; # TODO infer from %baseCount{$posKey}{$nt*}
+    my $filter="PASS";
+    my $format="."; # optional
+    my $sample="."; # optional
     my $info=join(";","DP=".$depth{$posKey});
 
     next if($refBase eq $altBase);
@@ -460,6 +462,7 @@ sub splitFastqByGaps{
 ### utility methods
 #########################
 
+# cov depth min/max using samtools depth
 sub covDepth{
   my($bam,$settings)=@_;
   my $minimumAllowedCov=$$settings{minimumAllowedCov} || 5;
@@ -483,31 +486,6 @@ sub covDepth{
   $min=floor($min);
 
   return($min,$max);
-}
-
-sub readPileupLine{
-  my($line,$settings)=@_;
-  my %x=(type=>'snp');
-  my @line=split(/\t/,$line);
-  ($x{'chr'},$x{'pos'},$x{refBase},$x{consensusBase},$x{consensusQuality},$x{snpQuality},$x{mappingQuality},$x{coverage},$x{bases},$x{quals})=@line;
-
-  # indels
-  if($x{refBase} eq '*'){
-    $x{type}='indel';
-    delete($x{bases});
-    delete($x{quals});
-    $x{consensusBase}=$line[8];
-    $x{consensusBase}=$line[9] if($x{consensusBase} eq '*');
-  }
-
-  # if you want to look at each base
-  if($$settings{pileup_splitBases}){
-    $x{basesArr}=[split(//,$x{bases})];
-    $x{qualsArr}=[split(//,$x{quals})];
-    #TODO put in numeric values for quality values
-  }
-  
-  return %x;
 }
 
 sub average{
@@ -542,6 +520,20 @@ sub command{
   system($command);
   die "ERROR running command $command\n  With error code $?" if($?);
   return 1;
+}
+
+# http://learn.perl.org/faq/perlfaq4.html#How-do-I-permute-N-elements-of-a-list-
+sub permute (&@) {
+    my $code = shift;
+    my @idx = 0..$#_;
+    while ( $code->(@_[@idx]) ) {
+        my $p = $#idx;
+        --$p while $idx[$p-1] > $idx[$p];
+        my $q = $p or return;
+        push @idx, reverse splice @idx, $p;
+        ++$q while $idx[$p-1] > $idx[$q];
+        @idx[$p-1,$q]=@idx[$q,$p-1];
+    }
 }
 
 sub usage{
