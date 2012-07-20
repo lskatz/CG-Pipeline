@@ -191,6 +191,7 @@ sub indexBam{
   return ($alnSorted,$bamIndex);
 }
 
+# TODO make this work on sam files too
 sub findVariants{
   my($bam,$bamIndex,$settings)=@_;
   logmsg "Generating a pileup";
@@ -208,12 +209,21 @@ sub findVariants{
 
   my %pileup;
   open(BAM,"samtools view $bam |") or die "Could not open bam file $bam for reading: $!";
+  my $readNum=0;
+  BAM_LINE:
   while(<BAM>){
+    $readNum++;
     chomp;
     my($qname,$flag,$rname,$pos,$mapq,$cigar,$rnext,$pnext,$tlen,$seq,$qual,$opt)=split /\t/;
     my $longhandCigar;
     while($cigar=~/\*|((\d+)([MIDNSHPX=]))/g){
       my ($num,$code)=($2,$3);
+      
+      # if there isn't a num then the col has an asterisk
+      if(!$num){
+        next;
+      }
+
       $longhandCigar.=$code x $num;
     }
     my @longhandCigar=split(//,$longhandCigar);
@@ -225,19 +235,21 @@ sub findVariants{
 
       if($longhandCigar[$i] eq 'M'){
         $pileup{$posKey}.=substr($seq,$i,1);
+      } elsif(!$longhandCigar[$i]){
+        next BAM_LINE;
+      } else {
+        die "ERROR: Cannot cope with the sam code $longhandCigar[$i] yet";
       }
-      # TODO do other things based on the cigar code
     }
-    if($pos % 1000 == 0){
-      $|++;logmsg "At position $pos";$|--;
+    if($readNum % 1000000 == 0){
+      $|++;logmsg "Finished read $readNum";$|--;
       logmsg "DEBUG";last;
     }
   }
   close BAM;
+  logmsg "Finished, $readNum reads total.";
 
-  # TODO
-  # find avg and stdev of depth
-  # find min/max within two stdev of the avg depth
+  logmsg "Calculating the distribution of depths per base";
   my %depth;
   while(my ($pos,$basePileup)=each(%pileup)){
     $depth{$pos}=length($basePileup);
@@ -250,7 +262,7 @@ sub findVariants{
   my $minDepth=$minimumAllowedCov if($min<$minimumAllowedCov);
   $minDepth=floor($min);
 
-  # Call bases
+  logmsg "Calling bases";
   my %baseCall;
   my %baseCount;
   while(my ($posKey,$basePileup)=each(%pileup)){
@@ -293,8 +305,10 @@ sub findVariants{
   my $vcf="$$settings{tempdir}/variants.vcf";
   open(VCF,">$vcf") or die "Cannot open $vcf for writing";
   print VCF "##fileformat=VCFv4.1\n";
-  print VCF "##INFO=<ID=ID,Number=number,Type=type,Description=”description”>\n"; # TODO modify this line
-  print VCF "##FILTER=<ID=ID,Description=”description”>\n";
+  print VCF "##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Approximate read depth; some reads may have been filtered\">\n";
+  print VCF "##INFO=<ID=MQ,Number=1,Type=Float,Description=\"RMS Mapping Quality\">\n";
+  print VCF "##FILTER=<ID=PASS,Description=”Passed”>\n";
+  print VCF join("\t",qw(#CHROM POS ID REF ALT QUAL FILTER INFO FORMAT SAMPLE))."\n";
   for(my $i=0;$i<@pos;$i++){
     my $posKey=$pos[$i];
     my($rname,$pos)=split(/::::/,$posKey);
@@ -305,6 +319,8 @@ sub findVariants{
     my $filter="PASS";
     my $format="."; # optional
     my $sample="."; # optional
+
+    # TODO info tags DP DP4 FQ
     my $info=join(";","DP=".$depth{$posKey});
 
     next if($refBase eq $altBase);
@@ -314,18 +330,9 @@ sub findVariants{
   }
   close VCF;
   die "need to finish implementing vcf and all its columns";
-
-  #my($qname,$flag,$rname,$pos,$mapq,$cigar,$rnext,$pnext,$tlen,$seq,$qual,$opt)=split /\t/;
-
-  # VCF fields, http://samtools.sourceforge.net/samtools.shtml
-  # ($chrom, $pos, $id, $ref, $alt, $qual, $filter, $info, $format, $sample)
-  # info tags to use
-  # DP DP4 FQ 
-
-  for(my $i=1;$i<1000;$i++){
-    print "$baseCall{$i}";
-  }die;
-  return \%baseCall;
+  die "need to finish different sam mapping codes beside M";
+  
+  return $vcf;
 }
 sub bamToFastq{
   my($bam,$bamIndex,$settings)=@_;
