@@ -27,6 +27,10 @@ use File::Temp qw/ tempfile tempdir /;
 use File::Spec;
 use POSIX qw/floor ceil/;
 
+use threads;
+use Thread::Queue;
+my @thread;
+
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
 exit(main());
 
@@ -37,6 +41,7 @@ sub main{
 
   GetOptions($settings,qw(assembly=s sam=s bam=s force tempdir=s keep outfile=s qual mask));
   $$settings{min_mapping_qual}||=1; # samtools mpileup -q parameter
+  $$settings{numcpus}||=AKUtils::getNumCPUs();
 
   # check for required parameters
   for my $param (qw(assembly)){
@@ -126,36 +131,6 @@ sub indexAssembly{
   return $assembly;
 }
 
-# the query illumina reads were aligned using the short read algorithm
-sub queryIlluminaReads{
-  my($settings)=@_;
-  my $outfile="$$settings{tempdir}/aln_sa.sai";
-  logmsg "Querying Illumina reads against assembly";
-  if(-e $outfile){
-    logmsg "Skipping because $outfile already exists. Use -f to force";
-    return $outfile;
-  }
-  my $command="bwa aln $$settings{assembly} $$settings{illumina} > $outfile";
-  command($command);
-  
-  return $outfile;
-}
-
-# The .sai output format was converted to the .sam output format as follows
-sub convertSaiToSam{
-  my($sai,$settings)=@_;
-  my $outfile="$$settings{tempdir}/sam.aln";
-  logmsg "Converting Sai to Sam format";
-  if(-e $outfile){
-    logmsg "Skipping because $outfile already exists. Use -f to force";
-    return $outfile;
-  }
-  my $command="bwa samse $$settings{assembly} $sai $$settings{illumina} > $outfile";
-  command($command);
-
-  return $outfile;
-}
-
 # generate a .bam, .sorted.bam, .sorted.bam.bai and a database.fasta.fai file
 sub createBam{
   my($sam,$settings)=@_;
@@ -197,16 +172,14 @@ sub findVariants{
   logmsg "Generating a pileup";
   warn "WARNING: all ambiguity codes are not implemented\n";
   warn "WARNING: all SAM CIGAR codes are not implemented. Only 'M' so far.\n";
-  $$settings{pileup_min_frequency}||=0.90;
+  $$settings{pileup_min_frequency}||=0.80;
   my $minimumAllowedCov=$$settings{minimumAllowedCov} || 5;
   my $allowedStdDeviations=3; # how many stdevs to go out for depth?
   my %ambiguity=("AG"=>"R","CT"=>"Y","CG"=>"S","AT"=>"W",
                  "GT"=>"K","AC"=>"M","CGT"=>"B","ACG"=>"V",
                  "ACT"=>"H","AGT"=>"D","GATC"=>"N");
+  # TODO use a more standardized combo maker to make an ambiguity has with every combination possible
   
-  # make a more complete ambiguity hash
-  # TODO use a more standardized combo maker
-
   my %pileup;
   open(BAM,"samtools view $bam |") or die "Could not open bam file $bam for reading: $!";
   my $readNum=0;
@@ -216,11 +189,11 @@ sub findVariants{
     chomp;
     my($qname,$flag,$rname,$pos,$mapq,$cigar,$rnext,$pnext,$tlen,$seq,$qual,$opt)=split /\t/;
     my $longhandCigar;
-    while($cigar=~/\*|((\d+)([MIDNSHPX=]))/g){
-      my ($num,$code)=($2,$3);
+    while($cigar=~/(\*)|((\d+)([MIDNSHPX=]))/g){
+      my ($num,$code)=($3,$4);
       
       # if there isn't a num then the col has an asterisk
-      if(!$num){
+      if($1 || !$num){
         next;
       }
 
@@ -236,7 +209,7 @@ sub findVariants{
       if($longhandCigar[$i] eq 'M'){
         $pileup{$posKey}.=substr($seq,$i,1);
       } elsif(!$longhandCigar[$i]){
-        next BAM_LINE;
+        #next BAM_LINE;
       } else {
         die "ERROR: Cannot cope with the sam code $longhandCigar[$i] yet";
       }
@@ -263,19 +236,58 @@ sub findVariants{
   $minDepth=floor($min);
 
   logmsg "Calling bases";
+  my $pileupToStrQueue=Thread::Queue->new();
+  $thread[$_]=threads->new(\&pileupBasecallWorker,$pileupToStrQueue,\%depth,$minDepth,$maxDepth,$settings) for(0..$$settings{numcpus}-1);
+  while(my ($posKey,$basePileup)=each(%pileup)){
+    $pileupToStrQueue->enqueue([$posKey,$basePileup]);
+  }
+  $pileupToStrQueue->enqueue(undef) for(@thread);
+
+  my @vcfLine;
+  for(@thread){
+    my $tmp=$_->join();
+    push(@vcfLine,@$tmp);
+  }
+  @vcfLine=sort({
+    my ($seqA,$posA)=split /\t/, $a;
+    my ($seqB,$posB)=split /\t/, $b;
+    return $seqA cmp $seqB if($seqA ne $seqB);
+    return $posA<=>$posB;
+  } @vcfLine);
+
+  # make the VCF file
+  my $vcf="$$settings{tempdir}/variants.vcf";
+  open(VCF,">$vcf") or die "Cannot open $vcf for writing";
+  print VCF "##fileformat=VCFv4.1\n";
+  print VCF "##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Approximate read depth; some reads may have been filtered\">\n";
+  print VCF "##INFO=<ID=MQ,Number=1,Type=Float,Description=\"RMS Mapping Quality\">\n";
+  print VCF "##FILTER=<ID=PASS,Description=”Passed according to $minDepth < depth < $maxDepth and $$settings{pileup_min_frequency} frequency of majority bases”>\n";
+  print VCF join("\t","#CHROM",qw(POS ID REF ALT QUAL FILTER INFO FORMAT SAMPLE))."\n";
+  print join("\n",@vcfLine)."\n";
+  close VCF;
+  die "need to finish implementing vcf and all its columns";
+  die "need to finish different sam mapping codes beside M";
+  
+  return $vcf;
+}
+
+sub pileupBasecallWorker{
+  my($Q,$depth,$minDepth,$maxDepth,$settings)=@_;
   my %baseCall;
   my %baseCount;
-  while(my ($posKey,$basePileup)=each(%pileup)){
+  my %pileup;
+  while(defined(my $posKeySeq=$Q->dequeue)){
+    my($posKey,$basePileup)=@$posKeySeq;
+    $pileup{$posKey}=$basePileup;
     my($rname,$pos)=split(/::::/,$posKey);
-    my $baseCall;
-    if($depth{$posKey}>$maxDepth || $depth{$posKey}<$minDepth){
-      $baseCall="";
+    my $baseCall="";
+    if($$depth{$posKey}>$maxDepth || $$depth{$posKey}<$minDepth){
+      #$baseCall=""; 
     } else {
       # get a percent of each base
       # for each base, is it above a % threshold?
-      my $seq=$basePileup;
       for my $nt ("A","T","C","G","N"){
-        $baseCount{$posKey}{$nt}=($seq=~s/$nt//g)/$depth{$posKey};
+        $baseCount{$posKey}{$nt}=($basePileup=~s/$nt//g)/$$depth{$posKey};
         if($baseCount{$posKey}{$nt}>$$settings{pileup_min_frequency}){
           $baseCall.=$nt;
           # TODO deal with ambiguous bases, esp if min_percent<50
@@ -295,21 +307,17 @@ sub findVariants{
     $referenceSeq{$seq->id}=$seq;
   }
 
+  # make the entire line for the vcf file
+  my @vcf; # this array will have one line per element
   my @pos=sort({
     my($rnameA,$posA)=split(/::::/,$a);
     my($rnameB,$posB)=split(/::::/,$b);
     return 0 if($rnameA ne $rnameB);
     return $posA <=> $posB;
   } keys(%baseCall));
-
-  my $vcf="$$settings{tempdir}/variants.vcf";
-  open(VCF,">$vcf") or die "Cannot open $vcf for writing";
-  print VCF "##fileformat=VCFv4.1\n";
-  print VCF "##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Approximate read depth; some reads may have been filtered\">\n";
-  print VCF "##INFO=<ID=MQ,Number=1,Type=Float,Description=\"RMS Mapping Quality\">\n";
-  print VCF "##FILTER=<ID=PASS,Description=”Passed”>\n";
-  print VCF join("\t",qw(#CHROM POS ID REF ALT QUAL FILTER INFO FORMAT SAMPLE))."\n";
-  for(my $i=0;$i<@pos;$i++){
+  my $numPos=@pos;
+  for(my $i=0;$i<$numPos;$i++){
+    my $vcfLine="";
     my $posKey=$pos[$i];
     my($rname,$pos)=split(/::::/,$posKey);
     my $refBase=$referenceSeq{$rname}->subseq($pos,$pos);
@@ -317,23 +325,24 @@ sub findVariants{
     my $id=$posKey; $id=~s/::::/_/;
     my $qual="20"; # TODO infer from %baseCount{$posKey}{$nt*}
     my $filter="PASS";
-    my $format="."; # optional
-    my $sample="."; # optional
 
     # TODO info tags DP DP4 FQ
-    my $info=join(";","DP=".$depth{$posKey});
+    my $consensusQuality=($refBase eq $altBase)?-20:20;
+    $consensusQuality=0 if($altBase eq 'N');
+    my $info=join(";","DP=".$$depth{$posKey},"SEQ=".$pileup{$posKey},"FQ=$consensusQuality");
+    $vcfLine.=join("\t",$rname,$pos,$id,$refBase,$altBase,$qual,
+       $filter,$info);
 
-    next if($refBase eq $altBase);
+    # optional fields
+    my $format="."; # optional
+    my $sample="."; # optional
+    $vcfLine.=join("\t",$format,$sample);
 
-    print VCF join("\t",$rname,$pos,$id,$refBase,$altBase,$qual,
-       $filter,$info,$format,$sample)."\n";
+    push(@vcf,$vcfLine);
   }
-  close VCF;
-  die "need to finish implementing vcf and all its columns";
-  die "need to finish different sam mapping codes beside M";
-  
-  return $vcf;
+  return \@vcf;
 }
+
 sub bamToFastq{
   my($bam,$bamIndex,$settings)=@_;
 
