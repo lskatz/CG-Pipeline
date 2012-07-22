@@ -180,8 +180,9 @@ sub findVariants{
                  "ACT"=>"H","AGT"=>"D","GATC"=>"N");
   # TODO use a more standardized combo maker to make an ambiguity has with every combination possible
 
-  my %flagBits=(400=>'duplicate',200=>'failsQuality',100=>'notPrimaryPosition',80=>'mate2',40=>'mate1',20=>'strand2',10=>'strand1',8=>'unmapped2',4=>'unmapped1',2=>'pairIsMapped',1=>'isPaired');
+  my %flagBits=(1024=>'duplicate',512=>'failsQuality',256=>'notPrimaryPosition',128=>'mate2',64=>'mate1',32=>'isOnRevStrand2',16=>'isOnRevStrand1',8=>'unmapped2',4=>'unmapped1',2=>'pairIsMapped',1=>'isPaired');
   my @sortedFlagBit=sort({$b<=>$a} keys(%flagBits));
+  my %emptyFlag = map { $_=>0 } values(%flagBits);
   
   my %pileup;
   open(BAM,"samtools view $bam |") or die "Could not open bam file $bam for reading: $!";
@@ -192,23 +193,25 @@ sub findVariants{
     chomp;
     my($qname,$flag,$rname,$pos,$mapq,$cigar,$rnext,$pnext,$tlen,$seq,$qual,$opt)=split /\t/;
 
-    # read the flag
-    # move to next read if the read is not mapped
-    if(! ($flag==0 || $flag==16)){
-      next BAM_LINE;
-      # TODO retain the unmapped reads
+    # read the flag into a hash
+    my %flag=%emptyFlag;
+    for my $bit(@sortedFlagBit){
+      if($flag & $bit){
+        $flag{$flagBits{$bit}}++;
+      }
+    }
+
+    if($flag{unmapped1}){
+      next;
+      # TODO consider paired ends (?)
+      # TODO do something with unmapped reads
     }
 
     my $longhandCigar;
     while($cigar=~/(\*)|((\d+)([MIDNSHPX=]))/g){
       my ($num,$code)=($3,$4);
-      
-      # if there isn't a num then the col has an asterisk
-      if($1 || !$num){
-        next;
-      }
-
       $longhandCigar.=$code x $num;
+      die "ERROR: Cannot cope with the sam cigar code '$code' yet" if($code!~/[MID]/);
     }
     my @longhandCigar=split(//,$longhandCigar);
 
@@ -219,10 +222,6 @@ sub findVariants{
 
       if($longhandCigar[$i] eq 'M'){
         $pileup{$posKey}.=substr($seq,$i,1);
-      } elsif(!$longhandCigar[$i]){
-        #next BAM_LINE;
-      } else {
-        die "ERROR: Cannot cope with the sam code $longhandCigar[$i] yet";
       }
     }
     if($readNum % 1000000 == 0){
@@ -348,7 +347,7 @@ sub pileupBasecallWorker{
     # optional fields
     my $format="."; # optional
     my $sample="."; # optional
-    $vcfLine.=join("\t",$format,$sample);
+    $vcfLine.="\t".join("\t",$format,$sample);
 
     push(@vcf,$vcfLine);
   }
