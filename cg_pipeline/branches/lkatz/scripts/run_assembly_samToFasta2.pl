@@ -179,6 +179,9 @@ sub findVariants{
                  "GT"=>"K","AC"=>"M","CGT"=>"B","ACG"=>"V",
                  "ACT"=>"H","AGT"=>"D","GATC"=>"N");
   # TODO use a more standardized combo maker to make an ambiguity has with every combination possible
+
+  my %flagBits=(400=>'duplicate',200=>'failsQuality',100=>'notPrimaryPosition',80=>'mate2',40=>'mate1',20=>'strand2',10=>'strand1',8=>'unmapped2',4=>'unmapped1',2=>'pairIsMapped',1=>'isPaired');
+  my @sortedFlagBit=sort({$b<=>$a} keys(%flagBits));
   
   my %pileup;
   open(BAM,"samtools view $bam |") or die "Could not open bam file $bam for reading: $!";
@@ -188,6 +191,14 @@ sub findVariants{
     $readNum++;
     chomp;
     my($qname,$flag,$rname,$pos,$mapq,$cigar,$rnext,$pnext,$tlen,$seq,$qual,$opt)=split /\t/;
+
+    # read the flag
+    # move to next read if the read is not mapped
+    if(! ($flag==0 || $flag==16)){
+      next BAM_LINE;
+      # TODO retain the unmapped reads
+    }
+
     my $longhandCigar;
     while($cigar=~/(\*)|((\d+)([MIDNSHPX=]))/g){
       my ($num,$code)=($3,$4);
@@ -263,7 +274,7 @@ sub findVariants{
   print VCF "##INFO=<ID=MQ,Number=1,Type=Float,Description=\"RMS Mapping Quality\">\n";
   print VCF "##FILTER=<ID=PASS,Description=”Passed according to $minDepth < depth < $maxDepth and $$settings{pileup_min_frequency} frequency of majority bases”>\n";
   print VCF join("\t","#CHROM",qw(POS ID REF ALT QUAL FILTER INFO FORMAT SAMPLE))."\n";
-  print join("\n",@vcfLine)."\n";
+  print VCF join("\n",@vcfLine)."\n";
   close VCF;
   die "need to finish implementing vcf and all its columns";
   die "need to finish different sam mapping codes beside M";
@@ -325,6 +336,7 @@ sub pileupBasecallWorker{
     my $id=$posKey; $id=~s/::::/_/;
     my $qual="20"; # TODO infer from %baseCount{$posKey}{$nt*}
     my $filter="PASS";
+    next if($altBase ne $refBase);
 
     # TODO info tags DP DP4 FQ
     my $consensusQuality=($refBase eq $altBase)?-20:20;
