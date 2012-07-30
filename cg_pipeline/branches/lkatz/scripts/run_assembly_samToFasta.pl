@@ -47,6 +47,7 @@ sub main{
     next if(!$$settings{$param});
     $$settings{$param} = File::Spec->rel2abs($$settings{$param});
   }
+  $$settings{assembly_backup}=$$settings{assembly}; # assembly path will change but I might need the original later
 
   # set up the directory structure
   $$settings{tempdir}  ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
@@ -197,6 +198,12 @@ sub bamToFastq{
   my $fastqOutNonstandard="$$settings{tempdir}/outNonstandard.fastq";
   my $fastqOutStandard="$$settings{tempdir}/outStandard.fastq";
   my $fastqOut="$$settings{tempdir}/outSplitContigs.fastq";
+
+  # We need the reference genome available and so it needs to be checked here again.
+  if(!-l $$settings{assembly} || !-f $$settings{assembly}){
+    logmsg "WARNING: $$settings{assembly} does not exist. I'm updating the link to $$settings{assembly_backup}";
+    command("ln -svf '$$settings{assembly_backup}' '$$settings{assembly}'");
+  }
 
   logmsg "Converting BAM to fastq";
   my $vcfutilsExec=AKUtils::fullPathToExec("run_assembly_vcfutils.pl");
