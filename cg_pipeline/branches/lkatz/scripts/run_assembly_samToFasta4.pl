@@ -38,9 +38,10 @@ sub main{
   my $settings=AKUtils::loadConfig($settings);
   die usage() if(@ARGV<1);
 
-  GetOptions($settings,qw(assembly=s sam=s bam=s force tempdir=s keep outfile=s qual mask));
-  $$settings{min_mapping_qual}||=1; # samtools mpileup -q parameter
+  GetOptions($settings,qw(assembly=s sam=s bam=s force tempdir=s keep outfile=s qual mask min_mapping_qual=i depth_allowedStdDeviations=i));
+  $$settings{min_mapping_qual}||=0; # samtools mpileup -q parameter
   $$settings{numcpus}||=AKUtils::getNumCPUs();
+  $$settings{depth_allowedStdDeviations}||=100;
 
   # check for required parameters
   for my $param (qw(assembly)){
@@ -118,6 +119,7 @@ sub setupBuildDirectory{
 # generate a .bam, .sorted.bam, .sorted.bam.bai and a database.fasta.fai file
 sub createBam{
   my($sam,$settings)=@_;
+  logmsg "Importing SAM to BAM";
   my $bamaln="$$settings{tempdir}/aln.bam";
   my $samindexed="$$settings{assembly}.fai";
   my $alnSortedPrefix="$$settings{tempdir}/aln.sorted";
@@ -126,7 +128,6 @@ sub createBam{
 
   # import the bam
   if(!-e $bamaln){
-    logmsg "Importing SAM to BAM";
     logmsg "$bamaln does not exist. Creating it now.";
     command("samtools faidx $$settings{assembly}");
     command("samtools import $samindexed $sam $bamaln");
@@ -153,18 +154,19 @@ sub indexBam{
 sub bamToFastq{
   my($bam,$bamIndex,$settings)=@_;
 
-  #my $out1="$$settings{tempdir}/mpileupout1.bcf";
-  #my $out2="$$settings{tempdir}/bcftoolsout2.vcf";
-  #my $variantsFile="$$settings{tempdir}/variants.vcf";
-  #my $fastqOutNonstandard="$$settings{tempdir}/outNonstandard.fastq";
+  my $mpileup="$$settings{tempdir}/pileup.vcf";
   my $basecallFile="$$settings{tempdir}/variants.unsorted.tsv";
   my $sortedBasecallFile="$$settings{tempdir}/variants.tsv";
   my $fastqOutStandard="$$settings{tempdir}/outStandard.fastq";
   my $fastqOut="$$settings{tempdir}/outSplitContigs.fastq";
   my($minDepth,$maxDepth)=covDepth($bam,$settings);
 
+  if(!-e $mpileup || -s $mpileup<100){
+    command("samtools mpileup -q $$settings{min_mapping_qual} '$bam' > '$mpileup'")
+  }
+
   if(!-e $sortedBasecallFile || -s $sortedBasecallFile <100){
-    logmsg "Performing multithreaded basecalling";
+    logmsg "Performing multithreaded basecalling.";
     my $mpileupQueue=Thread::Queue->new;
     my $mpileupPrintQueue=Thread::Queue->new;
     my $mpileupPrintThr=threads->new(\&printer,$basecallFile,$mpileupPrintQueue,$settings);
@@ -172,19 +174,18 @@ sub bamToFastq{
     $thr[$_]=threads->new(\&mpileupWorker,$mpileupQueue,$mpileupPrintQueue,$minDepth,$maxDepth,$settings) for(0..$$settings{numcpus}-1);
 
     my $i=1;
-    my $command="samtools mpileup -q $$settings{min_mapping_qual} $bam";
-    logmsg "COMMAND\n  $command";
-    open(IN,"$command |") or die "Error with samtools mpileup on the file $bam: $!";
+    open(IN,"<",$mpileup) or die "Could not read $mpileup: $!";
     while(my $line=<IN>){
       $mpileupQueue->enqueue($line);
 
       # TODO pause if the queue gets to be too large
       if($i++ % 1000000 == 0){
-        logmsg "Finished with $i positions";
+        logmsg "Finished loading ".($i-1)." positions";
         sleep 10 while($mpileupQueue->pending > 99999);
       }
       #last if($i>99999);
     }
+    logmsg "Finished loading positions into queue";
 
     close IN;
     while($mpileupQueue->pending>0){
@@ -201,31 +202,41 @@ sub bamToFastq{
     $mpileupPrintQueue->enqueue(undef);
     $_->join for(@thr);
     $mpileupPrintThr->join;
+    logmsg "Done calling $i bases";
+
+    # all the threads joined out of order, so now they need to be sorted
+    command("sort -k 1,1 -k 2,2 $basecallFile > $sortedBasecallFile");
   }
 
-  # all the threads joined out of order, so now they need to be sorted
-  command("sort -k 1,1 -k 2,2 $basecallFile > $sortedBasecallFile");
-
-  # opening the basecalls sorted file and reading results
-  my(%consensus,%consensusQuality);
+  logmsg "Opening $sortedBasecallFile to read base calls into memory";
+  my(%consensus,%consensusQuality,%maxPos);
   open(BASECALLS,"<",$sortedBasecallFile) or die ("Could not open $sortedBasecallFile: $!");
   while(<BASECALLS>){
     chomp;
     my($rseq,$pos,$nt,$qual)=split /\t/;
     $consensus{$rseq}[$pos]=$nt;
     $consensusQuality{$rseq}[$pos]=$qual;
+
+    $maxPos{$rseq}=1 if(!defined($maxPos{$rseq}));
+    $maxPos{$rseq}=$pos if($maxPos{$rseq}<$pos);
+    die "$_\n" if(!defined($qual) || !defined($nt));
   }
   close BASECALLS;
 
-  logmsg "Writing fastq consensus to $fastqOutStandard";
+  logmsg "Writing base calls to fastq consensus in $fastqOutStandard";
   open(FASTQ,">",$fastqOutStandard) or die "Could not open $fastqOutStandard for writing: $!";
-  while(my($rseq,$seqArr)=each(%consensus)){
-    $$seqArr[0]="" if(!$$seqArr[0]);
-    # don't do join(), to save memory and time
+  while(my($rseq,$maxPos)=each(%maxPos)){
     print FASTQ "\@$rseq\n";
-    print FASTQ $_ || "" for(@$seqArr);
+    my $seqArr=$consensus{$rseq};
+    for(my $i=1;$i<=$maxPos;$i++){
+      my $nt=$consensus{$rseq}[$i] || "N";
+      print FASTQ $nt;
+    }
     print FASTQ "\n+\n";
-    print FASTQ $_ || "" for(@{$consensusQuality{$rseq}});
+    for(my $i=1;$i<=$maxPos;$i++){
+      my $qual=$consensusQuality{$rseq}[$i] || 0;
+      print FASTQ $qual;
+    }
     print FASTQ "\n";
   }
   close FASTQ;
@@ -261,8 +272,7 @@ sub mpileupWorker{
         $baseCall=$topPossibility;
         $qualityCall=_qualityCall($baseCall,$pileup,$quality,$settings);
         if($baseCall=~/[+-]/){
-          logmsg "Found an insertion: $baseCall";
-          die "!!! $baseCall";
+          die "!!! Need to understand how to deal with insertions. Found this: $baseCall";
         }
       } else {
         $baseCall="N";
@@ -302,7 +312,8 @@ sub _qualityCall{
   return $qual;
 }
 
-# converts a pileup string and quality string to arrays
+# Converts a pileup string and quality string to arrays.
+# Ignores forward/reverse distinctions.
 sub _pileupStrToArr{
   my($pileup,$quality,$settings)=@_;
   my $qual=1; # start with 100% and go from there
@@ -454,33 +465,26 @@ sub splitFastqByGaps{
 sub covDepth{
   my($bam,$settings)=@_;
   my $minimumAllowedCov=$$settings{minimumAllowedCov} || 5;
-  my $allowedStdDeviations=3; # how many stdevs to go out for depth?
-  my $cacheFile="$$settings{tempdir}/covDepth.txt";
+  my $allowedStdDeviations=$$settings{depth_allowedStdDeviations}; # how many stdevs to go out for depth?
+  my $depthFile="$$settings{tempdir}/covDepth.tsv";
 
-  # get avg/stdev from the cache or from samtools
-  my($avgCov,$stdevCov);
-  if(-f $cacheFile && -s $cacheFile > 2){
-    open(CACHE,"<",$cacheFile) or die "Could not read cache from $cacheFile: $!";
-    my $line=<CACHE>; chomp($line);
-    ($avgCov,$stdevCov)=split("\t",$line);
-    close CACHE;
-  } else {
-    my $samtools=`which samtools`;#AKUtils::fullPathToExec("samtools");
-      chomp($samtools);
-    my $command="$samtools depth '$bam'";
-    logmsg "COMMAND\n  $command";
-    my $depth=`$command`; die if $?;
-    my @rawdata=split(/\n/,$depth);
-    my @data=map( (split(/\s+/,$_))[2],@rawdata); # 3rd column
-    die "ERROR: There is no coverage depth information. This could happen if the wrong sam/bam and fasta files are paired together." if(!@data);
-    $avgCov=average(\@data);
-    $stdevCov=stdev(\@data);
-
-    logmsg "Caching avg/stdev to $cacheFile";
-    open(CACHE,">",$cacheFile) or die "Could not cache depth information to $cacheFile: $!";
-    print CACHE join("\t",$avgCov,$stdevCov)."\n";
-    close CACHE;
+  my @depth;
+  if(!-f $depthFile || -s $depthFile < 1000){
+    my $samtools=AKUtils::fullPathToExec("samtools");
+    command("$samtools depth '$bam' > '$depthFile'");
   }
+  
+  open(DEPTH,$depthFile) or die "Could not open $depthFile for reading: $!";
+  while(<DEPTH>){
+    chomp;
+    my ($rseq,$pos,$depth)=split /\t/;
+    push(@depth,$depth);
+  }
+  close DEPTH;
+
+  die "ERROR: There is no coverage depth information. This could happen if the wrong sam/bam and fasta files are paired together." if(!@depth);
+  my $avgCov=average(\@depth);
+  my $stdevCov=stdev(\@depth);
 
   logmsg "Finding the min/max depth within $allowedStdDeviations standard deviations";
   my $max=ceil($avgCov+$allowedStdDeviations*$stdevCov);
@@ -489,31 +493,6 @@ sub covDepth{
   $min=floor($min);
 
   return($min,$max);
-}
-
-sub readPileupLine{
-  my($line,$settings)=@_;
-  my %x=(type=>'snp');
-  my @line=split(/\t/,$line);
-  ($x{'chr'},$x{'pos'},$x{refBase},$x{consensusBase},$x{consensusQuality},$x{snpQuality},$x{mappingQuality},$x{coverage},$x{bases},$x{quals})=@line;
-
-  # indels
-  if($x{refBase} eq '*'){
-    $x{type}='indel';
-    delete($x{bases});
-    delete($x{quals});
-    $x{consensusBase}=$line[8];
-    $x{consensusBase}=$line[9] if($x{consensusBase} eq '*');
-  }
-
-  # if you want to look at each base
-  if($$settings{pileup_splitBases}){
-    $x{basesArr}=[split(//,$x{bases})];
-    $x{qualsArr}=[split(//,$x{quals})];
-    #TODO put in numeric values for quality values
-  }
-  
-  return %x;
 }
 
 sub average{
@@ -574,13 +553,16 @@ Usage: perl $0 -a reference.fasta -s assembly.sam -o assembly.fasta -q
     default: $0.merged.fasta
   -t (optional) This is where temporary files will be stored. 
     Default: /tmp/xxxxxx/ where xxxxxx is a random directory
+  --min_mapping_qual An integer for the mapping quality needed.
+    Default: 0
+  -d allowed standard deviations of depth from the mean (3 std deviations to allow about 99% of all base calls)
+    Default: 100 (REALLY permissive)
 
   No arguments should be given for the following options
   -f (optional) Force.
   -k (optional) keep temporary files around (about 2GB of files in my test run)
   -q to output quality files too. (assembly.fasta.qual)
-  -m to mask any bases that have a lower mapping quality or where the depth is not in 2 standard deviations of the mean
+  --mask to mask any bases that have a lower mapping quality or where the depth is not in 2 standard deviations of the mean
   ";
 }
-
 
