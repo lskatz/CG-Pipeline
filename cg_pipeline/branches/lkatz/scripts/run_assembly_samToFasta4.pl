@@ -165,7 +165,8 @@ sub bamToFastq{
     command("samtools mpileup -q $$settings{min_mapping_qual} '$bam' > '$mpileup'")
   }
 
-  if(!-e $sortedBasecallFile || -s $sortedBasecallFile <100){
+  #if(!-e $sortedBasecallFile || -s $sortedBasecallFile <100){
+  logmsg "DEBUG"; if(1){
     logmsg "Performing multithreaded basecalling.";
     my $mpileupQueue=Thread::Queue->new;
     my $mpileupPrintQueue=Thread::Queue->new;
@@ -264,13 +265,13 @@ sub mpileupWorker{
     if($depth<$minDepth || $depth > $maxDepth){
       $baseCall="N";
       $qualityCall=0;
-    } elsif(0){  # TODO take care of insertions
+    #} elsif(0){  # TODO take care of insertions
     } else{
       my $topPossibility=(sort({$baseCount{$b}<=>$baseCount{$a}} keys(%baseCount)))[0];
       my $topPossibilityPercent=$baseCount{$topPossibility};
       if($topPossibilityPercent>$$settings{pileup_min_frequency}){
         $baseCall=$topPossibility;
-        $qualityCall=_qualityCall($baseCall,$pileup,$quality,$settings);
+        $qualityCall=_qualityCall($baseCall,$p,$q,$settings);
         if($baseCall=~/[+-]/){
           die "!!! Need to understand how to deal with insertions. Found this: $baseCall";
         }
@@ -288,13 +289,12 @@ sub mpileupWorker{
 
 # calculate the quality of an NT, based off of the pileup
 sub _qualityCall{
-  my($nt,$pileup,$quality,$settings)=@_;
+  my($nt,$p,$q,$settings)=@_;
   my $qual=1; # start with 100% and go from there
 
   # calculate the quality score of all correct calls combined
   # formula: 1 minus product of all error percentages
   # subtract off the mismatch quality scores
-  my ($p,$q)=_pileupStrToArr($pileup,$quality,$settings);
   my $numBases=@$p;
   for(my $i=0;$i<$numBases;$i++){
     # determine quality
@@ -333,11 +333,11 @@ sub _pileupStrToArr{
 
     ## take care of special characters
     # indels
-    if($p=~/[+-]/){
+    if($p=~/([+-])/){
       my $insLength=$p[$i+1]; # TODO WARNING assumes single-digit insertion
-      $p.=join("",@p[($i+1)..($i+1+$insLength)]);
-      $i+=$insLength+1; # increment the number of bases inserted plus the number
-      #logmsg "DEBUG: ins code is $p";
+      $p.=join("",@p[($i+1)..($i+1+$insLength)]); # $p is already + or -
+      $p.=$p[$i+$insLength+2] if($1 eq '+');
+      $i+=length($p)-2; # $insLength+1; # increment the number of bases inserted plus the number
     }
     # start/stops
     elsif($p=~/([\^\$])/){
