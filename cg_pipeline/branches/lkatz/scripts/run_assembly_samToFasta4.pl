@@ -146,7 +146,7 @@ sub indexBam{
   my ($bamaln,$alnSortedPrefix,$alnSorted,$settings)=@_;
   my $bamIndex="$alnSorted.bai";
   return ($alnSorted,$bamIndex) if(-e $alnSorted && -e $bamIndex && -s $bamIndex > 100);
-  command("samtools sort $bamaln $alnSortedPrefix");
+  command("samtools sort $bamaln $alnSortedPrefix") if(!-e $bamIndex || $bamIndex < 100);
   command("samtools index $alnSorted");
   return ($alnSorted,$bamIndex);
 }
@@ -154,93 +154,51 @@ sub indexBam{
 sub bamToFastq{
   my($bam,$bamIndex,$settings)=@_;
 
-  my $mpileup="$$settings{tempdir}/pileup.vcf";
+  my $mpileup="$$settings{tempdir}/mpileup.vcf";
+  my $freebayes="$$settings{tempdir}/freebayes.vcf";
   my $basecallFile="$$settings{tempdir}/variants.unsorted.tsv";
   my $sortedBasecallFile="$$settings{tempdir}/variants.tsv";
   my $fastqOutStandard="$$settings{tempdir}/outStandard.fastq";
   my $fastqOut="$$settings{tempdir}/outSplitContigs.fastq";
   my($minDepth,$maxDepth)=covDepth($bam,$settings);
 
-  if(!-e $mpileup || -s $mpileup<100){
-    command("samtools mpileup -q $$settings{min_mapping_qual} '$bam' > '$mpileup'")
+  if(!-e $freebayes){
+    my $exec=AKUtils::fullPathToExec("freebayes");
+    # output to a tmp file and then cp to the real destination, so that the file size doesn't matter when checking for the vcf
+    command("$exec --left-align-indels --min-base-quality 20 --min-alternate-fraction 0.75 --min-coverage 5 -v '$freebayes.tmp' -b '$bam' -f '$$settings{assembly}'");
+    command("cp '$freebayes.tmp' '$freebayes'");
   }
-
-  #if(!-e $sortedBasecallFile || -s $sortedBasecallFile <100){
-  logmsg "DEBUG"; if(1){
-    logmsg "Performing multithreaded basecalling.";
-    my $mpileupQueue=Thread::Queue->new;
-    my $mpileupPrintQueue=Thread::Queue->new;
-    my $mpileupPrintThr=threads->new(\&printer,$basecallFile,$mpileupPrintQueue,$settings);
-    my @thr;
-    $thr[$_]=threads->new(\&mpileupWorker,$mpileupQueue,$mpileupPrintQueue,$minDepth,$maxDepth,$settings) for(0..$$settings{numcpus}-1);
-
-    my $i=1;
-    open(IN,"<",$mpileup) or die "Could not read $mpileup: $!";
-    while(my $line=<IN>){
-      $mpileupQueue->enqueue($line);
-
-      # TODO pause if the queue gets to be too large
-      if($i++ % 1000000 == 0){
-        logmsg "Finished loading ".($i-1)." positions";
-        sleep 10 while($mpileupQueue->pending > 99999);
-      }
-      #last if($i>99999);
-    }
-    logmsg "Finished loading positions into queue";
-
-    close IN;
-    while($mpileupQueue->pending>0){
-      my $numPending=$mpileupQueue->pending;
-      logmsg "There are $numPending bases in the queue still...";
-      for(1..10){
-        sleep 5;
-        if($mpileupQueue->pending>0){
-          last;
-        }
-      }
-    }
-    $mpileupQueue->enqueue(undef) for(@thr);
-    $mpileupPrintQueue->enqueue(undef);
-    $_->join for(@thr);
-    $mpileupPrintThr->join;
-    logmsg "Done calling $i bases";
-
-    # all the threads joined out of order, so now they need to be sorted
-    command("sort -k 1,1 -k 2,2 $basecallFile > $sortedBasecallFile");
+  
+  # load the reference sequence
+  my %consensus;
+  my $ref=Bio::SeqIO->new(-file=>$$settings{assembly});
+  while(my $seq=$ref->next_seq){
+    $consensus{$seq->id}=[split(//,$seq->seq)];
   }
+  $ref->close;
 
-  logmsg "Opening $sortedBasecallFile to read base calls into memory";
-  my(%consensus,%consensusQuality,%maxPos);
-  open(BASECALLS,"<",$sortedBasecallFile) or die ("Could not open $sortedBasecallFile: $!");
-  while(<BASECALLS>){
+  # load up the alternate bases
+  open(VCF,"<",$freebayes) or die "Could not open $freebayes: $!";
+  while(<VCF>){
+    next if(/^#/);
     chomp;
-    my($rseq,$pos,$nt,$qual)=split /\t/;
-    $consensus{$rseq}[$pos]=$nt;
-    $consensusQuality{$rseq}[$pos]=$qual;
-
-    $maxPos{$rseq}=1 if(!defined($maxPos{$rseq}));
-    $maxPos{$rseq}=$pos if($maxPos{$rseq}<$pos);
-    die "$_\n" if(!defined($qual) || !defined($nt));
+    my($rseq,$pos,$varId,$refBase,$altBase,$qual)=split /\t/;
+    $consensus{$rseq}[$pos-1]=$altBase;
   }
-  close BASECALLS;
+  close VCF;
 
-  logmsg "Writing base calls to fastq consensus in $fastqOutStandard";
-  open(FASTQ,">",$fastqOutStandard) or die "Could not open $fastqOutStandard for writing: $!";
-  while(my($rseq,$maxPos)=each(%maxPos)){
-    print FASTQ "\@$rseq\n";
-    my $seqArr=$consensus{$rseq};
-    for(my $i=1;$i<=$maxPos;$i++){
-      my $nt=$consensus{$rseq}[$i] || "N";
-      print FASTQ $nt;
-    }
-    print FASTQ "\n+\n";
-    for(my $i=1;$i<=$maxPos;$i++){
-      my $qual=$consensusQuality{$rseq}[$i] || 0;
-      print FASTQ $qual;
-    }
-    print FASTQ "\n";
+  # print the consensus to a file
+  my $fastaOut="$$settings{tempdir}/consensus.fasta";
+  open(FASTAOUT,">",$fastaOut) or die "Could not open $fastaOut for writing: $!";
+  while(my($rseq,$bases)=each(%consensus)){
+    next if(!@$bases);
+    my $consensus=join("",@$bases);
+    $consensus=~s/(.{60})/$1\n/g;
+    print FASTAOUT ">$rseq\n$consensus\n";
   }
-  close FASTQ;
+  close FASTAOUT;
+  logmsg "Fasta is now in $fastaOut";die;
+
   splitFastqByGaps($fastqOutStandard,$fastqOut,$settings);
   return $fastqOut;
 }
@@ -332,8 +290,7 @@ sub _pileupStrToArr{
   my $j=0;
   for(my $i=0;$i<$numBases;$i++){
     my $p=$p[$i];
-    $q[$j]=1 if(!$q[$j]); # WARNING this is a patch for when q is not defined
-    my $q=$q[$j];
+    my $q=$q[$j] || 1;
     #die "Internal error\n". Dumper("i $i ($p)","j $j ($q)","len p ".length($pileup),"len q ".length($quality),$pileup,$quality) if(!$q[$j] || $q[$j]<=0);
 
     ## take care of special characters
@@ -345,9 +302,9 @@ sub _pileupStrToArr{
     }
     # start/stops
     elsif($p=~/([\^\$])/){
-      my $K=$p[++$i] if($1 eq '^'); # not sure what this K or E means
-      $p=$p[++$i];
-      #logmsg "DEBUG: start/stop code is $p ($K)";
+      my $mappingQual="";
+      $mappingQual=$p[++$i] if($1 eq '^');
+      $p.=$mappingQual;
     }
     next if(!defined($p) || $p=~/^\s*$/);
     push(@outP,$p);
@@ -355,6 +312,8 @@ sub _pileupStrToArr{
 
     $j++; # increment index for qual scores
   }
+
+  die "INTERNAL ERROR: pileup array length does not match quality scores array length\n".join(" ",@outP[0..12])."\n".join(" ",@outQ[0..12])."\n" if(scalar(@outP) != scalar(@outQ));
 
   return (\@outP,\@outQ);
 }
@@ -471,6 +430,7 @@ sub covDepth{
   my $minimumAllowedCov=$$settings{minimumAllowedCov} || 5;
   my $allowedStdDeviations=$$settings{depth_allowedStdDeviations}; # how many stdevs to go out for depth?
   my $depthFile="$$settings{tempdir}/covDepth.tsv";
+  logmsg "Finding the min/max depth within $allowedStdDeviations standard deviations";
 
   my @depth;
   if(!-f $depthFile || -s $depthFile < 1000){
@@ -490,11 +450,11 @@ sub covDepth{
   my $avgCov=average(\@depth);
   my $stdevCov=stdev(\@depth);
 
-  logmsg "Finding the min/max depth within $allowedStdDeviations standard deviations";
   my $max=ceil($avgCov+$allowedStdDeviations*$stdevCov);
   my $min=$avgCov-$allowedStdDeviations*$stdevCov;
   $min=$minimumAllowedCov if($min<$minimumAllowedCov);
   $min=floor($min);
+  logmsg "The min/max is $min/$max, and the avg is $avgCov";
 
   return($min,$max);
 }
@@ -559,7 +519,7 @@ Usage: perl $0 -a reference.fasta -s assembly.sam -o assembly.fasta -q
     Default: /tmp/xxxxxx/ where xxxxxx is a random directory
   --min_mapping_qual An integer for the mapping quality needed.
     Default: 0
-  -d allowed standard deviations of depth from the mean (3 std deviations to allow about 99% of all base calls)
+  -d allowed standard deviations of depth from the mean (3 std deviations to allow about 99% of all base calls, assuming a normal distribution)
     Default: 100 (REALLY permissive)
 
   No arguments should be given for the following options
