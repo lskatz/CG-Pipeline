@@ -374,17 +374,17 @@ sub flatten($) {
 }
 
 # If argument is an executable in the current path, returns the full path to it, otherwise returns undef
-# arguments: die_on_error
+# arguments: warn_on_error
 sub fullPathToExec($) {
 	my ($executable,$settings) = @_;
 	my $fullpath;
 	for ("", split(/:/, $ENV{PATH})) {
-		if (-x $_."/".$executable && !-d $_."/".$executable) { $fullpath = File::Spec->rel2abs($_."/".$executable); last; }
+		if (-x $_."/".$executable && -f $_."/".$executable) { $fullpath = File::Spec->rel2abs($_."/".$executable); last; }
 	}
   if(! -x $fullpath){
 	  my $errStr="Error finding full path to file ($executable)";
-    warn $errStr if(!$$settings{die_on_error});
-    die $errStr if($$settings{die_on_error});
+    warn $errStr if($$settings{warn_on_error});
+    die $errStr if(!$$settings{warn_on_error});
   }
 	return $fullpath;
 }
