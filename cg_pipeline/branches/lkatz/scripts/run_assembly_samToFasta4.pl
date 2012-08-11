@@ -74,25 +74,13 @@ sub main{
     ($bam,$bamIndex)=indexBam($bam,$alnSortedPrefix,$alnSorted,$settings);
   }
 
-  my $fastqOut=bamToFastq($bam,$bamIndex,$settings);
-  my ($newAssembly,$newAssemblyQual)=fastqToFastaQual($fastqOut,$settings);
-
-  open(OUT,">$$settings{outfile}") or die "Could not open $$settings{outfile} because $!";
-  print OUT $newAssembly;
-  close OUT;
-  open(OUT,">$$settings{outfile}.qual") or die "Could not open $$settings{outfile}.qual because $!";
-  print OUT $newAssemblyQual;
-  close OUT;
+  my $fastaOut=bamToFasta($bam,$bamIndex,$settings);
+  #my ($newAssembly,$newAssemblyQual)=fastqToFastaQual($fastqOut,$settings);
+  system("cp -v $fastaOut $$settings{outfile}");
+  die "Could not cp $fastaOut to $$settings{outfile}:$!" if $?;
   logmsg "Output is in $$settings{outfile}";
 
   return 0;
-
-  # print out the new assembly
-  $$settings{order_seqs_by_name}=1;
-  AKUtils::printSeqsToFile($newAssembly,$$settings{outfile},$settings);
-  logmsg "Printed new assembly file $$settings{outfile}";
-
-  return 1;
 }
 
 sub setupBuildDirectory{
@@ -151,7 +139,7 @@ sub indexBam{
   return ($alnSorted,$bamIndex);
 }
 
-sub bamToFastq{
+sub bamToFasta{
   my($bam,$bamIndex,$settings)=@_;
 
   my $mpileup="$$settings{tempdir}/mpileup.vcf";
@@ -191,234 +179,14 @@ sub bamToFastq{
   my $fastaOut="$$settings{tempdir}/consensus.fasta";
   open(FASTAOUT,">",$fastaOut) or die "Could not open $fastaOut for writing: $!";
   while(my($rseq,$bases)=each(%consensus)){
-    next if(!@$bases);
+    $$bases[0]||="N"; # put at least some sequence here
+    $_||="N" for(@$bases); # make sure that each base is declared
     my $consensus=join("",@$bases);
     $consensus=~s/(.{60})/$1\n/g;
     print FASTAOUT ">$rseq\n$consensus\n";
   }
   close FASTAOUT;
-  logmsg "Fasta is now in $fastaOut";die;
-
-  splitFastqByGaps($fastqOutStandard,$fastqOut,$settings);
-  return $fastqOut;
-}
-
-sub mpileupWorker{
-  my($Q,$mpileupPrintQueue,$minDepth,$maxDepth,$settings)=@_;
-  my $tid="TID".threads->tid;
-  my $tidNum=threads->tid;
-  while(defined(my $samLine=$Q->dequeue)){
-    chomp($samLine);
-    my (%baseCount);
-    my($rseq,$pos,undef,$depth,$pileup,$quality)=split(/\t/,$samLine);
-    $depth=1 if($depth<1); # avoid divide by 0 error
-
-    #die "TODO consider insertions";
-    my ($p,$q)=_pileupStrToArr($pileup,$quality,$settings);
-    $baseCount{$_}++ for (@$p);
-    $baseCount{$_}/=$depth for(keys(%baseCount));
-    my $topPossibility=(sort({$baseCount{$b}<=>$baseCount{$a}} keys(%baseCount)))[0];
-    my $topPossibilityPercent=$baseCount{$topPossibility};
-
-    my $baseCall="";
-    my $qualityCall="";
-    if($depth<$minDepth || $depth > $maxDepth){
-      $baseCall="N";
-      $qualityCall=0;
-    } elsif($topPossibility=~/^([+-])/){  # TODO take care of insertions
-      die "This is an indel site\n$pileup\n";
-      if($1 eq '+'){
-      } else { # eq '-'
-        
-      }
-    } else{
-      if($topPossibilityPercent>$$settings{pileup_min_frequency}){
-        $baseCall=$topPossibility;
-        $qualityCall=_qualityCall($baseCall,$p,$q,$settings);
-        if($baseCall=~/[+-]/){
-          die "!!! Need to understand how to deal with insertions. Found this: $baseCall";
-        }
-      } else {
-        $baseCall="N";
-        $qualityCall=0;
-      }
-    }
-
-    $mpileupPrintQueue->enqueue(join("\t",$rseq,$pos,$baseCall,$qualityCall)."\n");
-  }
-  logmsg "$tid DONE";
-  return 1;
-}
-
-# calculate the quality of an NT, based off of the pileup
-sub _qualityCall{
-  my($nt,$p,$q,$settings)=@_;
-  my $qual=1; # start with 100% and go from there
-
-  # calculate the quality score of all correct calls combined
-  # formula: 1 minus product of all error percentages
-  # subtract off the mismatch quality scores
-  my $numBases=@$p;
-  for(my $i=0;$i<$numBases;$i++){
-    # determine quality
-    if($$p[$i] eq $nt){
-      $qual*=$$q[$i];
-    } else {
-      $qual/=$$q[$i];
-    }
-  }
-  $qual=int(-10*log($qual||0.0000000001));
-  #print Dumper [[join(" ",@p)],[join(" ",@q)],$qual];die;
-  $qual=60 if($qual>60);
-  #convert back to letter code
-  $qual=chr($qual+33);
-  return $qual;
-}
-
-# Converts a pileup string and quality string to arrays.
-# Ignores forward/reverse distinctions.
-sub _pileupStrToArr{
-  my($pileup,$quality,$settings)=@_;
-  my $qual=1; # start with 100% and go from there
-  $pileup=uc($pileup);
-  my @p=split(//,$pileup);
-  my @q=split(//,$quality);
-  @q=map(10**(-1*(ord($_)-33)/10),@q);
-  my $numBases=@p;
-
-  my (@outQ,@outP);
-  my $j=0;
-  for(my $i=0;$i<$numBases;$i++){
-    my $p=$p[$i];
-    my $q=$q[$j] || 1;
-    #die "Internal error\n". Dumper("i $i ($p)","j $j ($q)","len p ".length($pileup),"len q ".length($quality),$pileup,$quality) if(!$q[$j] || $q[$j]<=0);
-
-    ## take care of special characters
-    # indels
-    if($p=~/([+-])/){
-      my $insLength=$p[$i+1]; # TODO WARNING assumes single-digit insertion
-      $p.=join("",@p[($i+1)..($i+1+$insLength)]); # $p is already + or -
-      $i+=length($p)-2; # $insLength+1; # increment the number of bases inserted plus the number
-    }
-    # start/stops
-    elsif($p=~/([\^\$])/){
-      my $mappingQual="";
-      $mappingQual=$p[++$i] if($1 eq '^');
-      $p.=$mappingQual;
-    }
-    next if(!defined($p) || $p=~/^\s*$/);
-    push(@outP,$p);
-    push(@outQ,$q);
-
-    $j++; # increment index for qual scores
-  }
-
-  die "INTERNAL ERROR: pileup array length does not match quality scores array length\n".join(" ",@outP[0..12])."\n".join(" ",@outQ[0..12])."\n" if(scalar(@outP) != scalar(@outQ));
-
-  return (\@outP,\@outQ);
-}
-
-sub fastqToFastaQual{
-  my($fastq,$settings)=@_;
-
-  open(FASTQ,"<",$fastq) or die "Could not open $fastq because $!";
-  my $i=0;
-  my $seqId="";
-  my($fasta,$qual);
-  while(my $fastqEntry=<FASTQ>){
-    $fastqEntry.=<FASTQ> for(1..3);
-    my($fastaEntry,$qualEntry)=fastqEntryToFastaQual($fastqEntry,$settings);
-    next if(!$fastaEntry);
-    $qual.="$qualEntry\n";
-    $fasta.="$fastaEntry\n";
-  }
-  close FASTQ;
-  return($fasta,$qual);
-}
-
-sub fastqEntryToFastaQual{
-  my($entry,$settings)=@_;
-  $entry=~s/^\s+|\s+$//g;
-  my($id,$sequence,undef,$qualIllumina)=split(/\s*\n\s*/,$entry);
-  return 0 if(!$qualIllumina || length($sequence) < 50); # return false if there's nothing here
-  $id=~s/^@/>/;
-  my @qual=split(//,$qualIllumina);
-  @qual=map(ord($_)-33,@qual);
-  for(my $i=60;$i<@qual;$i+=60){
-    $qual[$i].="\n";
-  }
-  my $qualFasta=join(" ",@qual);
-  
-  $sequence=~s/(.{60})/$1\n/g;
-  my $fastaEntry="$id\n$sequence";
-  my $qualEntry="$id\n$qualFasta";
-  return ($fastaEntry,$qualEntry) if wantarray;
-  return $fastaEntry;
-}
-
-# split contigs by gaps
-sub splitFastqByGaps{
-  my($fastq,$fastqOut,$settings)=@_;
-  die "ERROR: need min_gap_size" if(!$$settings{min_gap_size});
-
-  my $contigBreak="N"x$$settings{min_gap_size};
-  my $qualContigBreak=chr(33)x$$settings{min_gap_size};
-
-  logmsg "Splitting contigs by gaps of size $$settings{min_gap_size} from $fastq to $fastqOut";
-  open(IN,$fastq) or die "Could not open $fastq because $!";
-  open(OUT,">",$fastqOut) or die "Could not write to $fastqOut because $!";
-  while(my $seqId=<IN>){
-    my $sequence=<IN>;
-    <IN>; # + sign
-    my $qual=<IN>;
-    chomp($seqId,$sequence,$qual);
-
-    # Lowercase nts are low quality in either depth or mapping quality, according to samtools. 
-    # Turn them into Ns if the user requests it.
-    $sequence=~tr/atcgn/N/ if($$settings{mask});
-    
-    # look for large enough gaps to split contigs
-    # A hack: start the sequence with the gap string
-    $sequence="$contigBreak$sequence";
-    $qual="$qualContigBreak$qual";
-    my $seqLength=length($sequence);
-    my (@gapStart,@gapStop);
-    my $contigNum=0;
-    for(my $i=0;$i<$seqLength;$i++){ 
-      next if(uc(substr($sequence,$i,$$settings{min_gap_size})) ne $contigBreak);
-      # step 1: the contig break has been found.
-      $gapStart[$contigNum]=$i;
-      # step 2: elongation
-      $i+=$$settings{min_gap_size};
-      for($i=$i;$i<$seqLength;$i++){
-        last if(uc(substr($sequence,$i,1)) ne "N");
-      }
-      $gapStop[$contigNum]=$i-1;
-      $contigNum++;
-    }
-
-    # extract contigs between gaps
-    my @newContig;
-    my $contigStart=0;
-    for(my $i=0;$i<@gapStart;$i++){
-      my $subseqId=$seqId."_subcontig$i";
-      my $contigStop;
-      if($i+1<@gapStart){
-        $contigStop=$gapStart[$i+1]-1;
-      } else { $contigStop=$seqLength; }
-      if($contigStop<1){
-        next;
-      }
-      $contigStart=$gapStop[$i]+1;
-      my $newContig=substr($sequence,$contigStart,($contigStop-$contigStart+1));
-      my $newQual=substr($qual,$contigStart,($contigStop-$contigStart+1));
-      print OUT "$subseqId\n$newContig\n+\n$newQual\n";
-    }
-
-  }
-  close OUT;
-  close IN;
-  return $fastqOut;
+  return $fastaOut;
 }
 
 #########################
