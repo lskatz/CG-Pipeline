@@ -78,7 +78,7 @@ sub main{
         next if($$settings{recordsWritten} < $recordToStartFrom); # useful for continuing
         if($i % 10000 == 0){
           logmsg("[".int(100*$reader->byteConsumed/$file_size)."%] Processed $i records...");
-          sleep 5 if($xmlToDbQueue->pending > 999999 || $printQueue->pending > 999999); # keep the queue down below 1 mil
+          sleep 1 if($xmlToDbQueue->pending > 999999 || $printQueue->pending > 999999); # keep the queue down below 1 mil
         }
         $xmlToDbQueue->enqueue($reader->readOuterXml);
 
@@ -221,7 +221,7 @@ sub closeDbs{
 sub reportNumEntries{
   my ($file)=@_;
   logmsg "Counting the number of expected entries in the XML files with grep. This could take a few minutes.";
-  system("grep -c '<entry' ".join(" ",@$file));
+  system("grep -cH '<entry' ".join(" ",@$file));
   warn "Could not find the number of entries: $!\n  Skipping.\n" if $?;
 }
 
