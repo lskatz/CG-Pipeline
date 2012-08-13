@@ -76,10 +76,9 @@ sub main{
         next if($$settings{recordsWritten} < $recordToStartFrom); # useful for continuing
         if($i % 10000 == 0){
           logmsg("[".int(100*$reader->byteConsumed/$file_size)."%] Processed $i records...");
-          #flushdb();
+          sleep 5 if($xmlToDbQueue->pending > 999999 || $printQueue->pending > 999999); # keep the queue down below 1 mil
         }
         $xmlToDbQueue->enqueue($reader->readOuterXml);
-        sleep 5 if($xmlToDbQueue->pending > 999999); # keep the queue down below 1 mil
 
         $reader->next; # skip subtree
       }
