@@ -23,11 +23,11 @@ use Thread::Queue;
 $0=fileparse($0);
 
 my $settings={
-  recordsWritten=>0,
   logfile=>"$0.log",
   numcpus=>AKUtils::getNumCPUs(),
 };
 my (%uniprot_h, %uniprot_evidence_h); # need to be global
+my $recordsWritten=0;
 
 $SIG{INT}=sub{closeDbs(); die @_;};
 exit(main());
@@ -74,11 +74,15 @@ sub main{
     my $i;
     while ($reader->read) {
       if ($reader->name eq 'entry' and $reader->nodeType != XML_READER_TYPE_END_ELEMENT) {
-        $i++; $$settings{recordsWritten}++; 
-        next if($$settings{recordsWritten} < $recordToStartFrom); # useful for continuing
+        $i++;
+        next if($recordsWritten < $recordToStartFrom); # useful for continuing
         if($i % 10000 == 0){
           logmsg("[".int(100*$reader->byteConsumed/$file_size)."%] Processed $i records...");
-          sleep 1 if($xmlToDbQueue->pending > 999999 || $printQueue->pending > 999999); # keep the queue down below 1 mil
+          # keep the queue down below 10k
+          while($xmlToDbQueue->pending > 9999 || $printQueue->pending > 9999){
+            logmsg "Slowing the analysis because the queue for printing to the database or the queue for analyzing the XML is quite large:". $printQueue->pending." ".$xmlToDbQueue->pending." respectively";
+            sleep 60;
+          }
         }
         $xmlToDbQueue->enqueue($reader->readOuterXml);
 
@@ -87,7 +91,7 @@ sub main{
     }
     logmsg "Processed $i records, done with file $infile";
   }
-  logmsg "Processed $$settings{recordsWritten} records, done";
+  logmsg "Processed $recordsWritten records, done";
 
   $xmlToDbQueue->enqueue(undef) for(0..$$settings{numcpus}-1);
   $_->join for(@xmlToDb);
@@ -191,6 +195,7 @@ sub db3Printer{
     my($accession,$uniprot_h,$uniprot_evidence_h)=@$queueItem;
     $uniprot_h{$accession}=$uniprot_h;
     $uniprot_evidence_h{$accession}=$_ for(@$uniprot_evidence_h);
+    $recordsWritten++;
   }
   flushdb();
   return 1;
@@ -200,7 +205,6 @@ sub flushdb{
   logmsg "flushing the database";
   closeDbs();
   openDbs();
-  logProgress($$settings{logfile},$$settings{recordsWritten},$settings);
 }
 
 sub openDbs{
@@ -215,6 +219,7 @@ sub openDbs{
 sub closeDbs{
   untie %uniprot_h;
   untie %uniprot_evidence_h;
+  logProgress($$settings{logfile},$recordsWritten,$settings);
   return 1;
 }
 
