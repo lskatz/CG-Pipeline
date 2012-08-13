@@ -5,7 +5,6 @@
 # Author: Lee Katz (lkatz@cdc.gov)
 # 2012-7-12 Added ability to interrupt and continue the indexing 
 # 2012-7-18 Added a logfile to help with continuing the database
-# TODO put md5sum of xml files to keep track of what was parsed
 
 use strict;
 use FindBin;
@@ -18,15 +17,19 @@ use File::Basename;
 use XML::LibXML::Reader;
 use BerkeleyDB;
 
+use threads;
+use Thread::Queue;
+
 $0=fileparse($0);
 
 my $settings={
   recordsWritten=>0,
   logfile=>"$0.log",
+  numcpus=>AKUtils::getNumCPUs(),
 };
 my (%uniprot_h, %uniprot_evidence_h); # need to be global
 
-$SIG{INT}=sub{flushdb(); die @_;};
+$SIG{INT}=sub{closeDbs(); die @_;};
 exit(main());
 
 sub main{
@@ -50,13 +53,12 @@ sub main{
   GetOptions($settings,qw(force! help! logfile=s));
   die(usage()) if $$settings{help};
 
-  my ($dbfile, $evidence_dbfile) = ("cgpipeline.db3", "cgpipeline.evidence.db3");
-  unlink ($dbfile, $evidence_dbfile,$$settings{logfile}) if($$settings{force});
+  my $printQueue=Thread::Queue->new;
+  my $printer=threads->new(\&db3Printer,$printQueue,$settings);
 
-  tie(%uniprot_h, "BerkeleyDB::Hash", -Filename => $dbfile,  -Flags => DB_CREATE, -Property => DB_DUP)
-    or die "Cannot open file $dbfile: $! $BerkeleyDB::Error\n";
-  tie(%uniprot_evidence_h, "BerkeleyDB::Hash", -Filename => $evidence_dbfile, -Flags => DB_CREATE, -Property => DB_DUP)
-    or die "Cannot open file $evidence_dbfile: $! $BerkeleyDB::Error\n";
+  my $xmlToDbQueue=Thread::Queue->new;
+  my @xmlToDb;
+  $xmlToDb[$_]=threads->new(\&xmlToDbWorker,$xmlToDbQueue,$printQueue,$settings) for(0..$$settings{numcpus}-1);
 
   my $recordToStartFrom=readLogfile($settings);
 
@@ -71,9 +73,14 @@ sub main{
     while ($reader->read) {
       if ($reader->name eq 'entry' and $reader->nodeType != XML_READER_TYPE_END_ELEMENT) {
         $i++; $$settings{recordsWritten}++; 
-        next if($$settings{recordsWritten} < $recordToStartFrom);
-        logmsg("[".int(100*$reader->byteConsumed/$file_size)."%] Processed $i records...") if $i % 1000 == 0;
-        processUniprotXMLEntry($reader->readOuterXml);
+        next if($$settings{recordsWritten} < $recordToStartFrom); # useful for continuing
+        if($i % 10000 == 0){
+          logmsg("[".int(100*$reader->byteConsumed/$file_size)."%] Processed $i records...");
+          #flushdb();
+        }
+        $xmlToDbQueue->enqueue($reader->readOuterXml);
+        sleep 5 if($xmlToDbQueue->pending > 999999); # keep the queue down below 1 mil
+
         $reader->next; # skip subtree
       }
     }
@@ -81,9 +88,22 @@ sub main{
   }
   logmsg "Processed $$settings{recordsWritten} records, done";
 
-  flushdb();
+  $xmlToDbQueue->enqueue(undef) for(0..$$settings{numcpus}-1);
+  $_->join for(@xmlToDb);
+  $printer->join;
 
   return 0;
+}
+
+sub xmlToDbWorker{
+  my($Q,$printQueue,$settings)=@_;
+  while(defined(my $xmlStr=$Q->dequeue)){
+    my($accession,$uniprot_h,$uniprot_evidence_h)=processUniprotXMLEntry($xmlStr);
+    $printQueue->enqueue([$accession,$uniprot_h,$uniprot_evidence_h]);
+  }
+  $printQueue->enqueue(undef);
+
+  return 1;
 }
 
 sub processUniprotXMLEntry($) {
@@ -144,23 +164,57 @@ sub processUniprotXMLEntry($) {
 						dbRefName => $db_ref_name});
 	}
 
+  my($uniprot_h,$uniprot_evidence_h)=("",[]);
 	s/\|/\\|/g for values(%info);
 	my @l; push(@l, $info{$_}) for qw(accession name dataset proteinName proteinType geneType geneName dbRefId);
-	$uniprot_h{$info{accession}} = join('|', @l);
+  $uniprot_h=join('|',@l);
 
-	foreach my $ref (@db_refs) {
+  foreach my $ref (@db_refs) {
 		s/\|/\\|/g for values(%$ref);
 		my @l; push(@l, $$ref{$_}) for qw(accession dbRefId dbRefType dbRefName);
-		$uniprot_evidence_h{$info{accession}} = join('|', @l);
-	}
+    push(@$uniprot_evidence_h,join('|', @l));
+    #$$uniprot_evidence_h{$info{accession}} = join('|', @l);
+  }
+
+  return($info{accession},$uniprot_h,$uniprot_evidence_h);
+}
+
+sub db3Printer{
+  my($Q,$settings)=@_;
+  my ($dbfile, $evidence_dbfile) = ("cgpipeline.db3", "cgpipeline.evidence.db3");
+  unlink ($dbfile, $evidence_dbfile,$$settings{logfile}) if($$settings{force});
+
+  openDbs();
+
+  while(defined(my $queueItem=$Q->dequeue)){
+    my($accession,$uniprot_h,$uniprot_evidence_h)=@$queueItem;
+    $uniprot_h{$accession}=$uniprot_h;
+    $uniprot_evidence_h{$accession}=$_ for(@$uniprot_evidence_h);
+  }
+  flushdb();
+  return 1;
 }
 
 sub flushdb{
   logmsg "flushing the database";
+  closeDbs();
+  openDbs();
+  logProgress($$settings{logfile},$$settings{recordsWritten},$settings);
+}
+
+sub openDbs{
+  my ($dbfile, $evidence_dbfile) = ("cgpipeline.db3", "cgpipeline.evidence.db3");
+  tie(%uniprot_h, "BerkeleyDB::Hash", -Filename => $dbfile,  -Flags => DB_CREATE, -Property => DB_DUP)
+    or die "Cannot open file $dbfile: $! $BerkeleyDB::Error\n";
+  tie(%uniprot_evidence_h, "BerkeleyDB::Hash", -Filename => $evidence_dbfile, -Flags => DB_CREATE, -Property => DB_DUP)
+    or die "Cannot open file $evidence_dbfile: $! $BerkeleyDB::Error\n";
+  return 1;
+}
+
+sub closeDbs{
   untie %uniprot_h;
   untie %uniprot_evidence_h;
-
-  logProgress($$settings{logfile},$$settings{recordsWritten},$settings);
+  return 1;
 }
 
 sub readLogfile{
@@ -177,6 +231,11 @@ sub readLogfile{
   my($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime($timestamp);
   $year+=1900;
   logmsg "The last write was on $year-$mon-$mday with $record records. I am finding this record number now, but it might take a while if you have gone far. To start over, use the -f flag";
+  if($$settings{force}){
+    $record=0;
+    logmsg "  However, you are forcing a restart and so I will start with record $record.";
+  }
+  
   return $record;
 }
 sub logProgress{
@@ -203,5 +262,6 @@ sub usage{
 
 # Need to flush database on exit
 END{
-  flushdb();
+  print "END of script detected. Flushing the databases.\n";
+  closeDbs();
 }
