@@ -50,8 +50,10 @@ sub main{
   }
   # getting input files: done.
 
-  GetOptions($settings,qw(force! help! logfile=s));
+  GetOptions($settings,qw(force! help! logfile=s numExpectedEntries));
   die(usage()) if $$settings{help};
+
+  reportNumEntries(\@infiles,$settings) if($$settings{numExpectedEntries});
 
   my $printQueue=Thread::Queue->new;
   my $printer=threads->new(\&db3Printer,$printQueue,$settings);
@@ -216,6 +218,13 @@ sub closeDbs{
   return 1;
 }
 
+sub reportNumEntries{
+  my ($file)=@_;
+  logmsg "Counting the number of expected entries in the XML files with grep. This could take a few minutes.";
+  system("grep -c '<entry' ".join(" ",@$file));
+  warn "Could not find the number of entries: $!\n  Skipping.\n" if $?;
+}
+
 sub readLogfile{
   my ($settings)=@_;
   return 0 if(!-e $$settings{logfile});
@@ -256,6 +265,7 @@ sub usage{
   -l logfile name (default: $$settings{logfile})
   -f to force
     logfile and database files will be deleted and you will start over
+  -num to give an approximate count of entries before reading the XML files
   ";
 }
 
