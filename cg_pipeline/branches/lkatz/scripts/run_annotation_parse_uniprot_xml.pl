@@ -81,7 +81,7 @@ sub main{
           # keep the queue down below 10k
           while($xmlToDbQueue->pending > 9999 || $printQueue->pending > 9999){
             logmsg "Slowing the analysis because the queue for printing to the database or the queue for analyzing the XML is quite large:". $printQueue->pending." ".$xmlToDbQueue->pending." respectively";
-            sleep 60;
+            sleep 1 while($xmlToDbQueue->pending>9999 || $printQueue->pending>9999);
           }
         }
         $xmlToDbQueue->enqueue($reader->readOuterXml);
