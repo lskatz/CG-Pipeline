@@ -18,6 +18,7 @@ use XML::LibXML::Reader;
 use BerkeleyDB;
 
 use threads;
+use threads::shared;
 use Thread::Queue;
 
 $0=fileparse($0);
@@ -27,7 +28,8 @@ my $settings={
   numcpus=>AKUtils::getNumCPUs(),
 };
 my (%uniprot_h, %uniprot_evidence_h); # need to be global
-my $recordsWritten=0;
+my $recordsWritten :shared=0;
+my $recordToStartFrom :shared=0;
 
 $SIG{INT}=sub{closeDbs(); die @_;};
 exit(main());
@@ -62,7 +64,7 @@ sub main{
   my @xmlToDb;
   $xmlToDb[$_]=threads->new(\&xmlToDbWorker,$xmlToDbQueue,$printQueue,$settings) for(0..$$settings{numcpus}-1);
 
-  my $recordToStartFrom=readLogfile($settings);
+  $recordToStartFrom=readLogfile($settings);
 
   foreach my $infile (@infiles) {
     logmsg "Processing XML in file $infile...";
@@ -75,7 +77,10 @@ sub main{
     while ($reader->read) {
       if ($reader->name eq 'entry' and $reader->nodeType != XML_READER_TYPE_END_ELEMENT) {
         $i++;
-        next if($recordsWritten < $recordToStartFrom); # useful for continuing
+        if($recordsWritten < $recordToStartFrom){ # useful for continuing
+          $recordsWritten++;
+          next;
+        }
         if($i % 10000 == 0){
           logmsg("[".int(100*$reader->byteConsumed/$file_size)."%] Processed $i records...");
           # keep the queue down below 10k
@@ -88,6 +93,9 @@ sub main{
 
         $reader->next; # skip subtree
       }
+      if($i>100000){
+        logmsg "DEBUG";last;
+      }
     }
     logmsg "Processed $i records, done with file $infile";
   }
@@ -95,6 +103,7 @@ sub main{
 
   $xmlToDbQueue->enqueue(undef) for(0..$$settings{numcpus}-1);
   $_->join for(@xmlToDb);
+  $printQueue->enqueue(undef);
   $printer->join;
 
   return 0;
@@ -102,12 +111,19 @@ sub main{
 
 sub xmlToDbWorker{
   my($Q,$printQueue,$settings)=@_;
+  my @printBuffer;
+  my $bufferLength=1000;
+  my $i=0;
   while(defined(my $xmlStr=$Q->dequeue)){
     my($accession,$uniprot_h,$uniprot_evidence_h)=processUniprotXMLEntry($xmlStr);
-    $printQueue->enqueue([$accession,$uniprot_h,$uniprot_evidence_h]);
+    push(@printBuffer,[$accession,$uniprot_h,$uniprot_evidence_h]);
+    $i++;
+    if($i % $bufferLength==0){
+      $printQueue->enqueue(@printBuffer);
+      @printBuffer=();
+    }
   }
-  $printQueue->enqueue(undef);
-
+  $printQueue->enqueue(@printBuffer) if(@printBuffer);
   return 1;
 }
 
@@ -118,9 +134,6 @@ sub processUniprotXMLEntry($) {
 
 	my %info;
 	$info{accession} = $entry->getElementsByTagName('accession')->[0]->firstChild->nodeValue;
-
-  # don't remake this entry if it exists
-  #return if($uniprot_h{$info{accession}}); # slow, probably unnecessary step
 
 	$info{dataset} = $entry->getElementsByTagName('entry')->[0]->attributes->getNamedItem('dataset')->nodeValue;
 	$info{name} = $entry->getElementsByTagName('name')->[0]->firstChild->nodeValue;
@@ -217,6 +230,7 @@ sub openDbs{
 }
 
 sub closeDbs{
+  logmsg "Closing the database at $recordsWritten records written.";
   untie %uniprot_h;
   untie %uniprot_evidence_h;
   logProgress($$settings{logfile},$recordsWritten,$settings);
@@ -232,7 +246,9 @@ sub reportNumEntries{
 
 sub readLogfile{
   my ($settings)=@_;
-  return 0 if(!-e $$settings{logfile});
+  # if the logfile doesn't exist, give it a second try
+  sleep  1 if(!-f $$settings{logfile});
+  return 0 if(!-f $$settings{logfile});
   # read the log file and see where to continue from
   open(LOG,$$settings{logfile}) or die "Could not read from $$settings{logfile} because $!";
   my $line=<LOG>;
@@ -253,6 +269,7 @@ sub readLogfile{
 }
 sub logProgress{
   my($logfile,$recordsWritten,$settings)=@_;
+  $recordsWritten=$recordToStartFrom if($recordToStartFrom>$recordsWritten);
   open(LOG,">$logfile") or die "Could not open $logfile for writing because $!";
   print LOG join("\t",time(),$recordsWritten);
   print LOG "\n";
@@ -279,3 +296,4 @@ END{
   print "END of script detected. Flushing the databases.\n";
   closeDbs();
 }
+
