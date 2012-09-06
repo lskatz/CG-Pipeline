@@ -43,7 +43,7 @@ sub main() {
 
 	die(usage()) if @ARGV < 1;
 
-	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'outfile=s','pairedEnd');
+	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'outfile=s');
 	GetOptions($settings, @cmd_options) or die;
 
 	$$settings{outfile} ||= "$0.out.fasta";
@@ -222,8 +222,13 @@ sub runVelvetAssembly($$){
   $command.="-f '";
   foreach my $fqFiles (@$fastqfiles){
     my $fileFormat="fastq"; # per the Velvet manual
-    #TODO detect the chemistry of each run and treat them differently (454, Illumina, etc)
+
+    my $poly=AKUtils::is_fastqPE($fqFiles,{checkFirst=>20});
     my $readLength="short"; # per velvet docs
+    if($poly==1){ # i.e. paired end
+      $readLength="shortPaired";
+    } elsif($poly>1){ die "Internal error with poly checker"; }
+
     $command.="-$readLength -$fileFormat $fqFiles ";
   }
   $command.="' 2>&1 ";
@@ -421,9 +426,7 @@ sub command{
 }
 
 sub usage{
-	"Usage: $0 input.fastq [, input2.fastq, ...] [-o outfile.fasta] [-R references.mfa]
+	"Usage: $0 input.fastq [, input2.fastq, ...] [-o outfile.fasta] [-R references.mfa] [-t tempdir]
   Input files can also be fasta files.  *.fasta.qual files are considered as the relevant quality files
-  -p
-    to indicate that the reads are paired end
   "
 }
