@@ -336,8 +336,8 @@ sub illuminaToFrg{
 
   # quality trim the illumina file
   my $cleanedFastq="$newInputDir/$libraryname.cleaned.fastq";
-  my $pParam=$is_PE+1;
-  command("run_assembly_trimClean.pl -i '$fastq' -o '$cleanedFastq' --min_quality 35 --min_avg_quality 30 --min_length 62 -p $pParam --bases_to_trim 20") if(!-e $cleanedFastq || -s $cleanedFastq <100);
+  # note: I removed the PE parameter because trimClean already detects if it is paired end
+  command("run_assembly_trimClean.pl -i '$fastq' -o '$cleanedFastq' --min_quality 35 --min_avg_quality 30 --min_length 62 --bases_to_trim 20") if(!-e $cleanedFastq || -s $cleanedFastq <100);
 
   # make the frg
   my $command="fastqToCA -insertsize 300 20 -libraryname $libraryname -technology illumina -innie ";
@@ -354,6 +354,8 @@ sub illuminaToFrg{
 # return whether or not the input file is a shuffled PE fastq
 sub is_illuminaPE{
   my($fastq,$settings)=@_;
+  return AKUtils::is_fastqPE($fastq);
+
   # 20 reads is probably enough to make sure that it's shuffled
   my $numEntriesToCheck=$$settings{pefastq_numEntriesToCheck}||20;
   my $numEntries=0;
