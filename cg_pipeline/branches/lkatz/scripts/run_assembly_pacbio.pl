@@ -150,7 +150,7 @@ sub highQualityReadsToFrg{
       $command.="-o $ccsreadsFile 2>&1";
       command($command);
     }
-    # TODO remove any ID from the long reads that appears in the short CCS reads
+    logmsg "TODO remove any ID from the long reads that appears in the short CCS reads";
   }
 
 
