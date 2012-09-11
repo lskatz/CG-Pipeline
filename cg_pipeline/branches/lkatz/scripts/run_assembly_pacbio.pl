@@ -218,13 +218,12 @@ sub caAssembly{
   $inputDir=File::Spec->abs2rel($inputDir);
   
   my $exec=AKUtils::fullPathToExec("runCA");
-  # TODO make an assembly with just long reads if desired, or do it in a separate thread in parallel
-  logmsg "NOTE: if you just want to run CA with just long reads, use the command $exec -p $asmPrefix -d $caPrefix -s $specFile $inputDir/longreads.frg 2>&1";
 
-  command("$exec -p $asmPrefix -d $caPrefix -s $specFile $inputDir/*.frg 2>&1");
+  #command("$exec -p $asmPrefix -d $caPrefix -s $specFile $inputDir/*.frg 2>&1"); # to include all reads
+  command("$exec -p $asmPrefix -d $caPrefix -s $specFile $inputDir/longreads.frg 2>&1");
   # STEP 4c find the best assembly
   logmsg "Finished with the assembly! Finding the best option now.";
-  command("run_assembly_chooseBest.pl `find $caPrefix/ -name '*.fasta'` -o '$finalAssembly' -e $$settings{expectedGenomeSize}");
+  command("run_assembly_chooseBest.pl `find $caPrefix/ -name '*.[ucs][ct][fg].fasta'` -o '$finalAssembly' -e $$settings{expectedGenomeSize}");
 
   return $finalAssembly;
 }
