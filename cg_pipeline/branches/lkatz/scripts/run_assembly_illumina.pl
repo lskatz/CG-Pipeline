@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-# run-assembly: Perform standard assembly protocol operations on 454 pyrosequenced flowgram file(s)
+# run-assembly-illumina: Perform standard assembly protocol operations on illumina fastq file(s)
 # Author: Lee Katz <lkatz@cdc.gov>
 # Author: Eishita Tyagi <etyagi@cdc.gov>
 
@@ -233,24 +233,8 @@ sub runVelvetAssembly($$){
   }
   $command.="' 2>&1 ";
   logmsg "VELVET COMMAND\n  $command";
-  # warn "Warning: Skipping velvet command"; goto CLEANUP;
   system($command); die if $?;
 
-  # this section is invalidated by the -d option in velvetoptimiser
-  CLEANUP:
-  if(0){
-    my $logfile="$run_name/auto_logfile.txt";
-    my $optimiserOutDir=`tail -1 $logfile`;
-    chomp($optimiserOutDir);
-    if($optimiserOutDir && -d $optimiserOutDir){
-      logmsg "The log file indicates this is the final output directory for VelvetOptimiser: $optimiserOutDir";
-    } else {
-      my @velvetTempDir=glob("$velvetPrefix*"); # find the output directory
-      logmsg "Could not determine the VelvetOptimiser output directory. I'll have to guess.  Velvet directory(ies) found: ".join(", ",@velvetTempDir) ." . Assuming $velvetTempDir[0] is the best Velvet assembly.";
-      $optimiserOutDir=$velvetTempDir[0];
-    }
-    system("cp -rv $optimiserOutDir/* $run_name/"); # copy the output directory contents to the actual directory
-  }
   logmsg "Done. Velvet output is in $run_name";
 
   #TODO create dummy qual file (phred qual for each base is probably about 60-65). Or, if Velvet outputs it in the future, add in the qual parameter.
