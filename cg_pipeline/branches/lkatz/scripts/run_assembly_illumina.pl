@@ -39,7 +39,7 @@ exit(main());
 
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
-	$$settings{assembly_min_contig_length} = 100; #TODO put this into config file
+	$$settings{assembly_min_contig_length} ||= 100; #TODO put this into config file
 
 	die(usage()) if @ARGV < 1;
 
