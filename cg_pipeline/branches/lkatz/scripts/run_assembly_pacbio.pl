@@ -2,14 +2,12 @@
 
 # run-assembly-pacbio: Perform standard assembly protocol operations on pacbio files
 # Author: Lee Katz <lkatz@cdc.gov>
-# Author: Chandni Desai <CDesai@cdc.gov>
-# Author: Satish Ganakammal <Satishkumar_ranganathanganakammal@sra.com>
 
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 
 my $settings = {
-	appname => 'cgpipeline',
+  appname => 'cgpipeline',
   defaultGenomeSize=>5000000, # default genome: 5 MB. Many bacterial genomes fall around 5 MB (but there are many exceptions!)
 };
 my $stats;
@@ -38,13 +36,13 @@ sub logmsg {my $FH = $FSFind::LOG || *STDOUT; print $FH "$0: ".(caller(1))[3].":
 exit(main());
 
 sub main() {
-	$settings = AKUtils::loadConfig($settings);
-	$$settings{assembly_min_contig_length} ||= 500; #TODO put this into config file
+  $settings = AKUtils::loadConfig($settings);
+  $$settings{assembly_min_contig_length} ||= 1000; #TODO put this into config file
 
-	die(usage()) if @ARGV < 1;
+  die(usage()) if @ARGV < 1;
 
-	my @cmd_options = qw(keep tempdir=s outfile=s illuminaReads=s@ sffReads=s@ ccsReads=s@ expectedGenomeSize=i);
-	GetOptions($settings, @cmd_options) or die;
+  my @cmd_options = qw(keep tempdir=s outfile=s illuminaReads=s@ sffReads=s@ ccsReads=s@ expectedGenomeSize=i);
+  GetOptions($settings, @cmd_options) or die;
   $$settings{numcpus}||=AKUtils::getNumCPUs();
   if(!$$settings{expectedGenomeSize}){
     warn("WARNING: expected genome size was not given. I will set it to $$settings{defaultGenomeSize}");
@@ -54,25 +52,28 @@ sub main() {
   my $stepNo=0;
   logmsg "STEP ".++$stepNo." receive input files";
   $$settings{outfile} ||= "$0.out.fasta";
-	$$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
-	open(FH, '>', $$settings{outfile}) or die("Error writing to output file $$settings{outfile}");
-	close FH;
-	logmsg "Output file is " . $$settings{outfile} . "\n";
+  $$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
+  open(FH, '>', $$settings{outfile}) or die("Error writing to output file $$settings{outfile}");
+  close FH;
+  logmsg "Output file is " . $$settings{outfile} . "\n";
 
-	my @input_files = @ARGV;
+  my @input_files = @ARGV;
   die "Error: No input files given" if(@ARGV<1);
 
   # set up the temp directory
-	$$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
+  $$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
   mkdir($$settings{tempdir}) if(!-d $$settings{tempdir});
   $$settings{tempdir}=File::Spec->rel2abs($$settings{tempdir});
-	logmsg "Temporary directory is $$settings{tempdir}";
+  logmsg "Temporary directory is $$settings{tempdir}";
 
   # make all input file abs paths and check that they exist
-	foreach my $file (@input_files,@{$$settings{illuminaReads}}, @{$$settings{sffReads}}, @{$$settings{ccsReads}} ) {
-		$file = File::Spec->rel2abs($file);
-		die("Input file $file not found") unless -f $file;
-	}
+  foreach my $file (@input_files,@{$$settings{illuminaReads}}, @{$$settings{sffReads}}, @{$$settings{ccsReads}} ) {
+    $file = File::Spec->rel2abs($file);
+    die("Input file $file not found") unless -f $file;
+  }
+
+  logmsg "STEP ".++$stepNo." convert H5 files to fastq";
+  convertH5ToFastq(\@input_files,$settings);
   
   logmsg "STEP ".++$stepNo." modify input files and create FRG files";
   my $inputDir=highQualityReadsToFrg(\@input_files,$settings);
@@ -91,19 +92,45 @@ sub main() {
 
   my $final_seqs = AKUtils::readMfa($caAssembly);
 
-	foreach my $seq (keys %$final_seqs) {
-		delete $$final_seqs{$seq} if length($$final_seqs{$seq}) < $$settings{assembly_min_contig_length};
-	}
-	AKUtils::printSeqsToFile($final_seqs, $$settings{outfile}, {order_seqs_by_name => 1});
+  foreach my $seq (keys %$final_seqs) {
+    delete $$final_seqs{$seq} if length($$final_seqs{$seq}) < $$settings{assembly_min_contig_length};
+  }
+  AKUtils::printSeqsToFile($final_seqs, $$settings{outfile}, {order_seqs_by_name => 1});
 
-	logmsg "Output is in $$settings{outfile}";
+  logmsg "Output is in $$settings{outfile}";
 
-	return 0;
+  return 0;
 }
 
 ########################
 ## Subs for major stages
 ########################
+
+sub convertH5ToFastq{
+  my($input_files,$settings)=@_;
+  my $newInputDir="$$settings{tempdir}/input";
+  mkdir($newInputDir);
+  my $longreadsInputDir="$newInputDir/longreads";
+  mkdir("$longreadsInputDir");
+  my $workingDir=AKUtils::mktempdir();
+
+  my $bash5tools=AKUtils::fullPathToExec("bash5tools.py");
+  for(my $i=0;$i<@$input_files;$i++){
+    my $h5=$$input_files[$i];
+    my($b,$dir,$ext)=fileparse($h5,qw(.bas.h5 .h5));
+    next if($ext!~/\.h5/i);
+    if(!-f "$newInputDir/$b.ccs" || !-f "$longreadsInputDir/$b.raw"){
+      my @c=("$bash5tools -f '$h5' -t CCS -s fastq -l 100 -q 0 -o '$workingDir/$b.ccs'",
+             "$bash5tools -f '$h5' -t Raw -s fastq -l 2000 -q 0 -o '$workingDir/$b.raw'");
+      command(\@c);
+      command(["mv '$workingDir/$b.ccs' $newInputDir/",
+        "mv '$workingDir/$b.raw' $longreadsInputDir/"]);
+    }
+    $$input_files[$i]="$longreadsInputDir/$b.raw.fastq";
+    # TODO do I need to list the CCS files?
+  }
+  return $newInputDir;
+}
 
 sub highQualityReadsToFrg{
   my($input_files,$settings)=@_;
@@ -141,6 +168,7 @@ sub highQualityReadsToFrg{
   }
 
   # STEP 2b remove CCS reads from long reads (ie remove duplication)
+  # TODO
   if(@{$$settings{ccsReads}}){
     logmsg "Reading and cleaning CCS pacbio reads";
     my $ccsreadsFile="$newInputDir/ccsreads.fastq";
@@ -413,6 +441,14 @@ sub runcaSpecFile{
 # returns error code
 sub command{
   my ($command,$settings)=@_;
+  my $refType=ref($command);
+  if($refType eq "ARRAY"){
+    my $err=0;
+    for my $c(@$command){
+      $err+=command($c,$settings);
+    }
+    return $err;
+  }
   logmsg "RUNNING COMMAND\n  $command";
   system($command);
   if($?){
@@ -427,8 +463,8 @@ sub command{
 }
 
 sub usage{
-	"Usage: $0 input.fastq [, input2.fastq, ...] [-o outfile.fasta] -c pacbio.ccs.fastq -i illumina.fastq -s 454.sff
-  Input files should be the long filtered subreads from pacbio
+  "Usage: $0 input.fastq [, input2.fastq, ... inputX.h5 ...] [-o outfile.fasta] -c pacbio.ccs.fastq -i illumina.fastq -s 454.sff
+  Input files should be the long filtered subreads from pacbio or raw h5 files
   -c, -i, -s
     You can use multiple files. 
     Designate each new file with a new -c, -i, or -s flag.
