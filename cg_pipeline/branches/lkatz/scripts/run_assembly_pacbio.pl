@@ -114,11 +114,13 @@ sub convertH5ToFastq{
   mkdir("$longreadsInputDir");
   my $workingDir=AKUtils::mktempdir();
 
-  my $bash5tools=AKUtils::fullPathToExec("bash5tools.py");
+
   for(my $i=0;$i<@$input_files;$i++){
     my $h5=$$input_files[$i];
     my($b,$dir,$ext)=fileparse($h5,qw(.bas.h5 .h5));
     next if($ext!~/\.h5/i);
+    # find bash5tools only if there is an h5 file
+    my $bash5tools=AKUtils::fullPathToExec("bash5tools.py");
     if(!-f "$newInputDir/$b.ccs" || !-f "$longreadsInputDir/$b.raw"){
       my @c=("$bash5tools -f '$h5' -t CCS -s fastq -l 100 -q 0 -o '$workingDir/$b.ccs'",
              "$bash5tools -f '$h5' -t Raw -s fastq -l 2000 -q 0 -o '$workingDir/$b.raw'");
@@ -266,7 +268,7 @@ sub caAssembly{
 #  targetCoverage=>40 # the max coverage. The first level of coverage that is below this threshold will be used.
 sub filterForCoverage{
   my($infile,$settings)=@_;
-  my $targetCoverage=$$settings{targetCoverage}||40; # a maximum coverage
+  my $targetCoverage=$$settings{targetCoverage}||50; # a maximum coverage
 
   # make a histogram of number of reads per length
   my %readLengthHist;
@@ -359,12 +361,12 @@ sub illuminaToFrg{
     return $frgFile;
   }
 
-  my $is_PE=is_illuminaPE($fastq,$settings);
+  my $is_PE=AKUtils::is_fastqPE($fastq,$settings);
 
   # quality trim the illumina file
   my $cleanedFastq="$newInputDir/$libraryname.cleaned.fastq";
   # note: I removed the PE parameter because trimClean already detects if it is paired end
-  command("run_assembly_trimClean.pl -i '$fastq' -o '$cleanedFastq' --min_quality 35 --min_avg_quality 30 --min_length 62 --bases_to_trim 20") if(!-e $cleanedFastq || -s $cleanedFastq <100);
+  command("run_assembly_trimClean.pl -i '$fastq' -o '$cleanedFastq' --min_quality 35 --min_avg_quality 30 --min_length 36 --bases_to_trim 20") if(!-e $cleanedFastq || -s $cleanedFastq <100);
 
   # make the frg
   my $command="fastqToCA -insertsize 300 20 -libraryname $libraryname -technology illumina -innie ";
@@ -378,58 +380,21 @@ sub illuminaToFrg{
   return $frgFile;
 }
 
-# return whether or not the input file is a shuffled PE fastq
-sub is_illuminaPE{
-  my($fastq,$settings)=@_;
-  return AKUtils::is_fastqPE($fastq);
-
-  # 20 reads is probably enough to make sure that it's shuffled
-  my $numEntriesToCheck=$$settings{pefastq_numEntriesToCheck}||20;
-  my $numEntries=0;
-  open(IN,$fastq) or die "Could not open $fastq for reading: $!";
-  while(my $read1Id=<IN>){
-    my $discard;
-    $discard=<IN> for(1..3);
-    my $read2Id=<IN>;
-    $discard=<IN> for(1..3);
-
-    if($read1Id!~/\/1$/ || $read2Id!~/\/2$/){
-      return 0;
-    }
-
-    $numEntries++;
-    last if($numEntries>=$numEntriesToCheck);
-  }
-  close IN;
-
-  return 1;
-}
-
 sub pacbiotocaSpecFile{
   my ($inputDir,$settings)=@_;
   my $specFile="$inputDir/pacbiotoca.spec";
   return $specFile if(-e $specFile);
 
-  system("cp -v '$FindBin::RealBin/../conf/pacbiotoca.spec' '$specFile' 2>&1"); die if $?;
+  command("cp '$FindBin::RealBin/../conf/pacbiotoca.spec' '$specFile' 2>&1");
   return $specFile;
-  
-  #open(SPEC,">$specFile") or die "Could not open $specFile for writing: $!";
-  #print SPEC "";
-  #close SPEC;
-  #return $specFile;
 }
 sub runcaSpecFile{
   my ($inputDir,$settings)=@_;
   my $specFile="$inputDir/runca.spec";
   return $specFile if(-e $specFile);
 
-  system("cp -v '$FindBin::RealBin/../conf/runca.spec' '$specFile' 2>&1"); die if $?;
+  command("cp '$FindBin::RealBin/../conf/runca.spec' '$specFile' 2>&1");
   return $specFile;
-
-  #open(SPEC,">$specFile") or die "Could not open $specFile for writing: $!";
-  #print SPEC "";
-  #close SPEC;
-  #return $specFile;
 }
 
 ##########
