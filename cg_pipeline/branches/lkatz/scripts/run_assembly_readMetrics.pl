@@ -9,7 +9,8 @@ my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 my $settings = {
     appname => 'cgpipeline',
     # these are the subroutines for all read metrics
-    metrics=>[qw(avgReadLength totalBases maxReadLength minReadLength avgQuality avgQualPerRead numReads)],
+    metrics=>[qw(avgReadLength totalBases maxReadLength minReadLength avgQuality numReads)],
+    #metrics=>[qw(avgReadLength totalBases maxReadLength minReadLength avgQuality avgQualPerRead numReads)],
     # these are the subroutines for all standard read metrics
     #stdMetrics=>[qw(N50 genomeLength numContigs assemblyScore)],
 };
@@ -30,6 +31,9 @@ use File::Basename;
 use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
 use Data::Dumper;
+
+use threads;
+use Thread::Queue;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
@@ -116,14 +120,19 @@ sub readMetrics{
         $$qual{$id}=$newQual;
       }
     }
+    $seqs=[values(%$seqs)];
+    $qual=[values(%$qual)];
   } else {
     die "$ext extension not supported";
   }
   
   # STEP 1b: FILL IN QUALITY VALUES FOR READS WHOSE QUALITY IS NULL
-  if(!keys(%$qual)){
+  if(!@$qual){
     warn "Warning: There are no quality scores associated with $file";
-    $$qual{$_}=$nullQual x length($$seqs{$_}) for(keys(%$seqs));
+    #$$qual{$_}=$nullQual x length($$seqs{$_}) for(keys(%$seqs));
+    for(my $i=0;$i<@$seqs;$i++){
+      $$qual[$i]=$nullQual x length($$seqs[$i]);
+    }
   }
 
   # STEP 2: METRICS
@@ -131,7 +140,10 @@ sub readMetrics{
   my $minLength=$$settings{minLength} || 0;
   my($totalReadLength,$maxReadLength,$totalReadQuality,$totalQualScores,$avgReadQualTotal)=(0,0);
   my $minReadLength=9999999999999999999999;
-  while(my($id,$seq)=each(%$seqs)){
+  #while(my($id,$seq)=each(%$seqs)){
+  for(my $i=0;$i<@$seqs;$i++){
+    my $seq=$$seqs[$i];
+    
     # read metrics
     my $readLength=length($seq);
     next if($minLength && $readLength<$minLength);
@@ -140,10 +152,10 @@ sub readMetrics{
     $minReadLength=$readLength if($readLength<$minReadLength);
     
     # quality metrics
-    my $qualStr=$$qual{$id};
+    my $qualStr=$$qual[$i];
     my @qual;
     if(!$qualStr){
-      warn "Warning: Could not find qual for $id. Setting to 0.";
+      warn "Warning: Could not find qual for seq number $i. Setting to 0.";
       $qualStr=$nullQual x $readLength;
     }
     @qual=map(ord($_)-$$settings{qual_offset},split(//,$qualStr));
@@ -157,7 +169,7 @@ sub readMetrics{
   }
   my $avgReadLength=$totalReadLength/$seqCounter;
   my $avgQuality=$totalReadQuality/$totalQualScores;
-  my $avgQualPerRead=$avgReadQualTotal/$seqCounter;
+  #my $avgQualPerRead=$avgReadQualTotal/$seqCounter;
 
   my %metrics=(
     avgReadLength=>$avgReadLength,
@@ -165,7 +177,7 @@ sub readMetrics{
     maxReadLength=>$maxReadLength,
     minReadLength=>$minReadLength,
     avgQuality=>$avgQuality,
-    avgQualPerRead=>$avgQualPerRead,
+    #avgQualPerRead=>$avgQualPerRead,
     numReads=>$seqCounter,
   );
   return %metrics;
@@ -173,8 +185,8 @@ sub readMetrics{
 
 sub readFastq{
   my($fastq,$settings)=@_;
-  my $seqs={};
-  my $quals={};
+  my $seqs=[];
+  my $quals=[];
   my $i=0;
   if($$settings{is_fastqGz}){
     open(FASTQ,"gunzip -c $fastq|") or die "Could not open the fastq $fastq because $!";
@@ -187,8 +199,9 @@ sub readFastq{
     my $qual=<FASTQ>;
     next if(!$sequence);
     $id=~s/^@//;
-    $$seqs{$id}=$sequence;
-    $$quals{$id}=$qual;
+
+    push(@$seqs,$sequence);
+    push(@$quals,$qual);
   }
   close FASTQ;
   return ($seqs,$quals);
