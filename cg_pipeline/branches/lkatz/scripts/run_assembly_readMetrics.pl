@@ -48,25 +48,104 @@ sub main() {
   my @cmd_options=qw(help fast qual_offset=i minLength=i);
   GetOptions($settings, @cmd_options) or die;
   $$settings{qual_offset}||=33;
+  $$settings{numcpus}||=AKUtils::getNumCPUs();
 
   my %final_metrics;
+  print join("\t",qw(avgReadLength totalBases maxReadLength minReadLength avgQuality numReads readScore))."\n";
   for my $input_file(@ARGV){
+    my $entryQueue=Thread::Queue->new();    # for storing fastq 4-line entries
+    my $metricsQueue=Thread::Queue->new(); # for receiving read lengths and metrics
     my $file=File::Spec->rel2abs($input_file);
     die("Input or file $file not found") unless -f $file;
-  
-    my %metrics;
-    if($$settings{fast}){
-      %metrics=fastFastqStats($file,$settings);
-    } else {
-      %metrics=readMetrics($file,$settings);
-    }
-    $final_metrics{$file}=\%metrics;
+    my @thr;
+    $thr[$_]=threads->new(\&fastqIndividualReadMetrics,$entryQueue,$metricsQueue,$settings) for(0..$$settings{numcpus} - 1);
+    readFastq($input_file,$entryQueue,$settings);
+    $entryQueue->enqueue(undef) for(@thr);
+    $_->join for(@thr);
+    $metricsQueue->enqueue(undef); # this kills the crab
+    fastqStats($metricsQueue,$settings);
   }
 
-  printMetrics(\%final_metrics,$settings);
   return 0;
 }
 
+sub fastqStats{
+  my($metricsQueue,$settings)=@_;
+  my(@length,@qual);
+  my $maxReadLength=1;
+  my $minReadLength=99999999999999;
+  my $readScore='.';
+  while(defined(my $stats=$metricsQueue->dequeue)){
+    my($length,$qual)=split(/_/,$stats);
+    push(@length,$length);
+    push(@qual,$qual);
+
+    $minReadLength=$length if($minReadLength>$length);
+    $maxReadLength=$length if($maxReadLength<$length);
+  }
+  my $totalBases=sum(@length);
+  my $numReads=@length;
+  my $totalQuality=0;
+  for(my $i=0;$i<$numReads;$i++){
+    $totalQuality+=$qual[$i]*$length[$i];
+  }
+  my $avgQuality=$totalQuality/$totalBases;
+  my $avgReadLength=$totalBases/$numReads;
+  $readScore=log($totalBases*$avgQuality*$avgReadLength);
+  #my $readsScore=log($$m{totalBases} * $avgQuality * $avgReadLength);
+
+  print join("\t",$avgReadLength, $totalBases, $maxReadLength, $minReadLength, $avgQuality, $numReads, $readScore)."\n";
+  
+  return 1;
+}
+
+sub fastqIndividualReadMetrics{
+  my($entryQueue,$metricsQueue,$settings)=@_;
+  my $qual_offset=$$settings{qual_offset};
+  my $i=0;
+  my @cache;
+  while(defined(my $fastqEntry=$entryQueue->dequeue)){
+    my($id,$sequence,$plus,$qual)=split(/\n/,$fastqEntry);
+    # get read length and quality
+    my $length=length($sequence);
+    my @qual=map(ord($_)-$qual_offset, split(//,$qual));
+    my $avgQuality=sum(@qual)/@qual;
+    push(@cache,join("_",$length,$avgQuality));
+    if(@cache>1000000){
+      $metricsQueue->enqueue(@cache);
+      @cache=();
+    }
+  }
+  $metricsQueue->enqueue(@cache);
+  return $i;
+}
+
+
+sub readFastq{
+  my($fastq,$entryQueue,$settings)=@_;
+  my $i=0;
+  if($$settings{is_fastqGz}){
+    open(FASTQ,"gunzip -c $fastq|") or die "Could not open the fastq $fastq because $!";
+  } else {
+    open(FASTQ,"<",$fastq) or die "Could not open the fastq $fastq because $!";
+  }
+  my @cache;
+  while(my $entry=<FASTQ>){
+    $entry.=<FASTQ> for(1..3);
+    push(@cache,$entry);
+    if((++$i % ($$settings{numcpus}*100000)) == 0){
+      $entryQueue->enqueue(@cache);
+      @cache=();
+      while($entryQueue->pending>10000000){ # 10 mill
+        print $entryQueue->pending.".";
+        sleep 1;
+      }
+    }
+  }
+  $entryQueue->enqueue(@cache);
+  close FASTQ;
+  return 1;
+}
 
 sub printMetrics{
   my ($metrics,$settings)=@_;
@@ -78,7 +157,7 @@ sub printMetrics{
   while(my($file,$m)=each(%$metrics)){
     my $avgQuality=$$m{avgQuality} || 40;
     my $avgReadLength=$$m{avgReadLength} || 100;
-    my $readsScore=log($$m{totalBases} * $avgQuality * $avgReadLength); 
+    my $readsScore=log($$m{totalBases} * $avgQuality * $avgReadLength);
     $$m{readsScore}=$readsScore;
 
     my @line;
@@ -91,121 +170,6 @@ sub printMetrics{
   return 1;
 }
 
-
-sub readMetrics{
-  my($file,$settings)=@_;
-  my $nullQual=chr($$settings{qual_offset}); # for whenever a quality score cannot be found
-
-  # STEP 1: READ THE FILE
-  my($seqs,$qual);
-  my $ext=(split(/\./,$file))[-1];
-  my($name,$path,$ext)=fileparse($file,qw(.fastq.gz .fastq .fq .fa .fa .fas .fasta .fna .mfa));
-  $$settings{is_fastqGz}=1 if($ext=~/fastq.gz/);
-  if($ext=~/fastq|fq|fastq.gz/){
-    ($seqs,$qual)=readFastq($file,$settings);
-  }
-  elsif($ext=~/fa|fas|fasta|fna|mfa/i){
-    $seqs=AKUtils::readMfa($file,$settings);
-    my $qualfile;
-    for("$path$name$ext.qual","$path$name.qual"){
-      $qualfile=$_ if(-e $_);
-    }
-    # convert the quality file to Illumina qual strings
-    if(-e $qualfile){
-      $qual=AKUtils::readMfa($qualfile,{keep_whitespace=>1});
-      while(my($id,$qualstr)=each(%$qual)){
-        my $newQual;
-        my @tmpQual=split(/\s+/,$qualstr);
-        $newQual.=chr($_+$$settings{qual_offset}) for(@tmpQual);
-        $$qual{$id}=$newQual;
-      }
-    }
-    $seqs=[values(%$seqs)];
-    $qual=[values(%$qual)];
-  } else {
-    die "$ext extension not supported";
-  }
-  
-  # STEP 1b: FILL IN QUALITY VALUES FOR READS WHOSE QUALITY IS NULL
-  if(!@$qual){
-    warn "Warning: There are no quality scores associated with $file";
-    #$$qual{$_}=$nullQual x length($$seqs{$_}) for(keys(%$seqs));
-    for(my $i=0;$i<@$seqs;$i++){
-      $$qual[$i]=$nullQual x length($$seqs[$i]);
-    }
-  }
-
-  # STEP 2: METRICS
-  my $seqCounter=0;
-  my $minLength=$$settings{minLength} || 0;
-  my($totalReadLength,$maxReadLength,$totalReadQuality,$totalQualScores,$avgReadQualTotal)=(0,0);
-  my $minReadLength=9999999999999999999999;
-  #while(my($id,$seq)=each(%$seqs)){
-  for(my $i=0;$i<@$seqs;$i++){
-    my $seq=$$seqs[$i];
-    
-    # read metrics
-    my $readLength=length($seq);
-    next if($minLength && $readLength<$minLength);
-    $totalReadLength+=$readLength;
-    $maxReadLength=$readLength if($readLength>$maxReadLength);
-    $minReadLength=$readLength if($readLength<$minReadLength);
-    
-    # quality metrics
-    my $qualStr=$$qual[$i];
-    my @qual;
-    if(!$qualStr){
-      warn "Warning: Could not find qual for seq number $i. Setting to 0.";
-      $qualStr=$nullQual x $readLength;
-    }
-    @qual=map(ord($_)-$$settings{qual_offset},split(//,$qualStr));
-    my $sumReadQuality=sum(@qual);
-    my $thisReadAvgQual=$sumReadQuality/$readLength;
-    $avgReadQualTotal+=$thisReadAvgQual;
-    $totalReadQuality+=$sumReadQuality;
-    $totalQualScores+=$readLength;
-    
-    $seqCounter++;
-  }
-  my $avgReadLength=$totalReadLength/$seqCounter;
-  my $avgQuality=$totalReadQuality/$totalQualScores;
-  #my $avgQualPerRead=$avgReadQualTotal/$seqCounter;
-
-  my %metrics=(
-    avgReadLength=>$avgReadLength,
-    totalBases=>$totalReadLength,
-    maxReadLength=>$maxReadLength,
-    minReadLength=>$minReadLength,
-    avgQuality=>$avgQuality,
-    #avgQualPerRead=>$avgQualPerRead,
-    numReads=>$seqCounter,
-  );
-  return %metrics;
-}
-
-sub readFastq{
-  my($fastq,$settings)=@_;
-  my $seqs=[];
-  my $quals=[];
-  my $i=0;
-  if($$settings{is_fastqGz}){
-    open(FASTQ,"gunzip -c $fastq|") or die "Could not open the fastq $fastq because $!";
-  } else {
-    open(FASTQ,"<",$fastq) or die "Could not open the fastq $fastq because $!";
-  }
-  while(my $id=<FASTQ>){
-    my $sequence=<FASTQ>;
-    my $plus=<FASTQ>;
-    my $qual=<FASTQ>;
-    next if(!$sequence);
-    $id=~s/^@//;
-
-    push(@$seqs,$sequence);
-    push(@$quals,$qual);
-  }
-  close FASTQ;
-  return ($seqs,$quals);
-}
 sub fastFastqStats{
   my($fastq,$settings)=@_;
   my($name,$path,$ext)=fileparse($fastq,qw(.fastq.gz .fastq .fq .fa .fa .fas .fasta .fna .mfa));
