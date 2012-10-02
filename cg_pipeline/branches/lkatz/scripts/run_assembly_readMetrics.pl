@@ -51,7 +51,7 @@ sub main() {
   $$settings{numcpus}||=AKUtils::getNumCPUs();
 
   my %final_metrics;
-  print join("\t",qw(avgReadLength totalBases maxReadLength minReadLength avgQuality numReads readScore))."\n";
+  print join("\t",qw(File avgReadLength totalBases maxReadLength minReadLength avgQuality numReads readScore))."\n";
   for my $input_file(@ARGV){
     my $entryQueue=Thread::Queue->new();    # for storing fastq 4-line entries
     my $metricsQueue=Thread::Queue->new(); # for receiving read lengths and metrics
@@ -63,14 +63,14 @@ sub main() {
     $entryQueue->enqueue(undef) for(@thr);
     $_->join for(@thr);
     $metricsQueue->enqueue(undef); # this kills the crab
-    fastqStats($metricsQueue,$settings);
+    fastqStats($input_file,$metricsQueue,$settings);
   }
 
   return 0;
 }
 
 sub fastqStats{
-  my($metricsQueue,$settings)=@_;
+  my($infile,$metricsQueue,$settings)=@_;
   my(@length,@qual);
   my $maxReadLength=1;
   my $minReadLength=99999999999999;
@@ -94,7 +94,7 @@ sub fastqStats{
   $readScore=log($totalBases*$avgQuality*$avgReadLength);
   #my $readsScore=log($$m{totalBases} * $avgQuality * $avgReadLength);
 
-  print join("\t",$avgReadLength, $totalBases, $maxReadLength, $minReadLength, $avgQuality, $numReads, $readScore)."\n";
+  print join("\t",$infile,$avgReadLength, $totalBases, $maxReadLength, $minReadLength, $avgQuality, $numReads, $readScore)."\n";
   
   return 1;
 }
