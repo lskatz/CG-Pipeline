@@ -28,6 +28,7 @@ use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
 use Bio::Perl;
 use Data::Dumper;
+use POSIX;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
@@ -41,13 +42,14 @@ sub main() {
 
   die(usage()) if @ARGV < 1;
 
-  my @cmd_options = qw(keep tempdir=s outfile=s illuminaReads=s@ sffReads=s@ ccsReads=s@ expectedGenomeSize=i);
+  my @cmd_options = qw(keep tempdir=s outfile=s illuminaReads=s@ sffReads=s@ ccsReads=s@ expectedGenomeSize=i pacbiospec=s caspec=s);
   GetOptions($settings, @cmd_options) or die;
   $$settings{numcpus}||=AKUtils::getNumCPUs();
   if(!$$settings{expectedGenomeSize}){
     warn("WARNING: expected genome size was not given. I will set it to $$settings{defaultGenomeSize}");
     $$settings{expectedGenomeSize}=$$settings{defaultGenomeSize};
   }
+  $$settings{ccsReads}||=[];
 
   my $stepNo=0;
   logmsg "STEP ".++$stepNo." receive input files";
@@ -85,7 +87,7 @@ sub main() {
   my $caAssembly=caAssembly($inputDir,$settings);
 
   logmsg "TODO STEP ".++$stepNo." AHA";
-  #my $ahaAssembly=ahaScaffolding($inputDir,$caAssembly,$settings);
+  my $ahaAssembly=ahaScaffolding(\@input_files,$caAssembly,$settings);
 
   logmsg "TODO STEP ".++$stepNo." dealing with unmapped reads";
   # STEP 6 unmapped short reads => de novo? or try to map again?
@@ -106,6 +108,8 @@ sub main() {
 ## Subs for major stages
 ########################
 
+# Converts H5 to useful fastq files and adds the fq files
+# to the ccsReads and @input_files arrays by reference.
 sub convertH5ToFastq{
   my($input_files,$settings)=@_;
   my $newInputDir="$$settings{tempdir}/input";
@@ -113,24 +117,34 @@ sub convertH5ToFastq{
   my $longreadsInputDir="$newInputDir/longreads";
   mkdir("$longreadsInputDir");
   my $workingDir=AKUtils::mktempdir();
+  return $newInputDir if(-f "$newInputDir/longreads.fastq" && -s "$newInputDir/longreads.fastq" > 100);
 
-
-  for(my $i=0;$i<@$input_files;$i++){
-    my $h5=$$input_files[$i];
-    my($b,$dir,$ext)=fileparse($h5,qw(.bas.h5 .h5));
-    next if($ext!~/\.h5/i);
-    # find bash5tools only if there is an h5 file
-    my $bash5tools=AKUtils::fullPathToExec("bash5tools.py");
-    if(!-f "$newInputDir/$b.ccs" || !-f "$longreadsInputDir/$b.raw"){
-      my @c=("$bash5tools -f '$h5' -t CCS -s fastq -l 100 -q 0 -o '$workingDir/$b.ccs'",
-             "$bash5tools -f '$h5' -t Raw -s fastq -l 2000 -q 0 -o '$workingDir/$b.raw'");
-      command(\@c);
-      command(["mv '$workingDir/$b.ccs' $newInputDir/",
-        "mv '$workingDir/$b.raw' $longreadsInputDir/"]);
-    }
-    $$input_files[$i]="$longreadsInputDir/$b.raw.fastq";
-    # TODO do I need to list the CCS files?
+  my $convertQ=Thread::Queue->new(@$input_files);
+  my @thr;
+  for(0..ceil($$settings{numcpus}/2)){ # two threads per h5 file
+    $thr[$_]=threads->new(sub{
+      my($Q,$settings)=@_;
+      my $bash5tools=AKUtils::fullPathToExec("bash5tools.py");
+      my $i=0;
+      while(defined(my $h5=$convertQ->dequeue)){
+        my($b,$dir,$ext)=fileparse($h5,qw(.bas.h5 .h5));
+        next if($ext!~/\.h5/i);
+        my @c=("$bash5tools -f '$h5' -t CCS -s fastq -l 100 -q 0 -o '$workingDir/$b.ccs'",
+               "$bash5tools -f '$h5' -t Raw -s fastq -l 2000 -q 0 -o '$workingDir/$b.raw'");
+        command(\@c);
+        command(["mv '$workingDir/$b.ccs.fastq' $newInputDir/",
+          "mv '$workingDir/$b.raw.fastq' $longreadsInputDir/"]);
+      }
+    },$convertQ,$settings);
   }
+  $convertQ->enqueue(undef) for(@thr);
+  $_->join for(@thr);
+
+  # grab all these new input files
+  push(@{ $$settings{ccsReads} },glob("$newInputDir/*.ccs.fastq"));
+  push(@$input_files,glob("$longreadsInputDir/*.raw.fastq"));
+  @$input_files=grep(!/\.h5$/i,@$input_files); # remove h5 files
+
   return $newInputDir;
 }
 
@@ -158,7 +172,7 @@ sub highQualityReadsToFrg{
     $command.="-o $longreadsFile 2>&1 ";
     command($command);
     
-    # One more round of filtering: keep longest reads such that there is about a 21-40x coverage.
+    # One more round of filtering: keep longest reads only
     # This subroutine will edit the file in-place
     my $minRawReadLength=filterForCoverage($longreadsFile,$settings);
     command("mv $longreadsFile $longreadsFile.tmp.fastq");
@@ -170,7 +184,6 @@ sub highQualityReadsToFrg{
   }
 
   # STEP 2b remove CCS reads from long reads (ie remove duplication)
-  # TODO
   if(@{$$settings{ccsReads}}){
     logmsg "Reading and cleaning CCS pacbio reads";
     my $ccsreadsFile="$newInputDir/ccsreads.fastq";
@@ -180,9 +193,9 @@ sub highQualityReadsToFrg{
       $command.="-o $ccsreadsFile 2>&1";
       command($command);
     }
-    logmsg "TODO remove any ID from the long reads that appears in the short CCS reads";
+    @{ $$settings{ccsReads} }=($ccsreadsFile); # this command leaves us with one comprehensive ccsReads file
+    removeReadsinCcsFromLongreads($$settings{ccsReads},$longreadsFile,$settings);
   }
-
 
   # STEP 2c create FRG files for each input file except pacbio long reads.
   # All FRG files found in the input directory will be assumed to be part
@@ -209,7 +222,7 @@ sub highQualityReadsToFrg{
 sub padLongReads{
   my($inputDir,$settings)=@_;
   my $longreadsFile="$inputDir/longreads.fastq";
-  my $libraryname="longreads";
+  my $libraryname="longreadsCorrected";
   my $frg="$inputDir/$libraryname.frg";
 
   # STEP 3a create or locate appropriate spec files
@@ -221,14 +234,16 @@ sub padLongReads{
   my $exec=AKUtils::fullPathToExec("pacBioToCA");
   # TODO remove overlap.sh if it exists, to help pacBioToCA continue if it was killed in the middle of running
   # TODO remove anything else to ensure continuity?
+  command("rm '$inputDir/longreads.frg'",{warn_on_error=>1});
   my $command="(cd $inputDir; $exec -length 500 -partitions 200 -l $libraryname -t $$settings{numcpus} -noclean -s $specFile -fastq $longreadsFile $inputDir/*.frg)  2>&1 ";
   if(!-e $frg || -s $frg<10000){
-    my $is_error=command($command,{warn_on_error=>1});
-    if($is_error){
-      logmsg "Trying pacBioToCA one more time with 1 cpu instead, which fixes a particular bug in some installations.";
-      $command=~s/\s+\-t\s+\d+\s+/ -t 1 /;
-      command($command);
-    }
+    my $is_error=command($command);
+  #  my $is_error=command($command,{warn_on_error=>1});
+  #  if($is_error){
+  #    logmsg "Trying pacBioToCA one more time with 1 cpu instead, which fixes a particular bug in some installations.";
+  #    $command=~s/\s+\-t\s+\d+\s+/ -t 1 /;
+  #    command($command);
+  #  }
   } else { logmsg "Padded long reads have been finished already in $frg. Moving on.";}
 
   return $frg;
@@ -252,10 +267,18 @@ sub caAssembly{
   #command("$exec -p $asmPrefix -d $caPrefix -s $specFile $inputDir/*.frg 2>&1"); # to include all reads
   command("$exec -p $asmPrefix -d $caPrefix -s $specFile $inputDir/longreads.frg 2>&1");
   # STEP 4c find the best assembly
-  logmsg "Finished with the assembly! Finding the best option now.";
-  command("run_assembly_chooseBest.pl `find $caPrefix/ -name '*.[ucs][ct][fg].fasta'` -o '$finalAssembly' -e $$settings{expectedGenomeSize}");
+  logmsg "Finished with the assembly! Grabbing your assembly now.";
+  command("cp -v $caPrefix/9-terminator/asm.scf.fasta '$finalAssembly'");
+  command("cp -v $caPrefix/9-terminator/asm.scf.qual '$finalAssembly.qual'");
 
   return $finalAssembly;
+}
+
+sub ahaScaffolding{
+  my($input_files,$caAssembly,$settings)=@_;
+  my @h5=grep(/\.h5/i,@$input_files);
+  logmsg "AHA scaffolding is not complete, but if it were, then it could have been done using your H5 files and your assembly: ".join(", ",@h5,$caAssembly);
+  return "";
 }
 
 ####################
@@ -356,7 +379,7 @@ sub illuminaToFrg{
   my($fastq,$newInputDir,$settings)=@_;
   my $libraryname=basename($fastq,qw(.fastq .fq));
   my $frgFile="$newInputDir/$libraryname.frg";
-  if(-e $frgFile){
+  if(-e $frgFile && -s $frgFile>100){
     warn "NOTE: frg file $frgFile already exists. I will not overwrite it";
     return $frgFile;
   }
@@ -382,6 +405,10 @@ sub illuminaToFrg{
 
 sub pacbiotocaSpecFile{
   my ($inputDir,$settings)=@_;
+  if($$settings{pacbiospec}){
+    die "pacbio spec file not found!" if(!-f $$settings{pacbiospec});
+    return $$settings{pacbiospec};
+  }
   my $specFile="$inputDir/pacbiotoca.spec";
   return $specFile if(-e $specFile);
 
@@ -390,11 +417,20 @@ sub pacbiotocaSpecFile{
 }
 sub runcaSpecFile{
   my ($inputDir,$settings)=@_;
+  if($$settings{caspec}){
+    die "CA spec file not found!" if(!-f $$settings{caspec});
+    return $$settings{caspec};
+  }
   my $specFile="$inputDir/runca.spec";
   return $specFile if(-e $specFile);
 
   command("cp '$FindBin::RealBin/../conf/runca.spec' '$specFile' 2>&1");
   return $specFile;
+}
+
+sub removeReadsinCcsFromLongreads{
+  my ($ccsReadsArr,$longreadsFile,$settings)=@_;
+  logmsg "TODO remove any reads found in the CCS reads from the long uncorrected reads file"
 }
 
 ##########
@@ -404,6 +440,7 @@ sub runcaSpecFile{
 # run a command
 # settings params: warn_on_error (boolean)
 # returns error code
+# TODO run each given command in a new thread
 sub command{
   my ($command,$settings)=@_;
   my $refType=ref($command);
@@ -444,5 +481,6 @@ sub usage{
     Designate a different temporary directory
   -k
     If using default tempdir, use -k to keep temporary files
+  --pacbiospec, --caspec to specify a different spec file for pacBioToCA or runCA
   "
 }
