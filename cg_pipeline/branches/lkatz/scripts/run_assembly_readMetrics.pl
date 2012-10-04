@@ -85,14 +85,17 @@ sub fastqStats{
   }
   my $totalBases=sum(@length);
   my $numReads=@length;
-  my $totalQuality=0;
-  for(my $i=0;$i<$numReads;$i++){
-    $totalQuality+=$qual[$i]*$length[$i];
+  my($avgQuality,$avgReadLength)=qw(. .);
+  if($totalBases>1){
+    my $totalQuality=0;
+    for(my $i=0;$i<$numReads;$i++){
+      $totalQuality+=$qual[$i]*$length[$i];
+    }
+    $avgQuality=$totalQuality/$totalBases;
+    $avgReadLength=$totalBases/$numReads;
+    $readScore=log($totalBases*$avgQuality*$avgReadLength);
+    #my $readsScore=log($$m{totalBases} * $avgQuality * $avgReadLength);
   }
-  my $avgQuality=$totalQuality/$totalBases;
-  my $avgReadLength=$totalBases/$numReads;
-  $readScore=log($totalBases*$avgQuality*$avgReadLength);
-  #my $readsScore=log($$m{totalBases} * $avgQuality * $avgReadLength);
 
   print join("\t",$infile,$avgReadLength, $totalBases, $maxReadLength, $minReadLength, $avgQuality, $numReads, $readScore)."\n";
   
@@ -168,27 +171,6 @@ sub printMetrics{
     print $file.$d.join($d,@line)."\n";
   }
   return 1;
-}
-
-sub fastFastqStats{
-  my($fastq,$settings)=@_;
-  my($name,$path,$ext)=fileparse($fastq,qw(.fastq.gz .fastq .fq .fa .fa .fas .fasta .fna .mfa));
-  $$settings{is_fastqGz}=1 if($ext=~/fastq.gz/);
-  my %metrics;
-  my $command="wc -l $fastq";
-    $command="gunzip -c $fastq | wc -l" if($$settings{is_fastqGz});
-  my $lines=`$command`; die "problem with wc -l" if $?;
-  $metrics{numReads}=$lines/4;
-  
-  # bases in the first read
-  $command="head -2 $fastq|tail -1";
-  $command="gunzip -c $fastq | head -2 |tail -1" if($$settings{is_fastqGz});
-  my $firstLine=`$command`; die "Problem with head or tail" if $?;
-  chomp($firstLine);
-  my $basesInFirstLine=length($firstLine);
-  $metrics{totalBases}=$metrics{numReads}*$basesInFirstLine;
-
-  return %metrics;
 }
 
 sub usage{
