@@ -42,9 +42,10 @@ sub main() {
 
   die(usage()) if @ARGV < 1;
 
-  my @cmd_options = qw(keep tempdir=s outfile=s illuminaReads=s@ sffReads=s@ ccsReads=s@ expectedGenomeSize=i pacbiospec=s caspec=s);
+  my @cmd_options = qw(keep tempdir=s outfile=s illuminaReads=s@ sffReads=s@ ccsReads=s@ expectedGenomeSize=i pacbiospec=s caspec=s help);
   GetOptions($settings, @cmd_options) or die;
   $$settings{numcpus}||=AKUtils::getNumCPUs();
+  die longUsage() if($$settings{help});
   if(!$$settings{expectedGenomeSize}){
     warn("WARNING: expected genome size was not given. I will set it to $$settings{defaultGenomeSize}");
     $$settings{expectedGenomeSize}=$$settings{defaultGenomeSize};
@@ -465,17 +466,21 @@ sub command{
 }
 
 sub usage{
-  "Usage: $0 input.fastq [, input2.fastq, ... inputX.h5 ...] [-o outfile.fasta] -c pacbio.ccs.fastq -i illumina.fastq -s 454.sff
-  Input files should be the long filtered subreads from pacbio or raw h5 files
-  -c, -i, -s
+  "Usage: $0 input.fastq [, input2.fastq, ... inputX.h5 ...] [-o outfile.fasta] -cc pacbio.ccs.fastq -i illumina.fastq -s 454.sff -o outfile.fasta"
+}
+sub longUsage{
+  usage()."
+  Input files should be H5 files (preferred) or long filtered subreads fastq
+  -cc, -i, -s
     You can use multiple files. 
     Designate each new file with a new -c, -i, or -s flag.
     -c is circular consensus sequence; -i is illumina; -s is SFF from 454 or iontorrent
     Multiple files from any platform are allowed.
     Paired end illumina data can be inputted using shuffled sequences in a singled file.
+  -o output assembly file
 
   -e expected genome size in bp
-    This option is used for finding the best assembly after runCA finishes.
+    This option is used for finding the correct coverage in terms of minimum long read length
     Default: $$settings{defaultGenomeSize} but it is STRONGLY ENCOURAGED to supply a more exact size.
   -t tempdir
     Designate a different temporary directory
