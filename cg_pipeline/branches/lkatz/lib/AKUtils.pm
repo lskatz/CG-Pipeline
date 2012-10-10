@@ -2396,6 +2396,7 @@ sub snapToStart($$$$$;$) {
 # params: fastq file and settings
 # fastq file can be gzip'd
 # settings:  checkFirst is an integer to check the first X deflines
+# TODO just extract IDs and send them to the other _sub() 
 sub is_fastqPE($;$){
   my($fastq,$settings)=@_;
 
@@ -2403,10 +2404,46 @@ sub is_fastqPE($;$){
   $$settings{checkFirst}||=20;
   $$settings{checkFirst}=20 if($$settings{checkFirst}<2);
 
-  # it is paired end if it validates with either system
-  my $is_pairedEnd=_is_fastqPECasava18($fastq,$settings) || _is_fastqPECasava17($fastq,$settings);
+  # it is paired end if it validates with any naming system
+  my $is_pairedEnd=_is_fastqPESra($fastq,$settings) || _is_fastqPECasava18($fastq,$settings) || _is_fastqPECasava17($fastq,$settings);
   
   return $is_pairedEnd;
+}
+
+sub _is_fastqPESra{
+  my($fastq,$settings)=@_;
+  my $numEntriesToCheck=$$settings{checkFirst}||20;
+  
+  my $numEntries=0;
+  my $fp;
+  if($fastq=~/\.gz$/){
+    open($fp,"gunzip -c '$fastq' |") or die "Could not open $fastq for reading: $!";
+  }else{
+    open($fp,"<",$fastq) or die "Could not open $fastq for reading: $!";
+  }
+  my $discard;
+  while(<$fp>){
+    chomp;
+    s/^@//;
+    my($genome,$info1,$info2)=split(/\s+/);
+    if(!$info2){
+      close $fp;
+      return 0;
+    }
+    my($instrument,$flowcellid,$lane,$x,$y)=split(/:/,$info1);
+    $discard=<$fp> for(1..3); # discard the sequence and quality of the read for these purposes
+    my $secondId=<$fp>;
+    my($genome2,$info3,$info4)=split(/\s+/,$secondId);
+    my($instrument2,$flowcellid2,$lane2,$x2,$y2)=split(/:/,$info3);
+    if($instrument ne $instrument2 || $flowcellid ne $flowcellid2 || $lane ne $lane2 || $x ne $x2 || $y ne $y2){
+      close $fp;
+      return 0;
+    }
+    $discard=<$fp> for(1..3);
+    $numEntries+=2;
+    last if($numEntries > $numEntriesToCheck);
+  }
+  return 1;
 }
 
 sub _is_fastqPECasava18{
