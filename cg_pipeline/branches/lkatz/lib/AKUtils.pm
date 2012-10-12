@@ -1870,7 +1870,7 @@ sub getBLASTGenePredictions($$) {
         my %seq=%{$$orfsInFrame{$stop}};
         # Due to the format, if there is any newlines in $seq{seq}, this format is screwed
         # Also screwed if whitespace or _ is in $seqname
-        $seqname=~s/_/-/g;
+        $seqname=~s/_/---/g;
         my $orfId=join("_",$seqname,$seq{start},$seq{stop},$seq{strand},$seq{ustop},$seq{length},$seq{lo},$seq{hi},$seq{seq},$seq{aa_seq});
         $orfId=~s/\s+//g;
         print BLSIN ">$orfId\n$seq{aa_seq}\n";
@@ -1892,8 +1892,13 @@ sub getBLASTGenePredictions($$) {
 	$$settings{blast_db} ||= $$settings{prediction_blast_db};
 	$$settings{blast_xopts} = " -e $$settings{min_default_db_evalue}";
 	$$settings{quiet} = 1;
-  system("legacy_blast.pl blastall -p blastp -d $$settings{blast_db} -m 9 -a $$settings{num_cpus} -i $blastIn -o $blast_outfile $$settings{blast_xopts} 2>&1") if(!-e $blast_outfile);
-  die if $?;
+  # use -m 9 such that comment lines become separators
+  if(!-e $blast_outfile){
+    system("legacy_blast.pl blastall -p blastp -d $$settings{blast_db} -m 9 -a $$settings{num_cpus} -i $blastIn -o $blast_outfile $$settings{blast_xopts} 2>&1");
+    die if $?;
+    # add a comment line at the end of the blast file to mark the end of the last entry
+    system("echo '# last line' >> $blast_outfile"); die if $?; 
+  } else { logmsg "Found blast file; skipping blast.";}
 
   logmsg "Reading blast results";
   my $reportEvery=int($numOrfs/100); # send out 100 total updates
@@ -1909,20 +1914,17 @@ sub getBLASTGenePredictions($$) {
   my %tmpOrfs=%$orfs; # pass a new copy of orfs to each thread to avoid sharing/freezing issues
   push(@thread, threads->new(\&blastGenePredictionWorker,\%tmpOrfs,$blastQueue,$settings)) for(1..$$settings{num_cpus});
   open(BLSOUT,"<",$blast_outfile) or die "Could not open blast outfile $blast_outfile: $!";
+  my @blsResult=();
   while(<BLSOUT>){
-    next if(/^#/);
-    my @blsResult=();
-    while(<BLSOUT>){
-      if(/^#/){
-        # TODO to make this safe with perl 5.8 (I think), send a string instead of an array.
-        $blastQueue->enqueue(\@blsResult) if(@blsResult);
-        @blsResult=();
-        last;
-      }
+    # With -m 9, each entry is delmited by a set of comment lines.
+    # Therefore queue a result whenever a comment line is found.
+    if(/^#/){
+      # TODO to make this safe with perl 5.8 (I think), send a string instead of an array.
+      $blastQueue->enqueue(\@blsResult) if(@blsResult);
+      @blsResult=();
+    }else{
       push(@blsResult,$_);
     }
-    # add the last set of blast results
-    $blastQueue->enqueue(\@blsResult) if(@blsResult);
   }
   close BLSOUT;
   
@@ -1934,13 +1936,17 @@ sub getBLASTGenePredictions($$) {
   my @blast_hits=();
   for(@thread){
     my $tmp=$_->join;
+    warn "Warning: no blast hits were found in thread ".$_->tid if(!@$tmp);
     push(@blast_hits,@$tmp);
   }
+  warn "WARNING: no blast hits were returned at all (internal error?)" if(!@blast_hits);
+  logmsg "Found ".scalar(@blast_hits)." BLAST results";
 
   # @blast_hits have the best hit for every orf.
   # $blast_hits[$i]{name1} contains all the metadata.
   foreach my $best_hit (@blast_hits) {
     my($seqname,$start,$stop,$strand,$ustop,$length,$lo,$hi,$nt_seq,$aa_seq)=split(/_/,$$best_hit{name1});
+    $seqname=~s/---/_/g; # change the divider back to normal
     my ($lo_in_seq, $hi_in_seq);
     if ($strand eq '+') {
       $lo_in_seq = $start + ($$best_hit{start1}-1)*3;
