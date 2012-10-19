@@ -10,7 +10,7 @@ if [ $? -gt 0 ]; then exit $?; fi
 update_vfdb
 if [ $? -gt 0 ]; then exit $?; fi
 
-# annotation stage - VFDB
+# annotation stage - COGS
 update_cogs
 if [ $? -gt 0 ]; then exit $?; fi
 
@@ -18,3 +18,7 @@ if [ $? -gt 0 ]; then exit $?; fi
 update_uniprot
 if [ $? -gt 0 ]; then exit $?; fi
 
+
+# annotation stage - PDB (not implemented in annotation yet)
+update_pdb
+if [ $? -gt 0 ]; then exit $?; fi
