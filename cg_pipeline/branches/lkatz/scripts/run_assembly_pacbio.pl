@@ -75,8 +75,8 @@ sub main() {
     die("Input file $file not found") unless -f $file;
   }
 
-  logmsg "STEP ".++$stepNo." convert H5 files to fastq";
-  convertH5ToFastq(\@input_files,$settings);
+  logmsg "STEP ".++$stepNo." convert long read files to fastq";
+  convertLongreadsToFastq(\@input_files,$settings);
   
   logmsg "STEP ".++$stepNo." modify input files and create FRG files";
   my $inputDir=highQualityReadsToFrg(\@input_files,$settings);
@@ -111,7 +111,7 @@ sub main() {
 
 # Converts H5 to useful fastq files and adds the fq files
 # to the ccsReads and @input_files arrays by reference.
-sub convertH5ToFastq{
+sub convertLongreadsToFastq{
   my($input_files,$settings)=@_;
   my $newInputDir="$$settings{tempdir}/input";
   mkdir($newInputDir);
@@ -140,6 +140,21 @@ sub convertH5ToFastq{
   }
   $convertQ->enqueue(undef) for(@thr);
   $_->join for(@thr);
+
+  # convert all fasta files to fastq with an error rate of 15%
+  my $p=0.15;
+  my @fasta=grep(/\.(fa|fa|fna|faa|mfa)/,@$input_files);
+  my $fastaStr=join(" ",@fasta);
+  my $P=chr(int(-10*log($p))+33);
+  open(FASTQ,">$workingDir/allfasta.fastq") or die "Could not open $workingDir/allfasta.fastq: $!";
+  my $in=Bio::SeqIO->new(-file=>"cat $fastaStr |",-format=>"fasta");
+  while(my $seq=$in->next_seq){
+    print FASTQ "@".$seq->id."\n".$seq->seq."\n+\n";
+    print FASTQ $P x $seq->length ."\n";
+  }
+  close FASTQ;
+  @$input_files=grep(!/\.(fa|fa|fna|faa|mfa)/,@$input_files);
+  push(@$input_files,"$workingDir/allfasta.fastq");
 
   # grab all these new input files
   push(@{ $$settings{ccsReads} },glob("$newInputDir/*.ccs.fastq"));
@@ -239,12 +254,12 @@ sub padLongReads{
   my $command="(cd $inputDir; $exec -length 500 -partitions 200 -l $libraryname -t $$settings{numcpus} -noclean -s $specFile -fastq $longreadsFile $inputDir/*.frg)  2>&1 ";
   if(!-e $frg || -s $frg<10000){
     my $is_error=command($command);
-  #  my $is_error=command($command,{warn_on_error=>1});
-  #  if($is_error){
-  #    logmsg "Trying pacBioToCA one more time with 1 cpu instead, which fixes a particular bug in some installations.";
-  #    $command=~s/\s+\-t\s+\d+\s+/ -t 1 /;
-  #    command($command);
-  #  }
+    my $is_error=command($command,{warn_on_error=>1});
+    if($is_error){
+      logmsg "ERROR in pacBioToCA. Trying one more time with 1 cpu instead, which fixes a particular bug in some installations.";
+      $command=~s/\s+\-t\s+\d+\s+/ -t 1 /;
+      command($command);
+    }
   } else { logmsg "Padded long reads have been finished already in $frg. Moving on.";}
 
   return $frg;
@@ -266,7 +281,7 @@ sub caAssembly{
   my $exec=AKUtils::fullPathToExec("runCA");
 
   #command("$exec -p $asmPrefix -d $caPrefix -s $specFile $inputDir/*.frg 2>&1"); # to include all reads
-  command("$exec -p $asmPrefix -d $caPrefix -s $specFile $inputDir/longreads.frg 2>&1");
+  command("$exec -p $asmPrefix -d $caPrefix -s $specFile $inputDir/longreadsCorrected.frg 2>&1");
   # STEP 4c find the best assembly
   logmsg "Finished with the assembly! Grabbing your assembly now.";
   command("cp -v $caPrefix/9-terminator/asm.scf.fasta '$finalAssembly'");
@@ -390,7 +405,14 @@ sub illuminaToFrg{
   # quality trim the illumina file
   my $cleanedFastq="$newInputDir/$libraryname.cleaned.fastq";
   # note: I removed the PE parameter because trimClean already detects if it is paired end
-  command("run_assembly_trimClean.pl -i '$fastq' -o '$cleanedFastq' --min_quality 35 --min_avg_quality 30 --min_length 36 --bases_to_trim 20") if(!-e $cleanedFastq || -s $cleanedFastq <100);
+  my $trimCommand="run_assembly_trimClean.pl -i '$fastq' -o '$cleanedFastq' --min_quality 35 --min_avg_quality 30 --min_length 36 --bases_to_trim 20";
+  command($trimCommand) if(!-e $cleanedFastq || -s $cleanedFastq <100);
+  if(-s $cleanedFastq < 1000){ # try trim/clean again if there is no illumina reads left over
+    logmsg "Not many reads made it past the filter. Trying again.";
+    $trimCommand=~s/(\-\-min_quality) \d+/$1 10/;
+    $trimCommand=~s/(\-\-min_avg_quality) \d+/$1 10/;
+    command($trimCommand);
+  }
 
   # make the frg
   my $command="fastqToCA -insertsize 300 20 -libraryname $libraryname -technology illumina -innie ";
