@@ -40,7 +40,7 @@ exit(main());
 
 sub main() {
   $settings = AKUtils::loadConfig($settings);
-  die("Usage: $0 input.gb \nOptional switches\n --goto=[TMHMM|COGS|VFDB|BLAST|INTERPRO] : skips steps until this annotation step is reached") if @ARGV < 1;
+  die("Usage: $0 input.gb -o annotation.gb \nOptional switches\n --goto=[PDB|TMHMM|COGS|VFDB|BLAST|INTERPRO] : skips steps until this annotation step is reached") if @ARGV < 1;
 
   $$settings{uniprot_db3} = $$settings{annotation_uniprot_db3};
   $$settings{uniprot_evidence_db3} = $$settings{annotation_uniprot_evidence_db3};
@@ -90,6 +90,8 @@ sub main() {
     $goto=uc($goto); # case insensitive
     if($goto eq 'TMHMM'){
       logmsg "Going straight to TMHMM";goto TMHMM;
+    } elsif($goto eq 'PDB'){
+      logmsg "Going straight to PDB";goto PDB;
     } elsif($goto eq 'VFDB'){
       logmsg "Going straight to VFDB";goto VFDB;
     } elsif($goto eq 'COGS'){
@@ -118,6 +120,12 @@ sub main() {
   # Run TMHMM on all proteins
   TMHMM:
   system("run_annotation_tmhmm.pl $aa_file"); die if $?;
+  flushSql($settings);
+
+  # run against PDB
+  PDB:
+  logmsg "Checking for proteins with structural similarities in the Protein Databank";
+  system("run_annotation_blast.pl $aa_file -d $$settings{pdb_blast_db} -o $aa_file.pdb_hits.sql --min_aa_coverage 40 --min_aa_identity 40 --min_aa_similarity 40 -p '-b 10 -v 10' 2>&1"); die "Problem with Protein Databank blasting" if $?;
   flushSql($settings);
 
   # Check all proteins against VFDB
