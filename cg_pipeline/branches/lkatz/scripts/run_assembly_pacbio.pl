@@ -118,6 +118,7 @@ sub convertLongreadsToFastq{
   my $longreadsInputDir="$newInputDir/longreads";
   mkdir("$longreadsInputDir");
   my $workingDir=AKUtils::mktempdir();
+  logmsg "Long read conversion temporary dir is $workingDir";
   return $newInputDir if(-f "$newInputDir/longreads.fastq" && -s "$newInputDir/longreads.fastq" > 100);
 
   my $convertQ=Thread::Queue->new(@$input_files);
@@ -136,30 +137,37 @@ sub convertLongreadsToFastq{
         command(["mv '$workingDir/$b.ccs.fastq' $newInputDir/",
           "mv '$workingDir/$b.raw.fastq' $longreadsInputDir/"]);
       }
+      return 1;
     },$convertQ,$settings);
   }
   $convertQ->enqueue(undef) for(@thr);
   $_->join for(@thr);
+  logmsg "Done converting all H5 files";
 
   # convert all fasta files to fastq with an error rate of 15%
-  my $p=0.15;
-  my @fasta=grep(/\.(fa|fa|fna|faa|mfa)/,@$input_files);
+  my @fasta=grep(/\.(fa|fa|fna|faa|mfa)$/,@$input_files);
   my $fastaStr=join(" ",@fasta);
-  my $P=chr(int(-10*log($p))+33);
-  open(FASTQ,">$workingDir/allfasta.fastq") or die "Could not open $workingDir/allfasta.fastq: $!";
-  my $in=Bio::SeqIO->new(-file=>"cat $fastaStr |",-format=>"fasta");
-  while(my $seq=$in->next_seq){
-    print FASTQ "@".$seq->id."\n".$seq->seq."\n+\n";
-    print FASTQ $P x $seq->length ."\n";
+  if($fastaStr){
+    my $p=0.15;
+    logmsg "Converting $fastaStr to fasta with an artificial error rate of $p";
+    my $P=chr(int(-10*log($p))+33);
+    open(FASTQ,">$workingDir/allfasta.fastq") or die "Could not open $workingDir/allfasta.fastq: $!";
+    my $in=Bio::SeqIO->new(-file=>"cat $fastaStr |",-format=>"fasta");
+    while(my $seq=$in->next_seq){
+      print FASTQ "@".$seq->id."\n".$seq->seq."\n+\n";
+      print FASTQ $P x $seq->length ."\n";
+    }
+    close FASTQ;
+    @$input_files=grep(!/\.(fa|fa|fna|faa|mfa)/,@$input_files);
+    push(@$input_files,"$workingDir/allfasta.fastq");
+    logmsg "Done converting all fasta files";
   }
-  close FASTQ;
-  @$input_files=grep(!/\.(fa|fa|fna|faa|mfa)/,@$input_files);
-  push(@$input_files,"$workingDir/allfasta.fastq");
 
   # grab all these new input files
   push(@{ $$settings{ccsReads} },glob("$newInputDir/*.ccs.fastq"));
   push(@$input_files,glob("$longreadsInputDir/*.raw.fastq"));
   @$input_files=grep(!/\.h5$/i,@$input_files); # remove h5 files
+  logmsg "Done!";
 
   return $newInputDir;
 }
@@ -196,7 +204,7 @@ sub highQualityReadsToFrg{
     command("rm $longreadsFile.tmp.fastq");
 
     # Remove these temporary intermediate files.  They are huge and not necessary, even in a temp directory
-    command("rm -rfv $longreadsInputDir");
+    # command("rm -rfv $longreadsInputDir");  # or, maybe they're useful??
   }
 
   # STEP 2b remove CCS reads from long reads (ie remove duplication)
@@ -452,8 +460,9 @@ sub runcaSpecFile{
 }
 
 sub removeReadsinCcsFromLongreads{
-  my ($ccsReadsArr,$longreadsFile,$settings)=@_;
-  logmsg "TODO remove any reads found in the CCS reads from the long uncorrected reads file"
+  my ($ccsReadsFileArr,$longreadsFile,$settings)=@_;
+  logmsg "TODO remove any reads found in the CCS reads from the long uncorrected reads file";
+  #die;
 }
 
 ##########
