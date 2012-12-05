@@ -218,7 +218,7 @@ sub highQualityReadsToFrg{
       command($command);
     }
     @{ $$settings{ccsReads} }=($ccsreadsFile); # this command leaves us with one comprehensive ccsReads file
-    removeReadsinCcsFromLongreads($$settings{ccsReads},$longreadsFile,$settings);
+    $longreadsFile=removeReadsinCcsFromLongreads($$settings{ccsReads},$longreadsFile,$settings);
   }
 
   # STEP 2c create FRG files for each input file except pacbio long reads.
@@ -226,7 +226,9 @@ sub highQualityReadsToFrg{
   # of the assembly.  Do not contaminate the input directory!
   
   # CCS reads
+  logmsg "Converting CCS reads to FRG: ".join(", ",@{$$settings{ccsReads}});
   for my $fastq (@{$$settings{ccsReads}}){
+    next if($fastq=~/^\s*$/); # not sure right now why there are some blank entries
     ccsToFrg($fastq,$newInputDir,$settings);
   }
   # illumina
@@ -246,6 +248,7 @@ sub highQualityReadsToFrg{
 sub padLongReads{
   my($inputDir,$settings)=@_;
   my $longreadsFile="$inputDir/longreads.fastq";
+    $longreadsFile="$inputDir/longreads.noccs.fastq" if(-e "$inputDir/longreads.noccs.fastq" && -s "$inputDir/longreads.noccs.fastq" >1000);
   my $libraryname="longreadsCorrected";
   my $frg="$inputDir/$libraryname.frg";
 
@@ -311,11 +314,12 @@ sub ahaScaffolding{
 
 
 # Find the coverage that an X bp min will give, and keep trying shorter reads until it reaches 20-40x.
+# EDIT: I'm trying out 100x in case it works
 # Arguments for settings: 
 #  targetCoverage=>40 # the max coverage. The first level of coverage that is below this threshold will be used.
 sub filterForCoverage{
   my($infile,$settings)=@_;
-  my $targetCoverage=$$settings{targetCoverage}||50; # a maximum coverage
+  my $targetCoverage=$$settings{targetCoverage}||100; # a maximum coverage
 
   # make a histogram of number of reads per length
   my %readLengthHist;
@@ -461,8 +465,57 @@ sub runcaSpecFile{
 
 sub removeReadsinCcsFromLongreads{
   my ($ccsReadsFileArr,$longreadsFile,$settings)=@_;
-  logmsg "TODO remove any reads found in the CCS reads from the long uncorrected reads file";
-  #die;
+  my $workingDir=AKUtils::mktempdir();
+  my $newLongreadsfile="$workingDir/longreads.noccs.fastq";
+  my $noccsLongreads="$$settings{tempdir}/input/longreads.noccs.fastq";
+  return $noccsLongreads if(-e $noccsLongreads && -s $noccsLongreads >1000);
+  logmsg "Removing any reads found in the CCS reads from the long uncorrected reads file";
+  
+  # get all CCS deflines
+  my %ccsReadname;
+  for(@$ccsReadsFileArr){
+    my $i=0;
+    open(CCS,$_) or die "Could not open CCS file $_: $!";
+    while(<CCS>){
+      $i++;
+      if($i%4==1){
+        chomp;
+        $ccsReadname{$_}++;
+      }
+    }
+    close CCS;
+  }
+
+  # Start making a new longreads file in the /tmp directory
+  # If there is a CCS counterpart, do not include the read in longreads.
+  open(LONG,$longreadsFile) or die "Could not open long reads file $longreadsFile: $!";
+  open(NEWLONG,">",$newLongreadsfile) or die "Could not write to $newLongreadsfile: $!";
+  my $i=0;
+  LONGLINE:
+  while(<LONG>){
+    chomp;
+    $i++;
+    if($i%4==1){
+      if($ccsReadname{$_}){
+        my $discard=<LONG> for(1..3);
+        $i+=3;
+        next LONGLINE;
+      } else {
+        print NEWLONG $_."\n";
+        for(1..3){
+          my $line=<LONG>;
+          print NEWLONG $line;
+        }
+        $i+=3;
+      }
+    }
+  }
+  close NEWLONG;
+  close LONG;
+  
+  # replace the long reads file with this new one that doesn't have CCS reads
+  command("mv -v $newLongreadsfile $noccsLongreads 2>&1");
+  return $noccsLongreads;
 }
 
 ##########
