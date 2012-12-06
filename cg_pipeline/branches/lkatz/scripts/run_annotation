@@ -105,12 +105,13 @@ sub main() {
     }
   }
 
+  logmsg "WARNING: new blast error message is untested but is implemented for IS Elements.";
+  my $blastErrMsgF="ERROR: Need \%s in conf file set to a database. Current value is $$settings{\%s}.";
   # IS elements
   # Credit to some parameters goes to ISsaga http://genomebiology.com/2011/12/3/R30
   my $is_command="run_annotation_blast.pl $aa_file -d $$settings{is_blast_db} -o $aa_file.is_hits.sql --min_aa_coverage 30 --min_aa_identity 20 --min_aa_similarity 30 -p '-W 2 -F F -e 1E-5 -b 1 -v 1' 2>&1";
   logmsg "Finding IS elements with command\n  $is_command";
-  system($is_command); die if $?;
-  #system("run_annotation_isElements.pl -i $aa_file -o $aa_file.is_hits.sql"); die if$?;
+  system($is_command); die sprintf($blastErrMsgF,"is_blast_db","is_blast_db") if $?;
   flushSql($settings);
 
   # Run SignalP on all proteins
