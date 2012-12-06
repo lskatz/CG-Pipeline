@@ -116,14 +116,20 @@ sub convertLongreadsToFastq{
   my $newInputDir="$$settings{tempdir}/input";
   mkdir($newInputDir);
   my $longreadsInputDir="$newInputDir/longreads";
+  my $ccsInputDir="$newInputDir/ccs";
   mkdir("$longreadsInputDir");
+  mkdir("$ccsInputDir");
   my $workingDir=AKUtils::mktempdir();
   logmsg "Long read conversion temporary dir is $workingDir";
-  return $newInputDir if(-f "$newInputDir/longreads.fastq" && -s "$newInputDir/longreads.fastq" > 100);
+  if(-f "$newInputDir/longreads.fastq" && -s "$newInputDir/longreads.fastq" > 100){
+    $$settings{ccsReads}=[glob("$ccsInputDir/*.fastq")];
+    return $newInputDir;
+  }
 
   my $convertQ=Thread::Queue->new(@$input_files);
   my @thr;
-  for(0..ceil($$settings{numcpus}/2)){ # two threads per h5 file
+  my $maxThreads=ceil(min($$settings{numcpus}/2,5)); # two threads per h5 file but don't want to cause too much stress on the HD
+  for(0..$maxThreads){
     $thr[$_]=threads->new(sub{
       my($Q,$settings)=@_;
       my $bash5tools=AKUtils::fullPathToExec("bash5tools.py");
@@ -134,7 +140,7 @@ sub convertLongreadsToFastq{
         my @c=("$bash5tools -f '$h5' -t CCS -s fastq -l 100 -q 0 -o '$workingDir/$b.ccs'",
                "$bash5tools -f '$h5' -t Raw -s fastq -l 2000 -q 0 -o '$workingDir/$b.raw'");
         command(\@c);
-        command(["mv '$workingDir/$b.ccs.fastq' $newInputDir/",
+        command(["mv '$workingDir/$b.ccs.fastq' $ccsInputDir/",
           "mv '$workingDir/$b.raw.fastq' $longreadsInputDir/"]);
       }
       return 1;
@@ -164,9 +170,11 @@ sub convertLongreadsToFastq{
   }
 
   # grab all these new input files
-  push(@{ $$settings{ccsReads} },glob("$newInputDir/*.ccs.fastq"));
-  push(@$input_files,glob("$longreadsInputDir/*.raw.fastq"));
-  @$input_files=grep(!/\.h5$/i,@$input_files); # remove h5 files
+  #push(@{ $$settings{ccsReads} },glob("$ccsInputDir/*.fastq"));
+  #push(@$input_files,glob("$longreadsInputDir/*.fastq"));
+  @{ $$settings{ccsReads} }=glob("$ccsInputDir/*.fastq");
+  @$input_files=glob("$longreadsInputDir/*.fastq");
+  @$input_files=grep(!/\.h5$/i,@$input_files); # remove h5 files that were already in the array
   logmsg "Done!";
 
   return $newInputDir;
