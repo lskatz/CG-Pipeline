@@ -270,15 +270,16 @@ sub padLongReads{
   # TODO remove overlap.sh if it exists, to help pacBioToCA continue if it was killed in the middle of running
   # TODO remove anything else to ensure continuity?
   command("rm '$inputDir/longreads.frg'",{warn_on_error=>1});
-  my $command="(cd $inputDir; $exec -length 500 -partitions 200 -l $libraryname -t $$settings{numcpus} -noclean -s $specFile -fastq $longreadsFile $inputDir/*.frg)  2>&1 ";
+  #my $command="(cd $inputDir; $exec -length 500 -partitions 200 -l $libraryname -t $$settings{numcpus} -noclean -s $specFile -fastq $longreadsFile $inputDir/*.frg)  2>&1 ";
+  my $command="(cd $inputDir; $exec -length 500 -partitions 200 -l $libraryname -t 1 -noclean -s $specFile -fastq $longreadsFile $inputDir/*.frg)  2>&1 ";
   if(!-e $frg || -s $frg<10000){
     my $is_error=command($command);
-    my $is_error=command($command,{warn_on_error=>1});
-    if($is_error){
-      logmsg "ERROR in pacBioToCA. Trying one more time with 1 cpu instead, which fixes a particular bug in some installations.";
-      $command=~s/\s+\-t\s+\d+\s+/ -t 1 /;
-      command($command);
-    }
+  #  if($is_error){
+  #    # TODO figure out the error code associated with this segmentation fault, if there is a specific one
+  #    logmsg "ERROR in pacBioToCA. Trying one more time with 1 cpu instead, which fixes a particular bug in some installations.";
+  #    $command=~s/\s+\-t\s+\d+\s+/ -t 1 /;
+  #    command($command);
+  #}
   } else { logmsg "Padded long reads have been finished already in $frg. Moving on.";}
 
   return $frg;

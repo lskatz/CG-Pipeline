@@ -35,6 +35,8 @@ use Data::Dumper;
 use threads;
 use Thread::Queue;
 
+my @fastaExt=qw(.fasta .fa .mfa .fas .fna);
+my @fastqExt=qw(.fastq .fq .fastq.gz .fq.gz);
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
 sub logmsg {my $FH = $FSFind::LOG || *STDOUT; print $FH "$0: ".(caller(1))[3].": @_\n";}
@@ -53,20 +55,48 @@ sub main() {
   my %final_metrics;
   print join("\t",qw(File avgReadLength totalBases maxReadLength minReadLength avgQuality numReads readScore))."\n";
   for my $input_file(@ARGV){
-    my $entryQueue=Thread::Queue->new();    # for storing fastq 4-line entries
-    my $metricsQueue=Thread::Queue->new(); # for receiving read lengths and metrics
-    my $file=File::Spec->rel2abs($input_file);
-    die("Input or file $file not found") unless -f $file;
-    my @thr;
-    $thr[$_]=threads->new(\&fastqIndividualReadMetrics,$entryQueue,$metricsQueue,$settings) for(0..$$settings{numcpus} - 1);
-    readFastq($input_file,$entryQueue,$settings);
-    $entryQueue->enqueue(undef) for(@thr);
-    $_->join for(@thr);
-    $metricsQueue->enqueue(undef); # this kills the crab
-    fastqStats($input_file,$metricsQueue,$settings);
+    my($filename,$dirname,$ext)=fileparse($input_file,(@fastaExt,@fastqExt));
+    if(grep(/$ext/,@fastqExt)){
+      logmsg "!!!!!!!Found extension $ext in $filename";
+      my $entryQueue=Thread::Queue->new();    # for storing fastq 4-line entries
+      my $metricsQueue=Thread::Queue->new(); # for receiving read lengths and metrics
+      my $file=File::Spec->rel2abs($input_file);
+      die("Input or file $file not found") unless -f $file;
+      my @thr;
+      $thr[$_]=threads->new(\&fastqIndividualReadMetrics,$entryQueue,$metricsQueue,$settings) for(0..$$settings{numcpus} - 1);
+      readFastq($input_file,$entryQueue,$settings);
+      $entryQueue->enqueue(undef) for(@thr);
+      $_->join for(@thr);
+      $metricsQueue->enqueue(undef); # this kills the crab
+      fastqStats($input_file,$metricsQueue,$settings);
+    } elsif(grep(/$ext/,@fastaExt)){
+      fastaStats($input_file,$settings);
+    } else {
+      logmsg "WARNING: I do not understand the extension $ext in the filename $filename.  SKIPPING.";
+    }
   }
 
   return 0;
+}
+
+sub fastaStats{
+  my($infile,$settings)=@_;
+  my $seqs=AKUtils::readMfa($infile,$settings);
+  my $maxReadLength=1;
+  my $minReadLength=99999999999999;
+  my $readScore='.';
+  my $totalBases=0;
+  my $numReads=scalar(values(%$seqs));
+  for(values(%$seqs)){
+    my $length=length($_);
+    $maxReadLength=$length if($length>$maxReadLength);
+    $minReadLength=$length if($length<$minReadLength);
+    $totalBases+=$length;
+  }
+  my $avgReadLength=$totalBases/$numReads;
+
+  print join("\t",$infile,$avgReadLength,$totalBases,$maxReadLength,$minReadLength,".",$numReads,".")."\n";
+  return 1;
 }
 
 sub fastqStats{
