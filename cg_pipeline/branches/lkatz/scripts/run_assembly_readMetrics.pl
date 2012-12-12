@@ -57,7 +57,6 @@ sub main() {
   for my $input_file(@ARGV){
     my($filename,$dirname,$ext)=fileparse($input_file,(@fastaExt,@fastqExt));
     if(grep(/$ext/,@fastqExt)){
-      logmsg "!!!!!!!Found extension $ext in $filename";
       my $entryQueue=Thread::Queue->new();    # for storing fastq 4-line entries
       my $metricsQueue=Thread::Queue->new(); # for receiving read lengths and metrics
       my $file=File::Spec->rel2abs($input_file);
