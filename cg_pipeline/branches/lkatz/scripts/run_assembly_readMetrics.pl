@@ -80,6 +80,8 @@ sub main() {
 
 sub fastaStats{
   my($infile,$settings)=@_;
+  my ($filename,$dirname,$ext)=fileparse($infile,@fastaExt);
+  my $basename="$dirname/$filename";
   my $seqs=AKUtils::readMfa($infile,$settings);
   my $maxReadLength=1;
   my $minReadLength=99999999999999;
@@ -92,9 +94,25 @@ sub fastaStats{
     $minReadLength=$length if($length<$minReadLength);
     $totalBases+=$length;
   }
-  my $avgReadLength=$totalBases/$numReads;
+  my $avgReadLength=round($totalBases/$numReads);
 
-  print join("\t",$infile,$avgReadLength,$totalBases,$maxReadLength,$minReadLength,".",$numReads,".")."\n";
+  # can I find a qual file to give quality scores?
+  my $qualfile;
+  $qualfile="$infile.qual" if(-e "$infile.qual");
+  $qualfile="$basename.qual" if(-e "$basename.qual");
+  my $avgQuality=".";
+  my $readScore=round(log($totalBases*$avgReadLength*40)); # 40 gives a kind of stand-in quality score if there is none
+  if($qualfile){
+    my $totalQuality=0;
+    my $quals=AKUtils::readMfa($qualfile,{keep_whitespace=>1});
+    while(my($seqid,$qual)=each(%$quals)){
+      $totalQuality+=$_ for(split(/\s+/,$qual));
+    }
+    $avgQuality=round($totalQuality/$totalBases);
+    $readScore=round(log($totalBases*$avgQuality*$avgReadLength));
+  }
+
+  print join("\t",$infile,$avgReadLength,$totalBases,$maxReadLength,$minReadLength,$avgQuality,$numReads,$readScore)."\n";
   return 1;
 }
 
@@ -120,9 +138,9 @@ sub fastqStats{
     for(my $i=0;$i<$numReads;$i++){
       $totalQuality+=$qual[$i]*$length[$i];
     }
-    $avgQuality=$totalQuality/$totalBases;
-    $avgReadLength=$totalBases/$numReads;
-    $readScore=log($totalBases*$avgQuality*$avgReadLength);
+    $avgQuality=round($totalQuality/$totalBases);
+    $avgReadLength=round($totalBases/$numReads);
+    $readScore=round(log($totalBases*$avgQuality*$avgReadLength));
     #my $readsScore=log($$m{totalBases} * $avgQuality * $avgReadLength);
   }
 
@@ -200,6 +218,14 @@ sub printMetrics{
     print $file.$d.join($d,@line)."\n";
   }
   return 1;
+}
+
+# Truncate to the hundreds place.
+# Yes I understand it's not technically rounding.
+sub round{
+  my ($num)=(@_);
+  my $rounded=int($num*100)/100;
+  return sprintf("%.2f",$rounded); # put in zero padding in case it truncates at a zero in the hundreds place
 }
 
 sub usage{
