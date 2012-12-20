@@ -55,7 +55,7 @@ sub main() {
     min_length=>62,# twice kmer length sounds good
   };
   
-  GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter notrim debug));
+  GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter notrim debug qualOffset=i));
   
   my $infile=$$settings{infile} or die "Error: need an infile\n".usage($settings);
   my $outfile=$$settings{outfile} or die "Error: need an outfile\n".usage($settings);
