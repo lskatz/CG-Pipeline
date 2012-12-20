@@ -73,6 +73,8 @@ sub combinePredictionAndAnnotation{
       $cdsFeat->add_tag_value('product',$proteinProduct) if($proteinProduct);
       
       # domain hits
+      my @iprFeat=interpretIpr($cdsFeat,$$locusAnnotation{ipr_matches},$settings);
+      push(@otherFeat,@iprFeat);
       
       # signal peptide
       my ($is_signalPeptide,$spStart,$spEnd)=interpretSignalP($locusAnnotation,$settings);
@@ -82,9 +84,13 @@ sub combinePredictionAndAnnotation{
       if($is_signalPeptide){
         my $signalpFeat=Bio::SeqFeature::Generic->new(-start=>$spStart,-end=>$spEnd,
             # TODO: -score, 
-            -source_tag=>"signalP",
+            -source_tag=>"SignalP",
+            -primary=>"sig_peptide",
             -strand=>$geneFeat->strand,
-        );
+            -tag=>{
+              locus_tag=>$locus_tag,
+            }
+        ); 
         push(@otherFeat,$signalpFeat);
       }
       
@@ -172,25 +178,49 @@ sub readAnnotationDir{
 sub interpretUniprot{
   my($locusAnnotation,$settings)=@_;
   # take the best blast hit: highest score, lowest evalue
-  my $uniprotAnnotation=(sort{
+  $$locusAnnotation{blast}||=[];
+  my @uniprotAnnotation=sort{
     return $$b{score}<=>$$a{score} if($$b{score}!=$$a{score});
-    return $$a{evalue}<=>$$b{evalue};
-  } @{ $$locusAnnotation{blast} })[0];
-  my $uniprotDesc=$$uniprotAnnotation{description};
+    # not really sure why, but there is a problem with commas
+    $$a{evalue}=~s/,//g;
+    $$b{evalue}=~s/,//g;    
+    return sprintf("%f",$$a{evalue})<=>sprintf("%f",$$b{evalue});
+  } @{ $$locusAnnotation{blast} };
+  my $uniprotAnnotation=$uniprotAnnotation[0] || {};
+  my $uniprotDesc=$$uniprotAnnotation{description} || "";
   my $gene="";
-  if($uniprotDesc=~/GN=(\S{3,10})/){ # gene name is 3+/-1 letters long. Probably never too much longer than that.
+  if($uniprotDesc=~/GN=([a-z]\S{2,9})/){ # gene name is 3+/-1 letters long. Probably never too much longer than that.
     $gene=$1;
   }
   my $proteinProduct="";
-  if($uniprotDesc=~/^(^[^=]+)/){
-    $proteinProduct=$1; 
-    $proteinProduct=~s/\S+=\S*$//;
+  if($uniprotDesc=~/^(^.+?(=|$))/){
+    $proteinProduct=$1;
+    $proteinProduct=~s/\S+=\S*$//;   # remove last word with equals sign
+    $proteinProduct=~s/^\s+|\s+$//g; # trim whitespace
   }
   # TODO think of something else if it hits against "putative", etc
   # Maybe go to the next hit, or use annotations from other tools.
   return($gene,$proteinProduct,$uniprotDesc);
   
   # TODO parse the description for more meaningful things
+}
+
+sub interpretIpr{
+  my($cdsFeat,$iprAnnotation,$settings)=@_;
+  my @newFeat;
+  for my $an (@$iprAnnotation){
+    my $newFeat=$cdsFeat->clone;
+    $newFeat->primary_tag("misc_structure");
+    while(my ($key,$value)=each(%$an)){
+      next if($key=~/^(start|end|locus_tag)$/);
+      $newFeat->add_tag_value($key,$value);
+    }
+    # TODO think about revcomp
+    $newFeat->start($cdsFeat->start+$$an{start}-1);
+    $newFeat->end  ($cdsFeat->end  +$$an{start}-1);
+    push(@newFeat,$newFeat);
+  }
+  return @newFeat;
 }
 
 sub interpretSignalP{
