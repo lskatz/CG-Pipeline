@@ -108,7 +108,7 @@ sub qualityTrimFastqPoly($;$){
   my @fastq=@$fastq;
   for my $fastq (@fastq){
 
-    logmsg "Trimming and cleaning a file $fastq with poly=$poly";
+    logmsg "Trimming and cleaning a file $fastq with poly=$poly with a quality offset of $$settings{qualOffset}";
   
     # check the file before continuing
     my $readsToCheck=5;
@@ -395,8 +395,9 @@ sub usage{
   
   -p 1 or 2 (p for poly)
     1 for SE, 2 for paired end (PE). 0 for automatic detection (default)
-  -q for somewhat quiet mode (use 1>/dev/null for totally quiet)
+  -quieter for somewhat quiet mode (use 1>/dev/null for totally quiet)
   --notrim to skip trimming of the reads. Useful for assemblers that require equal read lengths.
+  -qual 64 to use an offset of 64 instead of 33(default).
 
   Use phred scores (e.g. 20 or 30) or length in base pairs if it says P or L, respectively
   --min_quality P             # trimming
