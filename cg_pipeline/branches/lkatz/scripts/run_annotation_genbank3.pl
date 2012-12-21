@@ -67,10 +67,8 @@ sub combinePredictionAndAnnotation{
       $cdsFeat->primary_tag("CDS");
       my @otherFeat;
       
-      # acquire the gene name
-      my ($geneName,$proteinProduct,$uniprotDescription)=interpretUniprot($locusAnnotation,$settings);
-      $geneFeat->add_tag_value('gene',$geneName) if($geneName);
-      $cdsFeat->add_tag_value('product',$proteinProduct) if($proteinProduct);
+      # modify the gene and cds features by reference
+      interpretUniprot($geneFeat,$cdsFeat,$locusAnnotation,$settings);
       
       # domain hits
       my @iprFeat=interpretIpr($cdsFeat,$$locusAnnotation{ipr_matches},$settings);
@@ -175,8 +173,9 @@ sub readAnnotationDir{
 ## sub-subroutines
 ##################
 
+# TODO use uniprot and uniprot_evidence to add more useful information
 sub interpretUniprot{
-  my($locusAnnotation,$settings)=@_;
+  my($geneFeat,$cdsFeat,$locusAnnotation,$settings)=@_;
   # take the best blast hit: highest score, lowest evalue
   $$locusAnnotation{blast}||=[];
   my @uniprotAnnotation=sort{
@@ -198,10 +197,13 @@ sub interpretUniprot{
     $proteinProduct=~s/\S+=\S*$//;   # remove last word with equals sign
     $proteinProduct=~s/^\s+|\s+$//g; # trim whitespace
   }
+  #my ($geneName,$proteinProduct,$uniprotDescription)=interpretUniprot($locusAnnotation,$settings);
+  $geneFeat->add_tag_value('gene',$gene) if($gene);
+  $cdsFeat->add_tag_value('product',$proteinProduct) if($proteinProduct);
+  return 1;
+  
   # TODO think of something else if it hits against "putative", etc
   # Maybe go to the next hit, or use annotations from other tools.
-  return($gene,$proteinProduct,$uniprotDesc);
-  
   # TODO parse the description for more meaningful things
 }
 
@@ -212,12 +214,20 @@ sub interpretIpr{
     my $newFeat=$cdsFeat->clone;
     $newFeat->primary_tag("misc_structure");
     while(my ($key,$value)=each(%$an)){
-      next if($key=~/^(start|end|locus_tag)$/);
-      $newFeat->add_tag_value($key,$value);
+      next if($key=~/^(start|end|locus_tag)$/); # exclude some tags from being shown like this
+      $newFeat->add_tag_value($key,$value) if($value!~/^\s*$/); # who cares about blank values
     }
-    # TODO think about revcomp
-    $newFeat->start($cdsFeat->start+$$an{start}-1);
-    $newFeat->end  ($cdsFeat->end  +$$an{start}-1);
+    
+    # TODO I don't think that the start/stop sites are exactly on the domain.
+    # I think that they are start/stop for the gene which is wrong
+    my($start,$end)=($cdsFeat->start+$$an{start}-1, $cdsFeat->end+$$an{start}-1);
+    if($newFeat->strand<1){
+      $start=$cdsFeat->end-($end-$start);
+      $end=$cdsFeat->end;
+    }
+    $newFeat->start($start);
+    $newFeat->end($end);
+      
     push(@newFeat,$newFeat);
   }
   return @newFeat;
