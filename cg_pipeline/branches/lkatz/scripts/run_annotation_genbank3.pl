@@ -42,8 +42,10 @@ sub combinePredictionAndAnnotation{
   my %annotationDirMap=annotationFieldMap();
   my @annotationKeys=keys(%annotationDirMap);
   
+  logmsg "One contig/chromosome per dot: ";
   my $out=Bio::SeqIO->new(-file=>">$outfile",-format=>"genbank");
   while(my ($seqid,$meta)=each(%$metaData)){
+    $|++;print ".";$|--;
     my $sourceFeat=$$meta{source};
     my $seq=$sourceFeat->seq;
     $seq=Bio::Seq->new(-seq=>$seq->seq,-id=>$seq->id);
@@ -65,46 +67,39 @@ sub combinePredictionAndAnnotation{
       my $geneFeat=$$predfeatures{$seqid}{$locus_tag}->clone;
       my $cdsFeat =$$predfeatures{$seqid}{$locus_tag}->clone;
       $cdsFeat->primary_tag("CDS");
-      my @otherFeat;
+      my (
+        @miscFeat,  # for signalP, tmhmm, and other "named" tags in the gb file
+        @otherFeat, # for protein domains
+      );
       
       # modify the gene and cds features by reference
       interpretUniprot($geneFeat,$cdsFeat,$locusAnnotation,$settings);
       
-      # domain hits
-      my @iprFeat=interpretIpr($cdsFeat,$$locusAnnotation{ipr_matches},$settings);
-      push(@otherFeat,@iprFeat);
-      
       # signal peptide
-      my ($is_signalPeptide,$spStart,$spEnd)=interpretSignalP($locusAnnotation,$settings);
-      $spStart+=$geneFeat->start-1;
-      $spEnd  +=$geneFeat->start-1;
-      # TODO what to do for revcomp sequences???
-      if($is_signalPeptide){
-        my $signalpFeat=Bio::SeqFeature::Generic->new(-start=>$spStart,-end=>$spEnd,
-            # TODO: -score, 
-            -source_tag=>"SignalP",
-            -primary=>"sig_peptide",
-            -strand=>$geneFeat->strand,
-            -tag=>{
-              locus_tag=>$locus_tag,
-            }
-        ); 
-        push(@otherFeat,$signalpFeat);
-      }
+      my $signalpFeat=interpretSignalP($cdsFeat,$locusAnnotation,$settings);
+      push(@miscFeat,$signalpFeat) if($signalpFeat); # $signalpFeat is 0 if not present
       
       # transmembrane helix
+      my $tmFeat=interpretTmhmm($cdsFeat,$locusAnnotation,$settings);
+      push(@otherFeat,$tmFeat) if($tmFeat);
       
       # COGs
       
       # others: IS elements, VFs, ...
       
-      $seq->add_SeqFeature($geneFeat,$cdsFeat,@otherFeat);
+      # domain hits
+      my @iprFeat=interpretIpr($cdsFeat,$$locusAnnotation{ipr_matches},$settings);
+      push(@otherFeat,@iprFeat);
+      
+      @otherFeat=sort {$a->start<=>$b->start} @otherFeat;
+      $seq->add_SeqFeature($geneFeat,$cdsFeat,@miscFeat,@otherFeat);
     }
     
     $out->write_seq($seq);
   }
-  
   $out->close;
+  print "\n"; # newline after all the "update dots"
+  
   return 1;
 }
 
@@ -188,7 +183,7 @@ sub interpretUniprot{
   my $uniprotAnnotation=$uniprotAnnotation[0] || {};
   my $uniprotDesc=$$uniprotAnnotation{description} || "";
   my $gene="";
-  if($uniprotDesc=~/GN=([a-z]\S{2,9})/){ # gene name is 3+/-1 letters long. Probably never too much longer than that.
+  if($uniprotDesc=~/GN=([a-z]\S{2,7})/){ # gene name is 4+/-1 letters long. Probably never too much longer than that.
     $gene=$1;
   }
   my $proteinProduct="";
@@ -212,18 +207,18 @@ sub interpretIpr{
   my @newFeat;
   for my $an (@$iprAnnotation){
     my $newFeat=$cdsFeat->clone;
-    $newFeat->primary_tag("misc_structure");
+    $newFeat->primary_tag("misc_feature");
     while(my ($key,$value)=each(%$an)){
       next if($key=~/^(start|end|locus_tag)$/); # exclude some tags from being shown like this
       $newFeat->add_tag_value($key,$value) if($value!~/^\s*$/); # who cares about blank values
     }
     
-    # TODO I don't think that the start/stop sites are exactly on the domain.
-    # I think that they are start/stop for the gene which is wrong
-    my($start,$end)=($cdsFeat->start+$$an{start}-1, $cdsFeat->end+$$an{start}-1);
+    # Figure out the correct start/stop
+    my($ntCdsStart,$ntCdsEnd)=($$an{start}*3-3,$$an{end}*3-3); # aa to nt CDS coordinates, base 0
+    my($start,$end)=($cdsFeat->start+$ntCdsStart, $cdsFeat->start+$ntCdsEnd); # CDS to genomic coordinates
     if($newFeat->strand<1){
-      $start=$cdsFeat->end-($end-$start);
-      $end=$cdsFeat->end;
+      $end  =$cdsFeat->end-$ntCdsStart;
+      $start=$cdsFeat->end-$ntCdsEnd;
     }
     $newFeat->start($start);
     $newFeat->end($end);
@@ -234,18 +229,77 @@ sub interpretIpr{
 }
 
 sub interpretSignalP{
-  my($annotation,$settings)=@_;
+  my($cdsFeat,$annotation,$settings)=@_;
   # currently: only paying attention to NNs and not HMMs
   my $signalp_nn=$$annotation{signalp_nn};
   my $is_signalpeptide=0;
-  my ($start,$end);
+  my ($start,$end,$score);
   for my $measure (@$signalp_nn){
     if($$measure{measure_type} eq 'D'){
       $is_signalpeptide=1 if($$measure{is_signal_peptide} eq 'YES');
-      ($start,$end)=($$measure{start},$$measure{end});
+      ($start,$end,$score)=($$measure{start},$$measure{end},$$measure{value});
     }
   }
-  return ($is_signalpeptide,$start,$end);
+  return 0 if(!$is_signalpeptide);
+  
+  my($ntCdsStart,$ntCdsEnd)=($start*3-3,$end*3-3); # 0-coordinates
+  my($genomeStart,$genomeEnd)=($cdsFeat->start+$ntCdsStart,$cdsFeat->start+$ntCdsEnd);
+  if($cdsFeat->strand<1){
+    ($genomeEnd,$genomeStart)=($cdsFeat->end-$ntCdsStart,$cdsFeat->end-$ntCdsEnd);
+  }
+  my $signalpFeat=Bio::SeqFeature::Generic->new(-start=>$genomeStart,-end=>$genomeEnd,
+            -source_tag=>"SignalP",
+            -primary=>"sig_peptide",
+            -strand=>$cdsFeat->strand,
+            -tag=>{
+              locus_tag=>($cdsFeat->get_tag_values('locus_tag'))[0],
+              evidence=>"SignalP",
+              score=>$score,
+            }
+  );
+  return $signalpFeat;
+}
+
+sub interpretTmhmm{
+  my ($cdsFeat,$annotation,$settings)=@_;
+  my $tmhmm_location=$$annotation{tmhmm_location};
+  my $tmhmm=$$annotation{tmhmm};
+  $tmhmm=$$tmhmm[0]; # there's only one tmhmm result
+  return 0 if(!$tmhmm);
+  
+  my $splitLocation = new Bio::Location::Split();
+  my (@start,@end);
+  for(@$tmhmm_location){
+    my $startNt=$$_{start}*3-3;
+    my $endNt=$$_{end}*3-3;
+    my $start=$cdsFeat->start+$startNt;
+    my $end=$cdsFeat->start+$endNt;
+    if($cdsFeat->strand<1){
+      $start=$cdsFeat->end-$endNt;
+      $end=$cdsFeat->end-$startNt;
+    }
+    $splitLocation->add_sub_Location(new Bio::Location::Simple(
+        -start=>$start,
+        -end=>$end,
+        -strand=>$cdsFeat->strand,
+    ));
+  }
+  
+  my $tmFeat=Bio::SeqFeature::Generic->new(
+    -primary=>"misc_structure",
+    -source_tag=>"TMHMM",
+    -strand=>$cdsFeat->strand,
+    -location=>$splitLocation,
+    -tag=>{
+      locus_tag=>($cdsFeat->get_tag_values('locus_tag'))[0],
+      evidence=>"TMHMM",
+      score=>$$tmhmm{total_prob_n_in},
+    }
+  );
+  
+  $tmFeat->start(@start);
+  $tmFeat->end(@end);
+  return $tmFeat;
 }
 
 ##################
