@@ -1,4 +1,8 @@
 #!/usr/bin/env perl
+
+# Author: Lee Katz <lkatz@cdc.gov>
+# create a genbank file from the annotation sql files
+
 use warnings;
 use strict;
 use FindBin;
@@ -8,6 +12,7 @@ use Bio::Seq;
 use Bio::Seq::RichSeq;
 use Bio::SeqIO;
 use Bio::Tools::GFF;
+use Bio::Annotation::Reference;
 use File::Basename;
 use Data::Dumper;
 use Getopt::Long;
@@ -15,9 +20,11 @@ use Getopt::Long;
 exit(&main());
 
 sub main(){
-  my $settings={};
+  my $settings={appname=>'cgpipeline'};
+  $settings=AKUtils::loadConfig($settings);
   die usage() if(@ARGV < 1);
   GetOptions($settings,qw(organism=s prediction=s inputdir=s gb=s gff=s)) or die;
+  $$settings{numcpus}||=AKUtils::getNumCPUs();
   my $annotationDir=$$settings{inputdir};
   die "ERROR: cannot read annotation directory at $annotationDir" if(!-d $annotationDir || !-x $annotationDir);
   my $predictionGbk=$$settings{prediction};
@@ -25,11 +32,16 @@ sub main(){
   my $outfile=$$settings{gb};
   die "ERROR: need genbank parameter".usage() if(!$outfile);
   
-  logmsg "Transforming the prediction genbank into a set of features";
-  my ($predfeatures,$metaData)=gbkToFeatures($predictionGbk,$settings);
-  
   logmsg "Putting all annotations in $annotationDir into memory";
-  my $annotation=readAnnotationDir($annotationDir,$settings);
+  my $annotationThread=threads->new(\&readAnnotationDir,$annotationDir,$settings);
+  
+  logmsg "Transforming the prediction genbank into a set of features";
+  my $gbkToFeaturesThread=threads->new(\&gbkToFeatures,$predictionGbk,$settings);
+  
+  # join threads before continuing
+  my $tmp=$gbkToFeaturesThread->join;
+  my($predfeatures,$metaData)=@$tmp;
+  my $annotation=$annotationThread->join;
   
   logmsg "Combining the features from the prediction file and the annotations";
   combinePredictionAndAnnotation($outfile,$predfeatures,$metaData,$annotation,$settings);
@@ -42,6 +54,12 @@ sub combinePredictionAndAnnotation{
   my %annotationDirMap=annotationFieldMap();
   my @annotationKeys=keys(%annotationDirMap);
   
+  # use uniprot and cogs information
+  my %uniprotEvidence=uniprotEvidence($$settings{inputdir},\%annotationDirMap,$settings);
+  my %uniprot=uniprotSql($$settings{inputdir},\%annotationDirMap,$settings);
+  my %prot2cogs=prot2cogMapping($settings);
+  my $extraAnnotationInfo={uniprotEvidence=>\%uniprotEvidence,uniprot=>\%uniprot,prot2cogs=>\%prot2cogs};
+  
   logmsg "One contig/chromosome per dot: ";
   my $out=Bio::SeqIO->new(-file=>">$outfile",-format=>"genbank");
   while(my ($seqid,$meta)=each(%$metaData)){
@@ -50,15 +68,13 @@ sub combinePredictionAndAnnotation{
     my $seq=$sourceFeat->seq;
     $seq=Bio::Seq->new(-seq=>$seq->seq,-id=>$seq->id);
     $seq->add_SeqFeature($sourceFeat);
+    $seq->annotation->add_Annotation('reference',$$metaData{$seqid}{'reference'});
     my @sortedLocus=sort{
       return $$predfeatures{$seqid}{'gene'}{$a} <=> $$predfeatures{$seqid}{'gene'}{$b};
-      #my ($numA,$numB)=($a,$b);
-      #$numA=~s/\D+//g;
-      #$numB=~s/\D+//g;
-      #return $numA<=>$numB;
     } keys(%{$$predfeatures{$seqid}{'gene'}});
     
     # add annotations from the annotations directory
+    # TODO this can be multithreaded
     for my $locus_tag(@sortedLocus){
       my $locusAnnotation=$$annotation{$locus_tag};
       for(@annotationKeys){
@@ -68,7 +84,7 @@ sub combinePredictionAndAnnotation{
       my @geneFeat; # the following subroutines should internally sort this correctly
       my $geneFeat=$$predfeatures{$seqid}{'gene'}{$locus_tag}->clone;
       if($$predfeatures{$seqid}{'CDS'}{$locus_tag}){
-        @geneFeat=interpretCdsFeat($geneFeat,$$predfeatures{$seqid}{'CDS'}{$locus_tag},$locusAnnotation,$settings);
+        @geneFeat=interpretCdsFeat($geneFeat,$$predfeatures{$seqid}{'CDS'}{$locus_tag},$locusAnnotation,$extraAnnotationInfo,$settings);
       } elsif($$predfeatures{$seqid}{'rRNA'}{$locus_tag}){
         @geneFeat=interpretRRnaFeat($geneFeat,$$predfeatures{$seqid}{'rRNA'}{$locus_tag},$settings);
       } elsif($$predfeatures{$seqid}{'tRNA'}{$locus_tag}){
@@ -78,7 +94,6 @@ sub combinePredictionAndAnnotation{
         @geneFeat=($geneFeat);
       }
       
-      #$seq->add_SeqFeature($geneFeat,$cdsFeat,@miscFeat,@otherFeat);
       $seq->add_SeqFeature(@geneFeat);
     }
     
@@ -91,7 +106,7 @@ sub combinePredictionAndAnnotation{
 }
 
 sub interpretCdsFeat{
-  my($geneFeat,$cdsFeatOrig,$locusAnnotation,$settings)=@_;
+  my($geneFeat,$cdsFeatOrig,$locusAnnotation,$extraAnnotationInfo,$settings)=@_;
   my @feat;
   my(@miscFeat,@otherFeat);
   my $cdsFeat=$cdsFeatOrig->clone;
@@ -103,8 +118,10 @@ sub interpretCdsFeat{
   push(@miscFeat,$isFeat) if($isFeat);
   my $vfFeat=interpretVf($cdsFeat,$locusAnnotation,$settings);
   push(@miscFeat,$vfFeat) if($vfFeat);
-  my $cogsFeat=interpretCogs($cdsFeat,$locusAnnotation,$settings);
+  my $cogsFeat=interpretCogs($cdsFeat,$locusAnnotation,$extraAnnotationInfo,$settings);
   push(@miscFeat,$cogsFeat) if($cogsFeat);
+  
+  ## annotations on portions of the gene
   
   # signal peptide
   my $signalpFeat=interpretSignalP($cdsFeat,$locusAnnotation,$settings);
@@ -138,6 +155,15 @@ sub gbkToFeatures{
   my($gbk,$settings)=@_;
   my %feat;
   my %metaData;
+  # reference information
+  my $reference="";
+  if($$settings{'pipeline_reference'}){
+    my ($gb_authors,$gb_title,$gb_journal,$gb_pubmed)=readSqlLine($$settings{'pipeline_reference'},$settings);
+    $reference=Bio::Annotation::Reference->new(-title=>$gb_title,-authors=>$gb_authors,-location=>$gb_journal,-pubmed=>$gb_pubmed) if(defined($$settings{'pipeline_reference'}));
+  } else {
+    logmsg "WARNING: could not find the parameter pipeline_reference in your config file. The genbank reference line will not be filled in."
+  }
+    
   my $in=Bio::SeqIO->new(-file=>$gbk);
   while(my $seq=$in->next_seq){
     my @feats = $seq->all_SeqFeatures();
@@ -154,34 +180,58 @@ sub gbkToFeatures{
       die "ERROR: locus tag $locus_tag exists twice." if($feat{$seq->id}{$primary_tag}{$locus_tag});
       $feat{$seq->id}{$primary_tag}{$locus_tag}=$feat;
     }
+    
     # get meta data
-    # TODO add species info; author info; etc
     for my $feat(@feats){
       next if($feat->primary_tag()!~/source/i);
       $metaData{$seq->id}{source}=$feat;
+      $metaData{$seq->id}{reference}=$reference;
     }
   }
   $in->close;
   
-  return (\%feat,\%metaData);
+  return [\%feat,\%metaData];
 }
 
-# TODO multithread this
 sub readAnnotationDir{
   my($dir,$settings)=@_;
   my %fieldMap=annotationFieldMap();
-  my %uniprotEvidence=uniprotEvidence($dir,\%fieldMap,$settings);
-  my %uniprot=uniprotSql($dir,\%fieldMap,$settings);
-  my @sqlfile=map("aa.fasta.$_.sql",keys(%fieldMap));
   my %annotation;
-  for my $mapKey(keys(%fieldMap)){
+  my $fileQueue=Thread::Queue->new(keys(%fieldMap));
+  my @thr;
+  local $$settings{numcpus}=1; # it's faster when it's not multithreaded for some reason. Disk I/O?
+  $thr[$_]=threads->new(\&readSqlFile,$dir,$fileQueue,$settings) for(0..$$settings{numcpus}-1);
+  $fileQueue->enqueue(undef) for(@thr);
+  for(@thr){
+    my $tmp=$_->join;
+    while(my($locus_tag,$sqlAnnotations)=each(%$tmp)){
+      while(my($sqlType,$annotationList)=each(%$sqlAnnotations)){
+        $annotation{$locus_tag}{$sqlType}=$annotationList;
+      }
+    }
+  }
+  
+  return \%annotation;
+}
+
+
+##################
+## sub-subroutines
+##################
+
+sub readSqlFile{
+  my($dir,$Q,$settings)=@_;
+  my $tid="TID".threads->tid;
+  my %fieldMap=annotationFieldMap();
+  my %annotation;
+  while(defined(my $mapKey=$Q->dequeue)){
     my @map=@{ $fieldMap{$mapKey} };
     next if(!grep/locus_tag/,@map); # don't process the sql if there is no locus_tag to match the annotation to
     # get the right filename for this sql file
     my $sqlfile="$dir/aa.fasta.$mapKey.sql";
     $sqlfile="$dir/$mapKey.sql" if(!-f $sqlfile);
     $sqlfile="$dir/aa.fasta.iprscan_out.xml.$mapKey.sql" if(!-f $sqlfile);
-    logmsg $sqlfile;
+    logmsg "$tid $sqlfile";
     
     open(SQL,"sort $sqlfile | uniq |") or die "ERROR: could not open sql file $sqlfile: $!";
     while(<SQL>){
@@ -196,11 +246,6 @@ sub readAnnotationDir{
   }
   return \%annotation;
 }
-
-
-##################
-## sub-subroutines
-##################
 
 # TODO use uniprot and uniprot_evidence to add more useful information
 sub interpretUniprot{
@@ -356,12 +401,15 @@ sub interpretVf{
 }
 
 sub interpretCogs{
-  my($cdsFeat,$annotation,$settings)=@_;
+  my($cdsFeat,$annotation,$extraAnnotationInfo,$settings)=@_;
   my $cogs=$$annotation{cogs_hits};
   return 0 if(!@$cogs);
   
   my $feat=blastSqlToFeat($cdsFeat,$cogs,"COGs database",{});
-  # TODO change the description tag to something nicer
+  my $cogsProt=$feat->_tag_value('product');
+  $feat->remove_tag('description');
+  $feat->remove_tag('product');
+  $feat->add_tag_value('description',$$extraAnnotationInfo{prot2cogs}{$cogsProt});
   return $feat;
 }
 
@@ -397,6 +445,7 @@ sub readSqlLine{
   $_=~s/::::/|/g for(@F); # return all escaped pipes
   return @F;
 }
+
 sub uniprotSql{
   my($dir,$fieldMap,$settings)=@_;
   my @map=@{ $$fieldMap{uniprot} };
@@ -429,6 +478,20 @@ sub uniprotEvidence{
   }
   close UNIPROTEVIDENCE;
   return %evidence;
+}
+
+# set up cogs mapping
+sub prot2cogMapping{
+  my($settings)=@_;
+  my %prot2cogid;
+  open(CFH,"<$$settings{prot2cogid}") or die "Could not open COGs mapping file $$settings{prot2cogid}: $!\nNeed prot2cogid in the conf file";
+  while(<CFH>){
+    chomp;
+    my ($prot,$cogid)=split(/\s+/);
+    $prot2cogid{$prot}=$cogid;
+  }
+  close CFH;
+  return %prot2cogid;
 }
 
 # return a set of fields to understand annotation sql files
