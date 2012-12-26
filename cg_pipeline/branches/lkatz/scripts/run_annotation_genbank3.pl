@@ -45,54 +45,41 @@ sub combinePredictionAndAnnotation{
   logmsg "One contig/chromosome per dot: ";
   my $out=Bio::SeqIO->new(-file=>">$outfile",-format=>"genbank");
   while(my ($seqid,$meta)=each(%$metaData)){
-    $|++;print ".";$|--;
+    $|++;print ".";$|--; # print out a dot per contig and flush the buffer
     my $sourceFeat=$$meta{source};
     my $seq=$sourceFeat->seq;
     $seq=Bio::Seq->new(-seq=>$seq->seq,-id=>$seq->id);
     $seq->add_SeqFeature($sourceFeat);
     my @sortedLocus=sort{
-      my ($numA,$numB)=($a,$b);
-      $numA=~s/\D+//g;
-      $numB=~s/\D+//g;
-      return $numA<=>$numB;
-    } keys(%{$$predfeatures{$seqid}});
+      return $$predfeatures{$seqid}{'gene'}{$a} <=> $$predfeatures{$seqid}{'gene'}{$b};
+      #my ($numA,$numB)=($a,$b);
+      #$numA=~s/\D+//g;
+      #$numB=~s/\D+//g;
+      #return $numA<=>$numB;
+    } keys(%{$$predfeatures{$seqid}{'gene'}});
     
     # add annotations from the annotations directory
     for my $locus_tag(@sortedLocus){
       my $locusAnnotation=$$annotation{$locus_tag};
-      if(!$locusAnnotation){
-        $$locusAnnotation{$_}=[] for(@annotationKeys);
+      for(@annotationKeys){
+        $$locusAnnotation{$_}=[] if(!$$locusAnnotation{$_})
       }
       
-      my $geneFeat=$$predfeatures{$seqid}{$locus_tag}->clone;
-      my $cdsFeat =$$predfeatures{$seqid}{$locus_tag}->clone;
-      $cdsFeat->primary_tag("CDS");
-      my (
-        @miscFeat,  # for signalP, tmhmm, and other "named" tags in the gb file
-        @otherFeat, # for protein domains
-      );
+      my @geneFeat; # the following subroutines should internally sort this correctly
+      my $geneFeat=$$predfeatures{$seqid}{'gene'}{$locus_tag}->clone;
+      if($$predfeatures{$seqid}{'CDS'}{$locus_tag}){
+        @geneFeat=interpretCdsFeat($geneFeat,$$predfeatures{$seqid}{'CDS'}{$locus_tag},$locusAnnotation,$settings);
+      } elsif($$predfeatures{$seqid}{'rRNA'}{$locus_tag}){
+        @geneFeat=interpretRRnaFeat($geneFeat,$$predfeatures{$seqid}{'rRNA'}{$locus_tag},$settings);
+      } elsif($$predfeatures{$seqid}{'tRNA'}{$locus_tag}){
+        @geneFeat=interpretTRnaFeat($geneFeat,$$predfeatures{$seqid}{'tRNA'}{$locus_tag},$settings);
+      } else {
+        logmsg "WARNING: I could not understand what kind of gene $locus_tag is. Skipping annotation.";
+        @geneFeat=($geneFeat);
+      }
       
-      # modify the gene and cds features by reference
-      interpretUniprot($geneFeat,$cdsFeat,$locusAnnotation,$settings);
-      
-      # signal peptide
-      my $signalpFeat=interpretSignalP($cdsFeat,$locusAnnotation,$settings);
-      push(@miscFeat,$signalpFeat) if($signalpFeat); # $signalpFeat is 0 if not present
-      
-      # transmembrane helix
-      my $tmFeat=interpretTmhmm($cdsFeat,$locusAnnotation,$settings);
-      push(@otherFeat,$tmFeat) if($tmFeat);
-      
-      # COGs
-      
-      # others: IS elements, VFs, ...
-      
-      # domain hits
-      my @iprFeat=interpretIpr($cdsFeat,$$locusAnnotation{ipr_matches},$settings);
-      push(@otherFeat,@iprFeat);
-      
-      @otherFeat=sort {$a->start<=>$b->start} @otherFeat;
-      $seq->add_SeqFeature($geneFeat,$cdsFeat,@miscFeat,@otherFeat);
+      #$seq->add_SeqFeature($geneFeat,$cdsFeat,@miscFeat,@otherFeat);
+      $seq->add_SeqFeature(@geneFeat);
     }
     
     $out->write_seq($seq);
@@ -101,6 +88,50 @@ sub combinePredictionAndAnnotation{
   print "\n"; # newline after all the "update dots"
   
   return 1;
+}
+
+sub interpretCdsFeat{
+  my($geneFeat,$cdsFeatOrig,$locusAnnotation,$settings)=@_;
+  my @feat;
+  my(@miscFeat,@otherFeat);
+  my $cdsFeat=$cdsFeatOrig->clone;
+  # modify the gene and cds features by reference
+  interpretUniprot($geneFeat,$cdsFeat,$locusAnnotation,$settings);
+  
+  # other whole-gene annotators: IS elements, VFs, ...
+  my $isFeat=interpretIs($cdsFeat,$locusAnnotation,$settings);
+  push(@miscFeat,$isFeat) if($isFeat);
+  my $vfFeat=interpretVf($cdsFeat,$locusAnnotation,$settings);
+  push(@miscFeat,$vfFeat) if($vfFeat);
+  my $cogsFeat=interpretCogs($cdsFeat,$locusAnnotation,$settings);
+  push(@miscFeat,$cogsFeat) if($cogsFeat);
+  
+  # signal peptide
+  my $signalpFeat=interpretSignalP($cdsFeat,$locusAnnotation,$settings);
+  push(@miscFeat,$signalpFeat) if($signalpFeat); # $signalpFeat is 0 if not present
+      
+  # transmembrane helix
+  my $tmFeat=interpretTmhmm($cdsFeat,$locusAnnotation,$settings);
+  push(@miscFeat,$tmFeat) if($tmFeat);
+      
+  # domain hits
+  my @iprFeat=interpretIpr($cdsFeat,$$locusAnnotation{ipr_matches},$settings);
+  push(@otherFeat,@iprFeat);
+  @otherFeat=sort {$a->start<=>$b->start} @otherFeat;
+  
+  push(@feat,$geneFeat,$cdsFeat,@miscFeat,@otherFeat);
+  return @feat;
+}
+
+# I think that rRNAs are already annotated well
+sub interpretRRnaFeat{
+  my($geneFeat,$rnaFeatOrig,$locusAnnotation,$settings)=@_;
+  return($geneFeat,$rnaFeatOrig);
+}
+# I think that tRNAs are already annotated well
+sub interpretTRnaFeat{
+  my($geneFeat,$rnaFeatOrig,$locusAnnotation,$settings)=@_;
+  return($geneFeat,$rnaFeatOrig);
 }
 
 sub gbkToFeatures{
@@ -114,13 +145,14 @@ sub gbkToFeatures{
     # looking at gene features only
     for my $feat(@feats){
       #delete($$feat{'_gsf_seq'}); # save memory and simplify things by removing the embedded seq object (hopefully not buggy)
-      next if($feat->primary_tag()!~/gene/i); # only look at genes
+      #next if($feat->primary_tag()!~/gene/i); # only look at genes
+      my $primary_tag=$feat->primary_tag();
       next if(!$feat->has_tag('locus_tag'));
       my @locus_tag=$feat->get_tag_values('locus_tag');
       die "ERROR: a locus in $gbk has more than one locus_tag" if(@locus_tag>1);
       my $locus_tag=$locus_tag[0];
-      die "ERROR: locus tag $locus_tag exists twice." if($feat{$seq->id}{$locus_tag});
-      $feat{$seq->id}{$locus_tag}=$feat;
+      die "ERROR: locus tag $locus_tag exists twice." if($feat{$seq->id}{$primary_tag}{$locus_tag});
+      $feat{$seq->id}{$primary_tag}{$locus_tag}=$feat;
     }
     # get meta data
     # TODO add species info; author info; etc
@@ -130,6 +162,7 @@ sub gbkToFeatures{
     }
   }
   $in->close;
+  
   return (\%feat,\%metaData);
 }
 
@@ -156,6 +189,7 @@ sub readAnnotationDir{
       chomp;
       my %f;
       @f{@map}=readSqlLine($_);
+      $f{evalue}=~s/,// if($f{evalue}); # get rid of those commas at the end (where do they come from??)
       push(@{ $annotation{$f{locus_tag}}{$mapKey} },\%f);
     }
     close SQL;
@@ -267,6 +301,7 @@ sub interpretTmhmm{
   $tmhmm=$$tmhmm[0]; # there's only one tmhmm result
   return 0 if(!$tmhmm);
   
+  $tmhmm_location=[sort{$$a{start}<=>$$b{start}} @$tmhmm_location];
   my $splitLocation = new Bio::Location::Split();
   my (@start,@end);
   for(@$tmhmm_location){
@@ -302,9 +337,58 @@ sub interpretTmhmm{
   return $tmFeat;
 }
 
+sub interpretIs{
+  my($cdsFeat,$annotation,$settings)=@_;
+  my $is=$$annotation{is_hits};
+  return 0 if(!@$is);
+  
+  my $feat=blastSqlToFeat($cdsFeat,$is,"IS Finder database",{});
+  return $feat;
+}
+
+sub interpretVf{
+  my($cdsFeat,$annotation,$settings)=@_;
+  my $vf=$$annotation{vfdb_hits};
+  return 0 if(!@$vf);
+  
+  my $feat=blastSqlToFeat($cdsFeat,$vf,"VF database",{});
+  return $feat;
+}
+
+sub interpretCogs{
+  my($cdsFeat,$annotation,$settings)=@_;
+  my $cogs=$$annotation{cogs_hits};
+  return 0 if(!@$cogs);
+  
+  my $feat=blastSqlToFeat($cdsFeat,$cogs,"COGs database",{});
+  # TODO change the description tag to something nicer
+  return $feat;
+}
+
 ##################
 ## tools
 ##################
+
+# TODO do something with multiple results?
+sub blastSqlToFeat{
+  my($cdsFeat,$annotation,$evidence,$settings)=@_;
+  my $a=$$annotation[0];
+  my $feat=Bio::SeqFeature::Generic->new(
+    -primary=>"misc_structure",
+    -start=>$cdsFeat->start,
+    -end=>$cdsFeat->end,
+    -strand=>$cdsFeat->strand,
+    -tag=>{
+      evidence=>$evidence,
+      score=>"evalue:$$a{evalue}, bitscore:$$a{bits}",
+      locus_tag=>$$a{locus_tag},
+      product=>$$a{hit_name},
+      database=>$$a{db_name},
+      description=>$$a{description},
+    }
+  );
+}
+
 # read a pipe-delimited sql line
 sub readSqlLine{
   my($line,$settings)=@_;
