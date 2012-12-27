@@ -120,6 +120,7 @@ sub interpretCdsFeat{
   push(@miscFeat,$vfFeat) if($vfFeat);
   my $cogsFeat=interpretCogs($cdsFeat,$locusAnnotation,$extraAnnotationInfo,$settings);
   push(@miscFeat,$cogsFeat) if($cogsFeat);
+  # TODO PDB
   
   ## annotations on portions of the gene
   
@@ -274,6 +275,20 @@ sub interpretUniprot{
   #my ($geneName,$proteinProduct,$uniprotDescription)=interpretUniprot($locusAnnotation,$settings);
   $geneFeat->add_tag_value('gene',$gene) if($gene);
   $cdsFeat->add_tag_value('product',$proteinProduct) if($proteinProduct);
+  
+  # add the uniprot evidence
+  if($$uniprotAnnotation{hit_name}){
+    my $note=($cdsFeat->get_tag_values('note'))[0];
+    $cdsFeat->remove_tag('note');
+    $note=~s/[\.;]?\s*$/. /;
+    $note.="Product Predictor: Uniprot hit against $$uniprotAnnotation{hit_name}";
+    $cdsFeat->add_tag_value('note',$note);
+  
+    # add the uniprot scores
+    my $score="evalue: $$uniprotAnnotation{evalue}, bitscore: $$uniprotAnnotation{bits}";
+    $cdsFeat->add_tag_value('score',$score);
+  }
+  
   return 1;
   
   # TODO think of something else if it hits against "putative", etc
@@ -285,20 +300,28 @@ sub interpretIpr{
   my($cdsFeat,$iprAnnotation,$settings)=@_;
   my @newFeat;
   for my $an (@$iprAnnotation){
-    my $newFeat=$cdsFeat->clone;
-    $newFeat->primary_tag("misc_feature");
+    # Figure out the correct start/stop
+    my($ntCdsStart,$ntCdsEnd)=($$an{start}*3-3,$$an{end}*3-3); # aa to nt CDS coordinates, base 0
+    my($start,$end)=($cdsFeat->start+$ntCdsStart, $cdsFeat->start+$ntCdsEnd); # CDS to genomic coordinates
+    if($cdsFeat->strand<1){
+      $end  =$cdsFeat->end-$ntCdsStart;
+      $start=$cdsFeat->end-$ntCdsEnd;
+    }
+    
+    my $newFeat=Bio::SeqFeature::Generic->new(-start=>$start,-end=>$end,
+            -source_tag=>"InterPro",
+            -primary=>"misc_feature",
+            -strand=>$cdsFeat->strand,
+            -tag=>{
+              locus_tag=>($cdsFeat->get_tag_values('locus_tag'))[0],
+            }
+    );
+    
     while(my ($key,$value)=each(%$an)){
       next if($key=~/^(start|end|locus_tag)$/); # exclude some tags from being shown like this
       $newFeat->add_tag_value($key,$value) if($value!~/^\s*$/); # who cares about blank values
     }
     
-    # Figure out the correct start/stop
-    my($ntCdsStart,$ntCdsEnd)=($$an{start}*3-3,$$an{end}*3-3); # aa to nt CDS coordinates, base 0
-    my($start,$end)=($cdsFeat->start+$ntCdsStart, $cdsFeat->start+$ntCdsEnd); # CDS to genomic coordinates
-    if($newFeat->strand<1){
-      $end  =$cdsFeat->end-$ntCdsStart;
-      $start=$cdsFeat->end-$ntCdsEnd;
-    }
     $newFeat->start($start);
     $newFeat->end($end);
       
@@ -406,7 +429,7 @@ sub interpretCogs{
   return 0 if(!@$cogs);
   
   my $feat=blastSqlToFeat($cdsFeat,$cogs,"COGs database",{});
-  my $cogsProt=$feat->_tag_value('product');
+  my $cogsProt=($feat->get_tag_values('product'))[0];
   $feat->remove_tag('description');
   $feat->remove_tag('product');
   $feat->add_tag_value('description',$$extraAnnotationInfo{prot2cogs}{$cogsProt});
@@ -507,6 +530,7 @@ sub annotationFieldMap{
     vfdb_hits => [@blastFields],
     cogs_hits => [@blastFields],
     is_hits => [@blastFields],
+    pdb_hits => [@blastFields],
     ipr_matches => [qw/locus_tag accession_num product database_name start end evalue status evidence/],
     signalp_hmm  => [ qw/locus_tag prediction signal_peptide_probability max_cleavage_site_probability start end/],
     signalp_nn => [ qw/locus_tag measure_type start end value cutoff is_signal_peptide/],
