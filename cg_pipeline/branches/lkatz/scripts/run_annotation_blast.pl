@@ -44,8 +44,10 @@ exit(main());
 sub main() {
   $settings = AKUtils::loadConfig($settings);
 
-  my @cmd_options = qw(outfile=s blastfile=s db=s parametersForBlast=s min_aa_coverage=i min_aa_identity=i min_aa_similarity=i tempdir=s keep);
+  die usage() if(@ARGV<1);
+  my @cmd_options = qw(outfile=s blastfile=s db=s parametersForBlast=s min_aa_coverage=i min_aa_identity=i min_aa_similarity=i tempdir=s keep help);
   GetOptions($settings, @cmd_options) or die;
+  die usage() if($$settings{help});
 
   $$settings{blast_db}=$$settings{db} if($$settings{db});
   $$settings{blast_db}||=File::Spec->rel2abs($$settings{db});
