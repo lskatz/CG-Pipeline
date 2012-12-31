@@ -1,4 +1,8 @@
 #!/usr/bin/env perl
+
+# Author: Lee Katz <lkatz@cdc.gov>
+# create a genbank file from the annotation sql files
+
 use warnings;
 use strict;
 use FindBin;
@@ -8,565 +12,538 @@ use Bio::Seq;
 use Bio::Seq::RichSeq;
 use Bio::SeqIO;
 use Bio::Tools::GFF;
+use Bio::Annotation::Reference;
 use File::Basename;
 use Data::Dumper;
 use Getopt::Long;
-  
+
 exit(&main());
 
 sub main(){
-  if(@ARGV < 1){
-    print STDERR "Usage: ". basename($0) . " --prediction=prediction.gb --inputdir=annotation-sql-folder --gb=genbank-output-file --gff=gff-output-file [--organism=organism_id] \n";
-    return 0;
+  my $settings={appname=>'cgpipeline'};
+  $settings=AKUtils::loadConfig($settings);
+  die usage() if(@ARGV < 1);
+  GetOptions($settings,qw(organism=s prediction=s inputdir=s gb=s gff=s)) or die;
+  $$settings{numcpus}||=AKUtils::getNumCPUs();
+  my $annotationDir=$$settings{inputdir};
+  die "ERROR: cannot read annotation directory at $annotationDir" if(!-d $annotationDir || !-x $annotationDir);
+  my $predictionGbk=$$settings{prediction};
+  die "ERROR: cannot read prediction file at $predictionGbk" if(!-f $predictionGbk);
+  my $outfile=$$settings{gb};
+  die "ERROR: need genbank parameter".usage() if(!$outfile);
+  
+  logmsg "Putting all annotations in $annotationDir into memory";
+  my $annotationThread=threads->new(\&readAnnotationDir,$annotationDir,$settings);
+  
+  logmsg "Transforming the prediction genbank into a set of features";
+  my $gbkToFeaturesThread=threads->new(\&gbkToFeatures,$predictionGbk,$settings);
+  
+  # join threads before continuing
+  my $tmp=$gbkToFeaturesThread->join;
+  my($predfeatures,$metaData)=@$tmp;
+  my $annotation=$annotationThread->join;
+  
+  logmsg "Combining the features from the prediction file and the annotations";
+  combinePredictionAndAnnotation($outfile,$predfeatures,$metaData,$annotation,$settings);
+  
+  return 0;
+}
+
+sub combinePredictionAndAnnotation{
+  my ($outfile,$predfeatures,$metaData,$annotation,$settings)=@_;
+  my %annotationDirMap=annotationFieldMap();
+  my @annotationKeys=keys(%annotationDirMap);
+  
+  # use uniprot and cogs information
+  my %uniprotEvidence=uniprotEvidence($$settings{inputdir},\%annotationDirMap,$settings);
+  my %uniprot=uniprotSql($$settings{inputdir},\%annotationDirMap,$settings);
+  my %prot2cogs=prot2cogMapping($settings);
+  my $extraAnnotationInfo={uniprotEvidence=>\%uniprotEvidence,uniprot=>\%uniprot,prot2cogs=>\%prot2cogs};
+  
+  logmsg "One contig/chromosome per dot: ";
+  my $out=Bio::SeqIO->new(-file=>">$outfile",-format=>"genbank");
+  while(my ($seqid,$meta)=each(%$metaData)){
+    $|++;print ".";$|--; # print out a dot per contig and flush the buffer
+    my $sourceFeat=$$meta{source};
+    my $seq=$sourceFeat->seq;
+    $seq=Bio::Seq->new(-seq=>$seq->seq,-id=>$seq->id);
+    $seq->add_SeqFeature($sourceFeat);
+    $seq->annotation->add_Annotation('reference',$$metaData{$seqid}{'reference'});
+    my @sortedLocus=sort{
+      return $$predfeatures{$seqid}{'gene'}{$a} <=> $$predfeatures{$seqid}{'gene'}{$b};
+    } keys(%{$$predfeatures{$seqid}{'gene'}});
+    
+    # add annotations from the annotations directory
+    # TODO this can be multithreaded
+    for my $locus_tag(@sortedLocus){
+      my $locusAnnotation=$$annotation{$locus_tag};
+      for(@annotationKeys){
+        $$locusAnnotation{$_}=[] if(!$$locusAnnotation{$_})
+      }
+      
+      my @geneFeat; # the following subroutines should internally sort this correctly
+      my $geneFeat=$$predfeatures{$seqid}{'gene'}{$locus_tag}->clone;
+      if($$predfeatures{$seqid}{'CDS'}{$locus_tag}){
+        @geneFeat=interpretCdsFeat($geneFeat,$$predfeatures{$seqid}{'CDS'}{$locus_tag},$locusAnnotation,$extraAnnotationInfo,$settings);
+      } elsif($$predfeatures{$seqid}{'rRNA'}{$locus_tag}){
+        @geneFeat=interpretRRnaFeat($geneFeat,$$predfeatures{$seqid}{'rRNA'}{$locus_tag},$settings);
+      } elsif($$predfeatures{$seqid}{'tRNA'}{$locus_tag}){
+        @geneFeat=interpretTRnaFeat($geneFeat,$$predfeatures{$seqid}{'tRNA'}{$locus_tag},$settings);
+      } else {
+        logmsg "WARNING: I could not understand what kind of gene $locus_tag is. Skipping annotation.";
+        @geneFeat=($geneFeat);
+      }
+      
+      $seq->add_SeqFeature(@geneFeat);
+    }
+    
+    $out->write_seq($seq);
   }
-  my %data;
-  my @args;
-  my $newftr;
-  my $tag;
-  my $settings = {
-    appname => 'cgpipeline',
-  };
-  # blastFields is for any output from run_annotation_blast.pl
+  $out->close;
+  print "\n"; # newline after all the "update dots"
+  
+  return 1;
+}
+
+sub interpretCdsFeat{
+  my($geneFeat,$cdsFeatOrig,$locusAnnotation,$extraAnnotationInfo,$settings)=@_;
+  my @feat;
+  my(@miscFeat,@otherFeat);
+  my $cdsFeat=$cdsFeatOrig->clone;
+  # modify the gene and cds features by reference
+  interpretUniprot($geneFeat,$cdsFeat,$locusAnnotation,$settings);
+  
+  # other whole-gene annotators: IS elements, VFs, ...
+  my $isFeat=interpretIs($cdsFeat,$locusAnnotation,$settings);
+  push(@miscFeat,$isFeat) if($isFeat);
+  my $vfFeat=interpretVf($cdsFeat,$locusAnnotation,$settings);
+  push(@miscFeat,$vfFeat) if($vfFeat);
+  my $cogsFeat=interpretCogs($cdsFeat,$locusAnnotation,$extraAnnotationInfo,$settings);
+  push(@miscFeat,$cogsFeat) if($cogsFeat);
+  # TODO PDB
+  
+  ## annotations on portions of the gene
+  
+  # signal peptide
+  my $signalpFeat=interpretSignalP($cdsFeat,$locusAnnotation,$settings);
+  push(@miscFeat,$signalpFeat) if($signalpFeat); # $signalpFeat is 0 if not present
+      
+  # transmembrane helix
+  my $tmFeat=interpretTmhmm($cdsFeat,$locusAnnotation,$settings);
+  push(@miscFeat,$tmFeat) if($tmFeat);
+      
+  # domain hits
+  my @iprFeat=interpretIpr($cdsFeat,$$locusAnnotation{ipr_matches},$settings);
+  push(@otherFeat,@iprFeat);
+  @otherFeat=sort {$a->start<=>$b->start} @otherFeat;
+  
+  push(@feat,$geneFeat,$cdsFeat,@miscFeat,@otherFeat);
+  return @feat;
+}
+
+# I think that rRNAs are already annotated well
+sub interpretRRnaFeat{
+  my($geneFeat,$rnaFeatOrig,$locusAnnotation,$settings)=@_;
+  return($geneFeat,$rnaFeatOrig);
+}
+# I think that tRNAs are already annotated well
+sub interpretTRnaFeat{
+  my($geneFeat,$rnaFeatOrig,$locusAnnotation,$settings)=@_;
+  return($geneFeat,$rnaFeatOrig);
+}
+
+sub gbkToFeatures{
+  my($gbk,$settings)=@_;
+  my %feat;
+  my %metaData;
+  # reference information
+  my $reference="";
+  if($$settings{'pipeline_reference'}){
+    my ($gb_authors,$gb_title,$gb_journal,$gb_pubmed)=readSqlLine($$settings{'pipeline_reference'},$settings);
+    $reference=Bio::Annotation::Reference->new(-title=>$gb_title,-authors=>$gb_authors,-location=>$gb_journal,-pubmed=>$gb_pubmed) if(defined($$settings{'pipeline_reference'}));
+  } else {
+    logmsg "WARNING: could not find the parameter pipeline_reference in your config file. The genbank reference line will not be filled in."
+  }
+    
+  my $in=Bio::SeqIO->new(-file=>$gbk);
+  while(my $seq=$in->next_seq){
+    my @feats = $seq->all_SeqFeatures();
+    
+    # looking at gene features only
+    for my $feat(@feats){
+      #delete($$feat{'_gsf_seq'}); # save memory and simplify things by removing the embedded seq object (hopefully not buggy)
+      #next if($feat->primary_tag()!~/gene/i); # only look at genes
+      my $primary_tag=$feat->primary_tag();
+      next if(!$feat->has_tag('locus_tag'));
+      my @locus_tag=$feat->get_tag_values('locus_tag');
+      die "ERROR: a locus in $gbk has more than one locus_tag" if(@locus_tag>1);
+      my $locus_tag=$locus_tag[0];
+      die "ERROR: locus tag $locus_tag exists twice." if($feat{$seq->id}{$primary_tag}{$locus_tag});
+      $feat{$seq->id}{$primary_tag}{$locus_tag}=$feat;
+    }
+    
+    # get meta data
+    for my $feat(@feats){
+      next if($feat->primary_tag()!~/source/i);
+      $metaData{$seq->id}{source}=$feat;
+      $metaData{$seq->id}{reference}=$reference;
+    }
+  }
+  $in->close;
+  
+  return [\%feat,\%metaData];
+}
+
+sub readAnnotationDir{
+  my($dir,$settings)=@_;
+  my %fieldMap=annotationFieldMap();
+  my %annotation;
+  my $fileQueue=Thread::Queue->new(keys(%fieldMap));
+  my @thr;
+  local $$settings{numcpus}=1; # it's faster when it's not multithreaded for some reason. Disk I/O?
+  $thr[$_]=threads->new(\&readSqlFile,$dir,$fileQueue,$settings) for(0..$$settings{numcpus}-1);
+  $fileQueue->enqueue(undef) for(@thr);
+  for(@thr){
+    my $tmp=$_->join;
+    while(my($locus_tag,$sqlAnnotations)=each(%$tmp)){
+      while(my($sqlType,$annotationList)=each(%$sqlAnnotations)){
+        $annotation{$locus_tag}{$sqlType}=$annotationList;
+      }
+    }
+  }
+  
+  return \%annotation;
+}
+
+
+##################
+## sub-subroutines
+##################
+
+sub readSqlFile{
+  my($dir,$Q,$settings)=@_;
+  my $tid="TID".threads->tid;
+  my %fieldMap=annotationFieldMap();
+  my %annotation;
+  while(defined(my $mapKey=$Q->dequeue)){
+    my @map=@{ $fieldMap{$mapKey} };
+    next if(!grep/locus_tag/,@map); # don't process the sql if there is no locus_tag to match the annotation to
+    # get the right filename for this sql file
+    my $sqlfile="$dir/aa.fasta.$mapKey.sql";
+    $sqlfile="$dir/$mapKey.sql" if(!-f $sqlfile);
+    $sqlfile="$dir/aa.fasta.iprscan_out.xml.$mapKey.sql" if(!-f $sqlfile);
+    logmsg "$tid $sqlfile";
+    
+    open(SQL,"sort $sqlfile | uniq |") or die "ERROR: could not open sql file $sqlfile: $!";
+    while(<SQL>){
+      next if(/^s*$/); # skip blank lines
+      chomp;
+      my %f;
+      @f{@map}=readSqlLine($_);
+      $f{evalue}=~s/,// if($f{evalue}); # get rid of those commas at the end (where do they come from??)
+      push(@{ $annotation{$f{locus_tag}}{$mapKey} },\%f);
+    }
+    close SQL;
+  }
+  return \%annotation;
+}
+
+# TODO use uniprot and uniprot_evidence to add more useful information
+sub interpretUniprot{
+  my($geneFeat,$cdsFeat,$locusAnnotation,$settings)=@_;
+  # take the best blast hit: highest score, lowest evalue
+  $$locusAnnotation{blast}||=[];
+  my @uniprotAnnotation=sort{
+    return $$b{score}<=>$$a{score} if($$b{score}!=$$a{score});
+    # not really sure why, but there is a problem with commas
+    $$a{evalue}=~s/,//g;
+    $$b{evalue}=~s/,//g;    
+    return sprintf("%f",$$a{evalue})<=>sprintf("%f",$$b{evalue});
+  } @{ $$locusAnnotation{blast} };
+  my $uniprotAnnotation=$uniprotAnnotation[0] || {};
+  my $uniprotDesc=$$uniprotAnnotation{description} || "";
+  my $gene="";
+  if($uniprotDesc=~/GN=([a-z]\S{2,7})/){ # gene name is 4+/-1 letters long. Probably never too much longer than that.
+    $gene=$1;
+  }
+  my $proteinProduct="";
+  if($uniprotDesc=~/^(^.+?(=|$))/){
+    $proteinProduct=$1;
+    $proteinProduct=~s/\S+=\S*$//;   # remove last word with equals sign
+    $proteinProduct=~s/^\s+|\s+$//g; # trim whitespace
+  }
+  #my ($geneName,$proteinProduct,$uniprotDescription)=interpretUniprot($locusAnnotation,$settings);
+  $geneFeat->add_tag_value('gene',$gene) if($gene);
+  $cdsFeat->add_tag_value('product',$proteinProduct) if($proteinProduct);
+  
+  # add the uniprot evidence
+  if($$uniprotAnnotation{hit_name}){
+    my $note=($cdsFeat->get_tag_values('note'))[0];
+    $cdsFeat->remove_tag('note');
+    $note=~s/[\.;]?\s*$/. /;
+    $note.="Product Predictor: Uniprot hit against $$uniprotAnnotation{hit_name}";
+    $cdsFeat->add_tag_value('note',$note);
+  
+    # add the uniprot scores
+    my $score="evalue: $$uniprotAnnotation{evalue}, bitscore: $$uniprotAnnotation{bits}";
+    $cdsFeat->add_tag_value('score',$score);
+  }
+  
+  return 1;
+  
+  # TODO think of something else if it hits against "putative", etc
+  # Maybe go to the next hit, or use annotations from other tools.
+  # TODO parse the description for more meaningful things
+}
+
+sub interpretIpr{
+  my($cdsFeat,$iprAnnotation,$settings)=@_;
+  my @newFeat;
+  for my $an (@$iprAnnotation){
+    # Figure out the correct start/stop
+    my($ntCdsStart,$ntCdsEnd)=($$an{start}*3-3,$$an{end}*3-3); # aa to nt CDS coordinates, base 0
+    my($start,$end)=($cdsFeat->start+$ntCdsStart, $cdsFeat->start+$ntCdsEnd); # CDS to genomic coordinates
+    if($cdsFeat->strand<1){
+      $end  =$cdsFeat->end-$ntCdsStart;
+      $start=$cdsFeat->end-$ntCdsEnd;
+    }
+    
+    my $newFeat=Bio::SeqFeature::Generic->new(-start=>$start,-end=>$end,
+            -source_tag=>"InterPro",
+            -primary=>"misc_feature",
+            -strand=>$cdsFeat->strand,
+            -tag=>{
+              locus_tag=>($cdsFeat->get_tag_values('locus_tag'))[0],
+            }
+    );
+    
+    while(my ($key,$value)=each(%$an)){
+      next if($key=~/^(start|end|locus_tag)$/); # exclude some tags from being shown like this
+      $newFeat->add_tag_value($key,$value) if($value!~/^\s*$/); # who cares about blank values
+    }
+    
+    $newFeat->start($start);
+    $newFeat->end($end);
+      
+    push(@newFeat,$newFeat);
+  }
+  return @newFeat;
+}
+
+sub interpretSignalP{
+  my($cdsFeat,$annotation,$settings)=@_;
+  # currently: only paying attention to NNs and not HMMs
+  my $signalp_nn=$$annotation{signalp_nn};
+  my $is_signalpeptide=0;
+  my ($start,$end,$score);
+  for my $measure (@$signalp_nn){
+    if($$measure{measure_type} eq 'D'){
+      $is_signalpeptide=1 if($$measure{is_signal_peptide} eq 'YES');
+      ($start,$end,$score)=($$measure{start},$$measure{end},$$measure{value});
+    }
+  }
+  return 0 if(!$is_signalpeptide);
+  
+  my($ntCdsStart,$ntCdsEnd)=($start*3-3,$end*3-3); # 0-coordinates
+  my($genomeStart,$genomeEnd)=($cdsFeat->start+$ntCdsStart,$cdsFeat->start+$ntCdsEnd);
+  if($cdsFeat->strand<1){
+    ($genomeEnd,$genomeStart)=($cdsFeat->end-$ntCdsStart,$cdsFeat->end-$ntCdsEnd);
+  }
+  my $signalpFeat=Bio::SeqFeature::Generic->new(-start=>$genomeStart,-end=>$genomeEnd,
+            -source_tag=>"SignalP",
+            -primary=>"sig_peptide",
+            -strand=>$cdsFeat->strand,
+            -tag=>{
+              locus_tag=>($cdsFeat->get_tag_values('locus_tag'))[0],
+              evidence=>"SignalP",
+              score=>$score,
+            }
+  );
+  return $signalpFeat;
+}
+
+sub interpretTmhmm{
+  my ($cdsFeat,$annotation,$settings)=@_;
+  my $tmhmm_location=$$annotation{tmhmm_location};
+  my $tmhmm=$$annotation{tmhmm};
+  $tmhmm=$$tmhmm[0]; # there's only one tmhmm result
+  return 0 if(!$tmhmm);
+  
+  $tmhmm_location=[sort{$$a{start}<=>$$b{start}} @$tmhmm_location];
+  my $splitLocation = new Bio::Location::Split();
+  my (@start,@end);
+  for(@$tmhmm_location){
+    my $startNt=$$_{start}*3-3;
+    my $endNt=$$_{end}*3-3;
+    my $start=$cdsFeat->start+$startNt;
+    my $end=$cdsFeat->start+$endNt;
+    if($cdsFeat->strand<1){
+      $start=$cdsFeat->end-$endNt;
+      $end=$cdsFeat->end-$startNt;
+    }
+    $splitLocation->add_sub_Location(new Bio::Location::Simple(
+        -start=>$start,
+        -end=>$end,
+        -strand=>$cdsFeat->strand,
+    ));
+  }
+  
+  my $tmFeat=Bio::SeqFeature::Generic->new(
+    -primary=>"misc_structure",
+    -source_tag=>"TMHMM",
+    -strand=>$cdsFeat->strand,
+    -location=>$splitLocation,
+    -tag=>{
+      locus_tag=>($cdsFeat->get_tag_values('locus_tag'))[0],
+      evidence=>"TMHMM",
+      score=>$$tmhmm{total_prob_n_in},
+    }
+  );
+  
+  $tmFeat->start(@start);
+  $tmFeat->end(@end);
+  return $tmFeat;
+}
+
+sub interpretIs{
+  my($cdsFeat,$annotation,$settings)=@_;
+  my $is=$$annotation{is_hits};
+  return 0 if(!@$is);
+  
+  my $feat=blastSqlToFeat($cdsFeat,$is,"IS Finder database",{});
+  return $feat;
+}
+
+sub interpretVf{
+  my($cdsFeat,$annotation,$settings)=@_;
+  my $vf=$$annotation{vfdb_hits};
+  return 0 if(!@$vf);
+  
+  my $feat=blastSqlToFeat($cdsFeat,$vf,"VF database",{});
+  return $feat;
+}
+
+sub interpretCogs{
+  my($cdsFeat,$annotation,$extraAnnotationInfo,$settings)=@_;
+  my $cogs=$$annotation{cogs_hits};
+  return 0 if(!@$cogs);
+  
+  my $feat=blastSqlToFeat($cdsFeat,$cogs,"COGs database",{});
+  my $cogsProt=($feat->get_tag_values('product'))[0];
+  $feat->remove_tag('description');
+  $feat->remove_tag('product');
+  $feat->add_tag_value('description',$$extraAnnotationInfo{prot2cogs}{$cogsProt});
+  return $feat;
+}
+
+##################
+## tools
+##################
+
+# TODO do something with multiple results?
+sub blastSqlToFeat{
+  my($cdsFeat,$annotation,$evidence,$settings)=@_;
+  my $a=$$annotation[0];
+  my $feat=Bio::SeqFeature::Generic->new(
+    -primary=>"misc_structure",
+    -start=>$cdsFeat->start,
+    -end=>$cdsFeat->end,
+    -strand=>$cdsFeat->strand,
+    -tag=>{
+      evidence=>$evidence,
+      score=>"evalue:$$a{evalue}, bitscore:$$a{bits}",
+      locus_tag=>$$a{locus_tag},
+      product=>$$a{hit_name},
+      database=>$$a{db_name},
+      description=>$$a{description},
+    }
+  );
+}
+
+# read a pipe-delimited sql line
+sub readSqlLine{
+  my($line,$settings)=@_;
+  $line=~s/\\\|/::::/g; # protect all escaped pipes
+  my @F=split(/\|/,$line);
+  $_=~s/::::/|/g for(@F); # return all escaped pipes
+  return @F;
+}
+
+sub uniprotSql{
+  my($dir,$fieldMap,$settings)=@_;
+  my @map=@{ $$fieldMap{uniprot} };
+  my $uniprotFile="$dir/uniprot.sql";
+  my %uniprot;
+  open(UNIPROT,"sort $uniprotFile|uniq|") or die "Could not open uniprot evidence file at $uniprotFile: $!";
+  while(<UNIPROT>){
+    chomp;
+    next if(/^s*$/); # skip blank lines
+    my %f;
+    @f{@map}=readSqlLine($_);
+    $uniprot{$f{ac}}=\%f;
+  }
+  close UNIPROTEVIDENCE;
+  return %uniprot;
+}
+
+sub uniprotEvidence{
+  my($dir,$fieldMap,$settings)=@_;
+  my $evFile="$dir/uniprot_evidence.sql";
+  my @map=@{ $$fieldMap{uniprot_evidence} };
+  my %evidence;
+  open(UNIPROTEVIDENCE,"sort $evFile|uniq|") or die "Could not open uniprot evidence file at $evFile: $!";
+  while(<UNIPROTEVIDENCE>){
+    chomp;
+    next if(/^s*$/); # skip blank lines
+    my %f;
+    @f{@map}=readSqlLine($_);
+    $evidence{$f{ac}}=\%f;
+  }
+  close UNIPROTEVIDENCE;
+  return %evidence;
+}
+
+# set up cogs mapping
+sub prot2cogMapping{
+  my($settings)=@_;
+  my %prot2cogid;
+  open(CFH,"<$$settings{prot2cogid}") or die "Could not open COGs mapping file $$settings{prot2cogid}: $!\nNeed prot2cogid in the conf file";
+  while(<CFH>){
+    chomp;
+    my ($prot,$cogid)=split(/\s+/);
+    $prot2cogid{$prot}=$cogid;
+  }
+  close CFH;
+  return %prot2cogid;
+}
+
+# return a set of fields to understand annotation sql files
+sub annotationFieldMap{
+  #my $blastFields="locus_tag target_id evalue coverage db_name identity length description rank score bits percent_conserved hit_accession hit_name";
   my $blastFields="locus_tag target_id evalue coverage db_name identity length description rank score bits percent_conserved hit_accession hit_name";
   my @blastFields=split(/\s+/,$blastFields);
   my $blastFields2=$blastFields;
   $blastFields2=~s/target_id/uniprot_id/; #$blastFields2=~s/\bname\b/hit_name/;
   my @blastFields2=split(/\s+/,$blastFields2);
   my %map = (
-      blast => [@blastFields2],
-      vfdb_hits => [@blastFields],
-      cogs_hits => [@blastFields],
-      is_hits => [@blastFields],
-      ipr_matches => [qw/locus_tag accession_num product database_name start end evalue status evidence/],
-      signalp_hmm  => [ qw/locus_tag prediction signal_peptide_probability max_cleavage_site_probability start end/],
-      signalp_nn => [ qw/locus_tag measure_type start end value cutoff is_signal_peptide/],
-      tmhmm => [ qw/locus_tag length predicted_number expected_number_aa expected_number_aa_60 total_prob_n_in/],
-      tmhmm_location => [qw/locus_tag location start end/],
-      uniprot => [qw/ac ac2 source product pro_type gene_type gene_name gene_id/],
-      
-      #blast => [qw/locus_tag uniprot_id length name rank score bits evalue identity positives/],
-      #ipr_hits => [qw/locus_tag length domain_id product type/],
-      #ipr_classifications => [qw/locus_tag go_id class_type category description/],
-      #ipr_childrefs => [qw/locus_tag interpro_hit_id interpro_child_reference/],
-      #cogs_hits => [qw/locus_tag target_id evalue coverage db_name identity/],
+    blast => [@blastFields2],
+    vfdb_hits => [@blastFields],
+    cogs_hits => [@blastFields],
+    is_hits => [@blastFields],
+    pdb_hits => [@blastFields],
+    ipr_matches => [qw/locus_tag accession_num product database_name start end evalue status evidence/],
+    signalp_hmm  => [ qw/locus_tag prediction signal_peptide_probability max_cleavage_site_probability start end/],
+    signalp_nn => [ qw/locus_tag measure_type start end value cutoff is_signal_peptide/],
+    tmhmm => [ qw/locus_tag length predicted_number expected_number_aa expected_number_aa_60 total_prob_n_in/],
+    tmhmm_location => [qw/locus_tag location start end/],
+    uniprot => [qw/ac ac2 source product pro_type gene_type gene_name gene_id/],
+    uniprot_evidence => [qw/ac dbId db name/],
   );
-
-  $settings = AKUtils::loadConfig($settings);
-  GetOptions($settings,('organism=s','prediction=s','inputdir=s','gb=s','gff=s')) or die;
-
-  # COGs mapping
-  my %prot2cogid=prot2cogMapping($settings);
-  my $organism=(defined($$settings{'organism'}))?$$settings{'organism'}:"organism";
-  
-  # load up the correct SQL files from the annotation directory
-  my @sqlfiles;
-  my $atndir;
-  opendir($atndir,$$settings{'inputdir'}) or die "unable to open directory $$settings{'inputdir'}:$!\n";
-  my @atnfiles=readdir($atndir);
-  foreach my $type ((qw/blast ipr_matches signalp_hmm signalp_nn tmhmm.sql tmhmm_location vfdb_hits cogs_hits/)){ # I removed uniprot so that it could be specially parsed
-    my @files=grep(/$type/,@atnfiles);
-    if(@files){push(@sqlfiles,$$settings{'inputdir'} . "/" . $files[0]);}
-  }
-  
-  # Set up I/O
-  my $gbin = Bio::SeqIO->new(-file=>$$settings{'prediction'},-format=>'genbank');
-  my $gbout = Bio::SeqIO->new(-file=>">".$$settings{'gb'},-format=>'genbank');
-  my $fasta;
-  if(defined($$settings{'fasta'})){
-    $fasta = Bio::SeqIO->new(-file=>">".$$settings{'fasta'},-format=>'');
-  }
-  my $gff;
-  if(defined($$settings{'gff'})){
-    $gff = Bio::Tools::GFF->new(-file=>">".$$settings{'gff'},-gff_version => 3);
-  }
-
-  STAGE_1:
-  #Stage 1: Make a hash of loci to SeqFeature objects from each data line
-  my %uniprot=uniprotInfo("$$settings{inputdir}/uniprot.sql",$map{uniprot},$settings);
-  my %spfeats=annotationsHash(\@sqlfiles,\%map,$settings);
-
-  STAGE_2:
-  logmsg "Stage 2: Select a name for each locus from available SeqFeature objects and integrate the other subfeatures";
-  while( my $seq=$gbin->next_seq()){ #each contig
-    logmsg "Working on ".$seq->id;
-    if($organism eq 'organism'){#not set
-      $organism=$seq->primary_seq->desc;
-      $organism =~ s/^([^,_]+).*$/$1/;
-    }
-    my $contig=$seq->primary_seq->display_id;
-    $contig =~ s/\D*[a-zA-Z]*([0-9]+).*$/$1/;
-    $seq->display_id(sprintf("%s_%04d",$organism,$contig));
-    if(defined($$settings{'pipeline_version'})){#write pipeline version into the COMMENT field
-      my $pipeline_version="CG-Pipeline version " . $$settings{'pipeline_version'};
-      $seq->annotation->add_Annotation('comment',Bio::Annotation::Comment->new(-text=>$pipeline_version));
-    }
-    if(defined($$settings{'pipeline_reference'})){
-      my ($gb_authors,$gb_title,$gb_journal,$gb_pubmed)=split('\|',$$settings{'pipeline_reference'});
-      $seq->annotation->add_Annotation('reference',Bio::Annotation::Reference->new(-title=>$gb_title,-authors=>$gb_authors,-location=>$gb_journal,-pubmed=>$gb_pubmed));
-    }
-    my @feats = $seq->all_SeqFeatures(); # features here are loci in the genome
-    #$seq->flush_SeqFeatures(); # try removing this.....
-    foreach my $ftr (@feats){ # each feature in the contig---each locus
-      if($ftr->primary_tag() eq 'gene'){next;} # we get two features, gene and CDS, duplicates
-      if($ftr->primary_tag() eq 'source'){next;} # not interested in the source tag here
-      if(!$ftr->has_tag('locus_tag')){
-        die "Error: could not find a locus tag for ".join("_",$seq->id,$ftr->start,$ftr->end);
-      }
-      my $locus_tag = ($ftr->get_tag_values('locus_tag'))[0];
-      if (!(defined($spfeats{$locus_tag}))){
-#        print STDERR "skipping due to having no features:$locus_tag\n";
-        $seq->add_SeqFeature(@feats);# put predictions back in
-        next;
-      }
-      #initialize the naming hash
-      %data = (type=>'none',name=>'hypothetical',product=>'putative',identity=>1,evalue=>999,count=>'0');
-      my $ftrcount = scalar @{$spfeats{$locus_tag}};
-      #print STDERR "$ftrcount features for $locus_tag\n";
-      foreach $newftr ( @{$spfeats{$locus_tag}}){
-        $newftr->strand($ftr->strand);
-        if($newftr->primary_tag eq 'blast'){
-          $newftr->start($ftr->start());
-          $newftr->end($ftr->end());
-          $newftr->strand($ftr->strand());
-          my $tags=tags2hash($newftr);
-        #  my $identity=($newftr->get_tag_values('identity'))[0];
-        #  my $evalue=($newftr->get_tag_values('evalue'))[0];
-        #  my $product=($newftr->get_tag_values('name'))[0];
-        #  my $locus_tag=($newftr->get_tag_values('locus_tag'))[0];
-          $newftr->remove_tag('name') if($newftr->has_tag('name'));#particularly shitty tag riddled with '='
-          my $source =$newftr->source_tag();
-          my $gene="unnamed";
-          if($$tags{'identity'}<91 || $$tags{'evalue'}>1e-9){ next; }
-          if(  ($data{'evalue'} >= $$tags{'evalue'} || $data{'identity'} <= $$tags{'identity'} ) ){ #compare this blast hit to the previous one
-            $$tags{'uniprot_id'}=~s/^.+::(.+)::.+$/$1/;
-            my $product=$uniprot{$$tags{'uniprot_id'}}{'product'}; 
-            die "Could not find product for $$tags{'uniprot_id'}, ".Dumper $tags if(!$product);
-            $$tags{'product'}=$uniprot{$$tags{'uniprot_id'}}{'product'};
-            %data=(type=>'blast',count=>$data{'count'}+1,%$tags);
-            $gene=$uniprot{$$tags{'uniprot_id'}}{'gene_name'};
-          #print STDERR "$gene\n";
-            my $note=remove_tags($newftr);
-            $newftr->add_tag_value('note',$note);
-            $newftr->add_tag_value('product',$data{'product'});
-            $newftr->add_tag_value('locus_tag',$data{'locus_tag'});
-            $newftr->source_tag('UniProt');
-            $newftr->primary_tag('CDS');
-            addtranslation($newftr,$seq);
-            $newftr->display_name($data{'name'});
-          #remove any existing feature for this locus
-            my @currentfeatures=$seq->remove_SeqFeatures();
-            foreach my $curftr(@currentfeatures){
-              if(!$curftr->has_tag('locus_tag')){next;}
-              my $protid=($curftr->get_tag_values('locus_tag'))[0];
-              if($$tags{'locus_tag'} !~ /^$protid$/){
-                $seq->add_SeqFeature($curftr);
-              }
-            }
-          #create the main feature
-            my $parent = gene_factory($newftr->start,$newftr->end,$newftr->strand,{locus_tag=>$$tags{'locus_tag'}});
-            $parent->add_SeqFeature($newftr);
-            if(defined($gene)){
-              if(!($gene eq 'unnamed' || ($gene =~ /[_-]+/) || ($gene =~ /^[A-Z]+/) || ($gene =~ /^[0-9]{2,}/))){
-                $parent->add_tag_value('gene',$gene);
-              }
-            }
-            #$parent->add_tag_value('gene',$gene);
-            $seq->add_SeqFeature($parent);
-            $ftr=$parent;#future features (below, from ipr_matches, etc) will be subfeatures of this one
-          }
-        }
-        elsif($newftr->primary_tag eq 'ipr_matches'){
-          my $tags=tags2hash($newftr);
-          my $note = remove_tags($newftr);
-          $newftr->add_tag_value('note',$note);
-          $newftr->add_tag_value('product',$$tags{'product'});
-          $newftr->primary_tag('misc_feature');
-          $newftr->source_tag($$tags{'database_name'});
-          $newftr->start(start2nuc($ftr->start,$newftr->start));
-          $newftr->end(end2nuc($ftr->start,$newftr->end));
-          $ftr->add_SeqFeature($newftr);
-        }
-        elsif($newftr->primary_tag eq 'vfdb_hits'){
-          my @currentfeatures = $ftr->get_SeqFeatures();
-          foreach my $each_ftr (@currentfeatures){
-            if ($each_ftr->primary_tag() eq 'CDS'){
-              $each_ftr->add_tag_value('vfdb_id',($newftr->get_tag_values('target_id'))[0]);
-            }
-          }
-        }
-        elsif($newftr->primary_tag eq 'cogs_hits'){
-          my @currentfeatures = $ftr->get_SeqFeatures();
-          foreach my $each_ftr (@currentfeatures){
-            if ($each_ftr->primary_tag() eq 'CDS'){
-              my ($cogs_protein)=$newftr->get_tag_values('target_id');
-              $each_ftr->add_tag_value('cogs_protein',$cogs_protein);
-              $each_ftr->add_tag_value('cogs_id',$prot2cogid{$cogs_protein});
-            }
-          }
-        }
-        elsif($newftr->primary_tag eq 'signalp_nn'){
-        #  if(($newftr->remove_tag('is_signal_peptide'))[0] eq 'NO'){next;}
-          my $parent;
-          my $aa_pos = $newftr->end ?  sprintf("%d-%d",$newftr->start, $newftr->end): sprintf("%d",$newftr->start);
-          $newftr->start(start2nuc($ftr->start,$newftr->start));
-          if($newftr->end){$newftr->end(end2nuc($ftr->start,$newftr->end));}
-          $newftr->remove_tag('locus_tag');
-          my $tags = tags2hash($newftr);
-          my @currentfeatures = $ftr->get_SeqFeatures();
-          foreach my $each_ftr (@currentfeatures){
-            if ($each_ftr->primary_tag() eq 'sig_peptide'){#there can be only one
-              $parent=$each_ftr;
-              last;
-            }
-          }
-          if(!defined($parent)){
-            $parent=Bio::SeqFeature::Generic->new(-primary=>'sig_peptide',-source_tag=>'SignalP',-start=>$ftr->start,-end=>$ftr->end,-strand=>$ftr->strand,tag=>{locus_tag=>$locus_tag});
-            $ftr->add_SeqFeature($parent);
-          }
-          #add tags to parent as appropriate
-          #/maxC=[pos],value=[value],cutoff=[cutoff]
-          #/maxY=[pos],value=[value],cutoff=[cutoff]
-          #/maxS=[pos],value=[value],cutoff=[cutoff]
-          #/meanS=[pos],value=[value],cutoff=[cutoff]
-          #D:give the coordinates to parent
-          my $measure_tag = $$tags{'measure_type'};
-          $measure_tag =~ s/[\. ]//g;
-          if($measure_tag eq 'D'){
-            if($$tags{'is_signal_peptide'} eq 'NO'){
-            #remove this feature from the locus, it has no signal peptide
-              @currentfeatures = $ftr->remove_SeqFeatures();
-              foreach my $each_ftr (@currentfeatures){
-                if ($each_ftr->primary_tag() eq 'sig_peptide'){next;}
-                else {$ftr->add_SeqFeature($each_ftr);}
-              }
-              next;
-            }
-            $parent->start($newftr->start);
-            $parent->end($newftr->end);
-            #addtranslation($parent);
-            $measure_tag='D-score';
-          }
-          $parent->add_tag_value($measure_tag,sprintf("aa_pos %s,value %s,cutoff %s",$aa_pos,$$tags{'value'},$$tags{'cutoff'}));
-        }
-        elsif($newftr->primary_tag eq 'signalp_hmm'){
-          if($newftr->start < 1){next;}
-          my $parent;
-          $newftr->remove_tag('locus_tag');
-          my $tags = tags2hash($newftr);
-          my $aa_pos = sprintf("%d-%d",$newftr->start,$newftr->end);
-          $newftr->start(start2nuc($ftr->start,$newftr->start));
-          $newftr->end(end2nuc($ftr->start,$newftr->end));
-          my @currentfeatures = $ftr->get_SeqFeatures();
-          foreach my $each_ftr (@currentfeatures){
-            if(!$each_ftr->has_tag('locus_tag')){next;}
-            if (($each_ftr->get_tag_values('locus_tag'))[0] eq $locus_tag && $each_ftr->primary_tag() eq 'sig_peptide'){
-              $parent=$each_ftr;
-              last;
-            }
-          }
-          if(!defined($parent)){
-            $parent=Bio::SeqFeature::Generic->new(-primary=>'sig_peptide',-source_tag=>'SignalP',-start=>$ftr->start,-end=>$ftr->end,-strand=>$ftr->strand,tag=>{locus_tag=>$locus_tag});
-            $ftr->add_SeqFeature($parent);
-          }
-          #hmm:
-          #/cleavage_site=[start-end]
-          #/cleavage_prob=[cleav site prob]
-          #/sigp_prob=[prob]
-          #and give parent hmm's prediction
-          $parent->add_tag_value('cleavage_site',$aa_pos);
-          $parent->add_tag_value('cleavage_prob',$$tags{'max_cleavage_site_probability'});
-          $parent->add_tag_value('signalp_prob',$$tags{'signal_peptide_probability'});
-          $parent->add_tag_value('product',$$tags{'prediction'});
-          $parent->add_tag_value('evidence','SignalP');
-        }
-        elsif($newftr->primary_tag eq 'tmhmm'){
-          $newftr->remove_tag('locus_tag');
-          my $note = remove_tags($newftr);
-          $newftr->add_tag_value('note',$note);
-          $newftr->add_tag_value('locus_tag',$locus_tag);
-          $newftr->add_tag_value('product','transmembrane structure');
-          $newftr->primary_tag('misc_structure');
-          $newftr->source_tag('TMHMM');
-          $newftr->add_tag_value('evidence','TMHMM');
-          #$newftr->start(start2nuc($ftr->start,$newftr->start));
-          #$newftr->end(end2nuc($ftr->start,$newftr->end));
-          $newftr->start($ftr->start);
-          $newftr->end($ftr->start);# there are no regions yet, added from tmhmm_location.sql
-          #addtranslation($newftr);
-          $ftr->add_SeqFeature($newftr,'EXPAND');
-        }
-        elsif($newftr->primary_tag eq 'tmhmm_location'){
-          my @currentfeatures = $ftr->get_SeqFeatures();
-          foreach my $each_ftr (@currentfeatures){
-            if ($each_ftr->primary_tag() eq 'misc_structure'){
-              my $tags=tags2hash($newftr);
-              $each_ftr->add_tag_value('region',sprintf("%s|%d|%d",$$tags{'location'},$newftr->start,$newftr->end));
-              my ($regionstart,$regionend)=(start2nuc($each_ftr->start,$newftr->start),end2nuc($each_ftr->start,$newftr->end));
-              if($each_ftr->start == $each_ftr->end){#start expanding the feature
-                $each_ftr->start($regionstart);
-                $each_ftr->end($regionend);
-              }
-              else{
-                if($each_ftr->start>$regionstart){$each_ftr->start($regionstart);}
-                if($each_ftr->end<$regionend){$each_ftr->end($regionend);}
-              }
-            }
-          }
-        }
-      }
-      logmsg "Post-processing the annotation for this gene";
-      #post-processing
-      my @features = sort {$a->start<=>$b->start} sort {$a->primary_tag cmp $b->primary_tag} $seq->all_SeqFeatures();
-      #@features=sort{
-      #  return 0 if($a->start!=$b->start);
-      #  if($a->primary_tag=~/gene/i){
-      #    return 1;
-      #  }
-      #  return 0;
-      #} @features;
-      my @finalfeatures = ();
-      $seq->flush_SeqFeatures();
-      foreach $newftr(@features){
-        if($newftr->has_tag('gene')){ 
-          my $gene = ($newftr->get_tag_values('gene'))[0];
-          if(defined($gene)){
-            if( 
-            $gene eq 'unnamed' ||
-            $gene =~ /^[A-Z]+/ ||
-            $gene =~ /^[0-9]{2,}/){
-              $newftr->remove_tag('gene');
-            }
-          }
-        }
-        if(scalar @finalfeatures){
-          my $prev=pop @finalfeatures;
-          if(
-            ($prev->primary_tag =~/gene/ && $newftr->primary_tag =~/gene/)&&
-            ($prev->has_tag('locus_tag') && $newftr->has_tag('locus_tag')) &&
-            (($prev->get_tag_values('locus_tag'))[0] eq ($newftr->get_tag_values('locus_tag'))[0])&&
-            ($prev->start eq $newftr->start)&&
-            ($prev->end eq $newftr->end)){
-      #  print STDERR "\n\nDuplicate gene found\n\n";  
-            my @tags=$newftr->all_tags();
-          #fix merge newftr with prev, discard newftr, push prev
-            foreach my $tag (@tags){
-              if($tag eq "locus_tag"){next;}
-              if(!$prev->has_tag($tag)){next;}
-              my @values = $prev->get_tag_values($tag);
-              push(@values,$newftr->get_tag_values($tag));
-              my @uniquevalues;
-              foreach my $value(sort @values){
-                if(0<scalar @uniquevalues && $value ne $uniquevalues[-1]){push(@uniquevalues,$value);}
-                else{push(@uniquevalues,$value);}
-              }  
-              $prev->remove_tag($tag);
-              if(0<scalar @uniquevalues){
-                $ftr->add_tag_value($tag,@uniquevalues);
-              }
-            }
-            push(@finalfeatures,$prev);
-          }
-          else{
-            push(@finalfeatures,$prev);
-            push(@finalfeatures,$newftr);
-          }
-        }
-        else{
-          push(@finalfeatures,$newftr);
-        }
-      }
-      $seq->add_SeqFeature(sort {$a->start<=>$b->start} @finalfeatures);
-    }
-    $gbout->write_seq($seq);
-    # write gff and fasta
-    if($gff or $fasta){
-      foreach my $ftr ($seq->all_SeqFeatures()){
-        $ftr->seq_id($seq->display_name());
-        replace_tags($ftr);
-        $ftr->add_tag_value('organism',$organism);
-        if($gff){
-          $gff->write_feature($ftr);
-        }
-        if($fasta && $ftr->primary_tag eq 'gene'){
-          my $seq2fasta = $ftr->seq;
-          my $seqid = scalar $seq2fasta->display_name;
-          my $locus_tag = ($ftr->get_tag_values('locus_tag'))[0];
-          my $defline = sprintf("lcl|%s|%d|%d",$locus_tag,$ftr->start,$ftr->end);
-          $seq2fasta->display_name($defline); # >lcl|StrainName_Locus|start|end
-          my @desc;
-          if($ftr->has_tag('gene')){push(@desc,$ftr->get_tag_values('gene'));}
-          #locate a product tag
-          for my $eachftr ($seq->all_SeqFeatures()){
-            if(!$eachftr->has_tag('locus_tag')){next;}
-            if($locus_tag ne ($eachftr->get_tag_values('locus_tag'))[0]){next;}
-            if($eachftr->primary_tag eq 'CDS'){
-              if($eachftr->has_tag('product')){
-                if($locus_tag ne ($eachftr->get_tag_values('locus_tag'))[0]){die "alien CDS!$locus_tag\n";}
-                push(@desc,$eachftr->get_tag_values('product'));
-                last;
-              }
-            }
-          }
-          if(1>scalar @desc){push(@desc,"predicted cds");}
-          $seq2fasta->desc(join(" ",@desc));
-          $fasta->write_seq($seq2fasta) or die "$!\n";
-        }
-      }
-    }
-  }
-  logmsg "Done!";
-  return 0;
-}#end main
-
-sub uniprotInfo{
-  my($uniprot,$uniprotMap,$settings)=@_;
-  my %uniprot;
-  open (FH, "<$uniprot") or die "Could not open $uniprot: $!";
-  while(<FH>){
-    chomp;
-    # skip a row of empties
-    if( /^\s*\|/ ){ print STDERR "Skipping blank line:$_\n"; next;}
-    s/\\\|/::/g; # escaped pipes are replaced
-    my @values = split(/\|/);
-    @{$uniprot{$values[0]}}{@$uniprotMap}=@values;
-  }
-  close FH;
-  return %uniprot;
+  return %map;
 }
 
-sub annotationsHash{
-  my($sqlfiles,$map,$settings)=@_;
-  my %map=%$map;
-  my $blastcount=0;
-  my %spfeats;
-  foreach my $sqlfile(@$sqlfiles){
-    #my $type = (reverse split('\.', basename($sqlfile,'.sql')))[0];
-    my($sqlname,$sqlpath,$sqlsuffix)=fileparse($sqlfile,qw(.sql));
-    my $type=$sqlname; $type=~s/^.+\.//;
-    if(!defined($type) || !defined($map{$type})){ print STDERR "Input filename rejected: $type\n";next;}
-    my @params = @{$map{$type}};
-    open (FH, "<$sqlfile") or die $!; #one prediction file containing locus tags
-    logmsg "Parsing $sqlfile";
-    while (<FH>){
-      chomp;
-      # skip a row of empties
-      if( /^\s*\|/ ){ print STDERR "Skipping blank line:$_\n"; next;}
-        
-      my $newftr = Bio::SeqFeature::Generic->new(-primary=>$type,-start=>'0',-end=>'0');
-      s/\\\|/::/g;
-      my @values = split(/\|/);
-      if(scalar @values != scalar @params){print STDERR "Wrong number of fields in $sqlfile:" . scalar @values . "\n"."  ".join("____",@values)."\n";next;}
-
-      
-      for(my $i=0;$i<scalar @params;$i++){
-        if($params[$i] eq "start"){
-          $newftr->start($values[$i]);
-        }
-        elsif($params[$i] eq "end"){
-          $newftr->end($values[$i]);
-        }
-        else{
-          #if($params[$i] eq "locus_tag"){
-          #  $values[$i] =~ s/_Pipeline_draft_/_/g;
-          #}
-          $newftr->add_tag_value($params[$i],$values[$i]);
-        }
-      }
-      if(!defined($spfeats{$values[0]})){$spfeats{$values[0]} = [];}
-      push (@{$spfeats{$values[0]}}, $newftr );
-    }
-    close(FH);
-  }
-  return %spfeats;
-}
-
-
-# set up cogs mapping
-sub prot2cogMapping{
-  my($settings)=@_;
-  my %prot2cogid;
-  open(CFH,"<$$settings{prot2cogid}") or die;
-  my @prot2cogid_map=<CFH>;
-  close (CFH);
-  foreach (@prot2cogid_map){
-    my ($prot,$cogid)=split(/\s+/);
-    $prot2cogid{$prot}=$cogid;
-  }
-  undef @prot2cogid_map;
-  return %prot2cogid;
-}
-
-sub gene_factory($$$$){
-  my ($start,$end,$strand,$tags) = @_;
-  return Bio::SeqFeature::Generic->new(-primary=>'gene',-source_tag=>'UniProt',-start=>$start,-end=>$end,-strand=>$strand,-tag=>$tags);
-}
-sub remove_tags($){
-  my $ftr = shift;
-  my @note=();
-  my @tags=$ftr->get_all_tags();
-  my $value;
-  foreach my $tag (@tags){
-    $value=($ftr->get_tag_values($tag))[0];
-    $value=~s/=/:/g;
-    @note = (@note,
-        ("$tag:" . $value)
-      );
-  }
-  foreach my $tag (@tags){
-    $ftr->remove_tag($tag);
-  }
-  return join("; ",@note);
-}
-sub replace_tags($){
-  my $ftr = shift;
-  if(!$ftr->has_tag('note')){return;}
-  my @note = split(';',join('; ',$ftr->get_tag_values('note')));
-  foreach (@note){
-    my ($tag,$value)=split(':');
-    if($ftr->has_tag($tag)){next;}#things like 'product'
-    else{$ftr->add_tag_value($tag,$value);}
-  }
-  $ftr->remove_tag('note');
-  my @tags = $ftr->all_tags();
-  #fix bad tag names
-  foreach my $tag (@tags){
-    my @values = $ftr->get_tag_values($tag);
-    $ftr->remove_tag($tag);
-    if(0<scalar @values){next;}
-    $tag =~ s/^\s+//;
-    #remove duplicate values
-    my @uniquevalues=("uninitialized");
-    foreach my $value(sort @values){
-      if($value ne $uniquevalues[$#uniquevalues]){push(@uniquevalues,$value);}
-      else{push(@uniquevalues,$value);}
-    }  
-    if(0<scalar @uniquevalues){
-      $ftr->add_tag_value($tag,@uniquevalues);
-    }
-  }
-}
-sub start2nuc($$){
-  my ($start,$coord) = @_;
-  return $start - 3 + 3*$coord;
-}
-sub end2nuc($$){
-  my ($start,$coord) = @_;
-  return $start - 1 + 3*$coord;
-}
-sub tags2hash($){
-  my $ftr = shift;
-  my %data = ();
-  my @tags=$ftr->get_all_tags();
-  foreach my $tag (@tags){$data{$tag}=($ftr->get_tag_values($tag))[0];}
-  return \%data;
-}
-sub addtranslation($$){
-  my $ftr = shift;
-  my $seq = shift;
-  if($ftr->strand < 0){
-    $ftr->add_tag_value('translation',Bio::Seq->new(-seq=>$seq->subseq($ftr->start,$ftr->end))->revcom->translate->seq);
-  }
-  else{
-    $ftr->add_tag_value('translation',Bio::Seq->new(-seq=>$seq->subseq($ftr->start,$ftr->end))->translate->seq);
-  }
+sub usage{
+  "Transforms a CG-Pipeline annotation directory into a standard genbank file
+  Usage: ". basename($0) . " --prediction=prediction.gb --inputdir=annotation-sql-folder --gb=genbank-output-file --gff=gff-output-file [--organism=organism_id]
+  "
 }
