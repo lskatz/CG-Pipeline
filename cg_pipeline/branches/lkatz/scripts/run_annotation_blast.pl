@@ -75,7 +75,7 @@ sub main() {
     my $progressThread=threads->new(\&blastProgressUpdater,$progressQ,$settings);
 
     $ENV{BLASTDB} = (fileparse($$settings{blast_db}))[1];
-    my $command="legacy_blast.pl blastall -p blastp -a $numcpus -o $$settings{tempdir}/$0.$$.blast_out -d $$settings{blast_db} -i $$settings{query_mfa} $$settings{parametersForBlast} -m 0";
+    my $command="legacy_blast.pl blastall -p blastp -a $numcpus -d $$settings{blast_db} -i $$settings{query_mfa} $$settings{parametersForBlast} -m 0 | sed 's/\xFF/*/g' > $$settings{tempdir}/$0.$$.blast_out"; # sed to fix a bug in blast < 2.2.27+ where * is printed as hex \xFF.
     logmsg "Running BLAST on $$settings{query_mfa} vs. $$settings{blast_db}...\n  $command";
     system($command);
     die "Problem with blast" if $?;
@@ -211,6 +211,7 @@ sub readBlastOutputWorker{
       } # END while($hit)
     }   # END while($result)
     close BLASTIN;
+    unlink $resultFile; # clean up a little bit (the full file will still be there, so this inter-intermediate file can be deleted)
   }     # END file=$q->dequeue
   return 1;
 }
