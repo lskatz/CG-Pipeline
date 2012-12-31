@@ -85,10 +85,12 @@ sub main() {
 
   # TODO Verify presence of pipeline requirements (SignalP, TMHMM, Uniprot, Uniprot DB3, ...)
   # Error checking with blast databases
-  my $blastErrMsgF="ERROR: Need \%s in conf file set to a database. Current value is \%s.";
+  my $blastErrMsgF ="ERROR: Need \%s in conf file set to a database. Current value is \%s.";
+  my $blastErrMsgF2="ERROR: Could not detect a protein blast database at \%s.";
   for my $db(qw(is_blast_db pdb_blast_db vfdb_blast_db cogs_blast_db blast_db)){
     my $dbPath=$$settings{$db};
-    die sprintf($blastErrMsgF,$db,$$settings{$db}) if(!$dbPath);
+    die sprintf($blastErrMsgF,$db,$dbPath) if(!$dbPath);
+    die sprintf($blastErrMsgF,$dbPath) if(!-e "$dbPath.pin");
   }
   
   # skip to any particular part of annotation
@@ -108,6 +110,7 @@ sub main() {
       logmsg "Going straight to INTERPRO";goto INTERPRO;
     } else{
       warn "Warning: Argument goto was given as $$settings{goto} but it is not one of the accepted arguments. $0 --help for more info. Not skipping any annotation steps";
+      sleep 2; # in case ctrl-c needs to be hurried
     }
   }
 
