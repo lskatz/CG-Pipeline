@@ -120,7 +120,8 @@ sub interpretCdsFeat{
   push(@miscFeat,$vfFeat) if($vfFeat);
   my $cogsFeat=interpretCogs($cdsFeat,$locusAnnotation,$extraAnnotationInfo,$settings);
   push(@miscFeat,$cogsFeat) if($cogsFeat);
-  # TODO PDB
+  my $pdbFeat=interpretPdb($cdsFeat,$locusAnnotation,$settings);
+  push(@miscFeat,$pdbFeat) if($pdbFeat);
   
   ## annotations on portions of the gene
   
@@ -435,6 +436,14 @@ sub interpretCogs{
   $feat->add_tag_value('description',$$extraAnnotationInfo{prot2cogs}{$cogsProt});
   return $feat;
 }
+sub interpretPdb{
+  my($cdsFeat,$annotation,$settings)=@_;
+  my $pdb=$$annotation{pdb_hits};
+  return 0 if(!@$pdb);
+  
+  my $feat=blastSqlToFeat($cdsFeat,$pdb,"PDB database",{});
+  return $feat;
+}
 
 ##################
 ## tools
@@ -458,6 +467,7 @@ sub blastSqlToFeat{
       description=>$$a{description},
     }
   );
+  return $feat;
 }
 
 # read a pipe-delimited sql line
