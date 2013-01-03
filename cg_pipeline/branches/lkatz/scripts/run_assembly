@@ -271,24 +271,9 @@ sub qualityControlFastq{
   my($file,$settings)=@_;
   my $outfile="$$settings{tempdir}/".fileparse($file).".trimmed.fastq";
   return $outfile if(-s $outfile > 100); # skip this sub if the file already has some content
-  logmsg "Performing a quality filter on the reads in $file ==> $outfile with fastx toolkit";
-  my $executable=AKUtils::fullPathToExec("fastq_quality_filter");
-  #if(0){
-  #  my $command="$executable -Q33 -q 20 -p 75 -v -i '$file' -o '$outfile' 2>&1";
-  #  if(is_fastqGz($file)){
-  #    $command="gunzip -c '$file' | $executable -Q33 -q 20 -p 75 -v -o '$outfile' 2>&1";
-  #  }
-  #  system($command);
-  #}
-  if(1|| $?){
-    logmsg "Error with fastx. Trying with CG-Pipeline's in-house method.";
-    system("run_assembly_trimClean.pl -i '$file' -o '$outfile' 2>&1");
-    die if $?;
-    #logmsg "Error with fastx. Trying again but assuming Sanger-variant fastq file";
-    #$command=~s/\-Q33\s*//; # remove Q33 parameter (but not using ///g, in case it matches the infile name)
-    #system($command);
-    #die "Error with fastx toolkit" if $?;
-  }
+  logsmg "Performing a quality filter on the reads in $file ==> $outfile with CG-Pipeline's in-house method.";
+  system("run_assembly_trimClean.pl --min_length=30 -i '$file' -o '$outfile' 2>&1");
+  die if $?;
   return $outfile;
 }
 
