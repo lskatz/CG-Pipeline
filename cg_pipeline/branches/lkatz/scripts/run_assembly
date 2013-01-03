@@ -266,7 +266,6 @@ sub baseCall($$){
 }
 
 # quality control the fastq reads.
-# minimum of 75% of bases have to have a quality of at least 20
 sub qualityControlFastq{
   my($file,$settings)=@_;
   my $outfile="$$settings{tempdir}/".fileparse($file).".trimmed.fastq";
