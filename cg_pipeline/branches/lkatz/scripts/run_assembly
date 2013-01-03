@@ -270,7 +270,7 @@ sub qualityControlFastq{
   my($file,$settings)=@_;
   my $outfile="$$settings{tempdir}/".fileparse($file).".trimmed.fastq";
   return $outfile if(-s $outfile > 100); # skip this sub if the file already has some content
-  logsmg "Performing a quality filter on the reads in $file ==> $outfile with CG-Pipeline's in-house method.";
+  logmsg "Performing a quality filter on the reads in $file ==> $outfile with CG-Pipeline's in-house method.";
   system("run_assembly_trimClean.pl --min_length=30 -i '$file' -o '$outfile' 2>&1");
   die if $?;
   return $outfile;
