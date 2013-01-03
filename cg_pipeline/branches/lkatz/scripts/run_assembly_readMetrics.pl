@@ -52,11 +52,13 @@ sub main() {
   $$settings{qual_offset}||=33;
   $$settings{numcpus}||=AKUtils::getNumCPUs();
 
+  # TODO read all files in however into a queue of reads.  Then streamline the analysis of those reads.
   my %final_metrics;
   print join("\t",qw(File avgReadLength totalBases maxReadLength minReadLength avgQuality numReads readScore))."\n";
   for my $input_file(@ARGV){
     my($filename,$dirname,$ext)=fileparse($input_file,(@fastaExt,@fastqExt));
     if(grep(/$ext/,@fastqExt)){
+      $$settings{is_fastqGz}=1 if($ext=~/\.gz/);
       my $entryQueue=Thread::Queue->new();    # for storing fastq 4-line entries
       my $metricsQueue=Thread::Queue->new(); # for receiving read lengths and metrics
       my $file=File::Spec->rel2abs($input_file);
