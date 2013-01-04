@@ -43,8 +43,9 @@ sub main() {
 
 	die(usage()) if @ARGV < 1;
 
-	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'outfile=s');
+	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'outfile=s', 'estimatedGenomeSize=i');
 	GetOptions($settings, @cmd_options) or die;
+  $$settings{estimatedGenomeSize}||=5000000; # default: 5 MB
 
 	$$settings{outfile} ||= "$0.out.fasta";
 	$$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
@@ -217,7 +218,20 @@ sub runVelvetAssembly($$){
   #system("mkdir -p $run_name") if(!-d $run_name); # is made by Voptimiser
   logmsg "Executing Velvet assembly $run_name";
   my $velvetPrefix=File::Spec->abs2rel("$$settings{tempdir}/auto"); # VelvetOptimiser chokes on an abs path
-  my $command="VelvetOptimiser.pl -a -v -p $velvetPrefix -d $run_name ";
+
+  # figure out how many threads will be used, even when considering memory
+  # Estimate based on the first set of reads. This is just an estimate.
+  # -109635 + 18977*ReadSize + 86326*GenomeSize + 233353*NumReads - 51092*K
+  my $readLength=`head -6 $$fastqfiles[0] | tail -1 | wc -c`+0;
+  my $numReads=`wc -l $$fastqfiles[0]`/4;
+  my $memoryReqPerThread=-109635 + 18977*$readLength + 86326*$$settings{estimatedGenomeSize}/1000000 + 233353*$numReads/1000000 - 51092* sum(qw(19+21+23+25+27+29+31))/7;
+  $memoryReqPerThread*=1024;
+  my $totalMem=AKUtils::getFreeMem();
+  my $memNumThreads=$totalMem/$memoryReqPerThread;
+  my $numThreads=int(min(AKUtils::getNumCPUs(),$memNumThreads));
+  logmsg "I estimate that you'll need about $memoryReqPerThread bytes per thread";
+
+  my $command="VelvetOptimiser.pl -a -v -p $velvetPrefix -d $run_name -t $numThreads ";
   #warn "=======Debugging: only running hashes of 29 and 31\n"; $command.=" -s 29 -e 31 ";
   $command.="-f '";
   foreach my $fqFiles (@$fastqfiles){
