@@ -40,6 +40,7 @@ exit(main());
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
 	$$settings{assembly_min_contig_length} ||= 100; #TODO put this into config file
+  $$settings{numcpus}||=AKUtils::getNumCPUs();
 
 	die(usage()) if @ARGV < 1;
 
@@ -228,8 +229,8 @@ sub runVelvetAssembly($$){
   $memoryReqPerThread*=1024;
   my $totalMem=AKUtils::getFreeMem();
   my $memNumThreads=$totalMem/$memoryReqPerThread;
-  my $numThreads=int(min(AKUtils::getNumCPUs(),$memNumThreads));
-  logmsg "I estimate that you'll need about $memoryReqPerThread bytes per thread";
+  my $numThreads=int(min($$settings{numcpus},$memNumThreads));
+  logmsg "I estimate that you have enough memory for $memNumThreads threads, and you have $$settings{numcpus} max threads.";
 
   my $command="VelvetOptimiser.pl -a -v -p $velvetPrefix -d $run_name -t $numThreads ";
   #warn "=======Debugging: only running hashes of 29 and 31\n"; $command.=" -s 29 -e 31 ";
