@@ -26,8 +26,8 @@ sub main{
   local $0=fileparse $0;
   my $settings={
     appname=>"cgpipeline",
-    minCrisprSize=>20,
-    maxCrisprSize=>50,
+    minCrisprSize=>23,
+    maxCrisprSize=>55,
   };
   GetOptions($settings,qw(outfile=s help windowSize=i stepSize=i tempdir=s minCrisprSize=i maxCrisprSize=i));
   die usage($settings) if(@ARGV<1 || $$settings{help});
