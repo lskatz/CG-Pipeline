@@ -1,5 +1,12 @@
 #!/usr/bin/env perl
 
+# Predict CRISPRs in a fasta file
+# Author: Lee Katz <lkatz@cdc.gov>
+
+# TODO multithread
+# TODO validate scoring mechanism
+# TODO make GFF source tag for each contig
+
 use strict;
 use warnings;
 use FindBin;
@@ -22,13 +29,14 @@ sub main{
     minCrisprSize=>20,
     maxCrisprSize=>50,
   };
-  GetOptions($settings,qw(outfile=s help windowSize=i stepSize=i tempdir=s));
-  die usage() if(@ARGV<1 || $$settings{help});
+  GetOptions($settings,qw(outfile=s help windowSize=i stepSize=i tempdir=s minCrisprSize=i maxCrisprSize=i));
+  die usage($settings) if(@ARGV<1 || $$settings{help});
   my $outfile=$$settings{outfile} || "$0.gff";
   my $infile=$ARGV[0];
   die "ERROR: Could not find infile $infile" if(!-e $infile);
   $$settings{tempdir}||=AKUtils::mktempdir();
   logmsg "Temporary directory is $$settings{tempdir}";
+  logmsg "Detecting CRISPRs in $infile";
 
   my $contigs=AKUtils::readMfa($infile,{first_word_only=>1});
   my $smallTandemRepeatSeqs=findSmallTandemRepeats($contigs,$settings);
@@ -44,6 +52,7 @@ sub positionsToGff{
   my $gff="$$settings{tempdir}/crispr.gff";
   open(GFF,">",$gff) or die "Could not open temporary GFF:$!";
   print GFF "##gff-version   3\n";
+  # TODO print source line, describing the whole contig(s)
   my $crisprCounter=1;
   for my $drSeq(keys(%$positions)){
     my $crispr=$$positions{$drSeq};
@@ -51,17 +60,21 @@ sub positionsToGff{
     my $numDrs=@$crispr;
     next if($numDrs<2); # need 2+ DRs for a CRISPR
 
-    # formulate the overall crispr element
+    # formulate the overall crispr element score. This needs to be tested.
     my $score=1;
-    my $crisprId=sprintf("crispr%s",$crisprCounter++);
+    my $crisprId=sprintf("crispr%s",$crisprCounter);
     my ($crisprStart,$crisprStop)=($$crispr[0][1]+1,$$crispr[-1][2]+1);
-    $score=$score*.9 if($numDrs<4); # less confidence for few repeats
+    $score=$score*.98 if($numDrs<5); # less confidence for few repeats
+    $score=$score*.95 if($numDrs<4); # less confidence for few repeats
+    $score=$score*.95 if($numDrs<3); # less confidence for few repeats
     my $alnScore=drAlignmentScore($crispr,$contigs,$settings);
     $score=$score*$alnScore;
     my $drLength=$$crispr[0][2]-$$crispr[0][1];
-    my $spacerLength=$$crispr[1][1]-1-$$crispr[0][2]+1;
-    $score=$score*.9 if($spacerLength>2.5*$drLength || $spacerLength<0.6*$drLength);
-    $score=$score*.85 if($spacerLength>3.5*$drLength || $spacerLength<0.4*$drLength);
+    # penalize for each out-of whack DR/spacer ratio
+    for(my $i=0;$i<@$crispr-1;$i++){
+      my $spacerLength=$$crispr[$i+1][1]-1-$$crispr[$i][2]+1;
+      $score=$score*.9 if($spacerLength>2.5*$drLength || $spacerLength<0.6*$drLength);
+    }
 
     # don't accept low-quality CRISPRs. This is very much a threshold that needs to be tested.
     next if($score<0.75);
@@ -81,8 +94,10 @@ sub positionsToGff{
         print GFF join("\t",$seqname,"CG-Pipeline","Spacer",$spacerStart,$spacerStop,$score,'+','.',"Parent=$crisprId;Spacer=$spacerSeq")."\n";
       }
     }
+    $crisprCounter++;
   }
   close GFF;
+  logmsg "Done making GFF. Found ".($crisprCounter-1)." CRISPRs";
   return $gff;
 }
 
@@ -260,8 +275,11 @@ sub command{
 
 
 sub usage{
+  my($settings)=@_;
   local $0=fileparse $0;
   "Finds CRISPRs in a fasta file
   Usage: $0 assembly.fasta -o outfile.sql
+    -w window size in bp. Default: $$settings{windowSize}
+    -s step size in bp. Default: $$settings{stepSize}
   "
 }
