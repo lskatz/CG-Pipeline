@@ -90,7 +90,7 @@ sub main() {
   for my $db(qw(is_blast_db pdb_blast_db vfdb_blast_db cogs_blast_db blast_db)){
     my $dbPath=$$settings{$db};
     die sprintf($blastErrMsgF,$db,$dbPath) if(!$dbPath);
-    die sprintf($blastErrMsgF,$dbPath) if(!-e "$dbPath.pin");
+    die sprintf($blastErrMsgF2,$dbPath) if(!-e "$dbPath.pin" && !-e "$dbPath.pal");
   }
   
   # skip to any particular part of annotation
