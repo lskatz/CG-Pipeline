@@ -30,6 +30,8 @@ sub main{
     maxCrisprSize=>55,
   };
   GetOptions($settings,qw(outfile=s help windowSize=i stepSize=i tempdir=s minCrisprSize=i maxCrisprSize=i));
+  $$settings{windowSize}||=$$settings{maxCrisprSize}*3;
+  $$settings{stepSize}||=$$settings{windowSize}-2*$$settings{maxCrisprSize};
   die usage($settings) if(@ARGV<1 || $$settings{help});
   my $outfile=$$settings{outfile} || "$0.gff";
   my $infile=$ARGV[0];
@@ -40,11 +42,34 @@ sub main{
 
   my $contigs=AKUtils::readMfa($infile,{first_word_only=>1});
   my $smallTandemRepeatSeqs=findSmallTandemRepeats($contigs,$settings);
+  $smallTandemRepeatSeqs=filterRepeatSeqs($smallTandemRepeatSeqs,$settings);
   my $positions=findSequencePositionsInGenome($smallTandemRepeatSeqs,$contigs,$settings);
   my $gff=positionsToGff($positions,$contigs,$settings);
   copy($gff,$outfile);
   logmsg "Finished. GFF is in $outfile";
   return 0;
+}
+
+sub filterRepeatSeqs{
+  my($seqs,$settings)=@_;
+  my %badSeqIndex;
+  my $numSeqs=@$seqs;
+  for(my $i=0;$i<$numSeqs;$i++){
+    my $seqI=$$seqs[$i];
+    for(my $j=$i+1;$j<$numSeqs;$j++){
+      my $seqJ=$$seqs[$j];
+      if($seqI=~/$seqJ/){ # if $seqJ is inside of $seqI, then $seqJ is a more likely, smaller repeat
+        $badSeqIndex{$i}=1;
+      }
+    }
+  }
+  
+  my @filteredSeq;
+  for(my $i=0;$i<$numSeqs;$i++){
+    next if($badSeqIndex{$i});
+    push(@filteredSeq,$$seqs[$i]);
+  }
+  return \@filteredSeq;
 }
 
 sub positionsToGff{
@@ -73,11 +98,11 @@ sub positionsToGff{
     # penalize for each out-of whack DR/spacer ratio
     for(my $i=0;$i<@$crispr-1;$i++){
       my $spacerLength=$$crispr[$i+1][1]-1-$$crispr[$i][2]+1;
-      $score=$score*.9 if($spacerLength>2.5*$drLength || $spacerLength<0.6*$drLength);
+      $score=$score*.6 if($spacerLength>2.5*$drLength || $spacerLength<0.6*$drLength);
     }
 
     # don't accept low-quality CRISPRs. This is very much a threshold that needs to be tested.
-    next if($score<0.75);
+    next if($score<0.7);
     my $seqname=$$crispr[0][0];
     print GFF join("\t",$seqname,"CG-Pipeline","CRISPR",$crisprStart,$crisprStop,$score,'+','.',"ID=$crisprId")."\n";
 
@@ -130,25 +155,20 @@ sub findSequencePositionsInGenome{
 
 sub findSmallTandemRepeats{
   my($seqs,$settings)=@_;
-  $$settings{windowSize}||=$$settings{maxCrisprSize}*5;
-  $$settings{stepSize}||=$$settings{windowSize}-2*$$settings{maxCrisprSize};
   my $minCrisprSize=$$settings{minCrisprSize}||20;
   
   my %drSeq; # direct repeat sequence possibilities
   while(my($seqid,$seq)=each(%$seqs)){
     my $contigLength=length($seq);
     for(my $i=0;$i<$contigLength;$i+=$$settings{stepSize}){
-    #for(my $i=2920000;$i<$contigLength;$i+=$$settings{stepSize}){
       my $start=$i;
       my $stop=$start+$$settings{windowSize}-1;
-      logmsg "Finished with $i bp" if($i%100000==0);
-      #if($i>2980000){
-      #  logmsg "DEBUG";
-      #  last;
-      #}
+      #next if($i<2900000 || $i>3180000);
+      logmsg "Looking for repeats at bp $i in $seqid" if($i%(1000*$$settings{stepSize})==0);
 
       my $tmpIn=createSubassembly($seq,$start,$stop,$settings);
       my $tmp=findRepeats($tmpIn,$minCrisprSize,$settings);
+      next if(!keys(%$tmp));
       %drSeq=(%drSeq,%$tmp);
     }
   }
@@ -161,6 +181,7 @@ sub findRepeats{
   my $tmpout="$$settings{tempdir}/repeat-match.out";
   my $repeatMatch=AKUtils::fullPathToExec("repeat-match");
   command("$repeatMatch -E -t -n $minCrisprSize '$file' 2>/dev/null | tail -n +3 | sort -k1n -k2n > $tmpout",{quiet=>1});
+  #command("$repeatMatch -E -t -n $minCrisprSize '$file' 2>/dev/null | tail -n +3 | sort -k1n -k2n > $tmpout",{quiet=>1});
   #if(`wc -l $tmpout | awk '{print \$1}'`>5){system("cat $tmpout");die;}
   return {} if(`wc -l $tmpout | awk '{print \$1}'`<1);
   my $tmp=AKUtils::readMfa($file);
