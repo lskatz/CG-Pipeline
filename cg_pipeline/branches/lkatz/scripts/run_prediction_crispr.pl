@@ -19,6 +19,9 @@ use File::Basename;
 use File::Copy qw/copy/;
 use Bio::AlignIO;
 
+use threads;
+use Thread::Queue;
+
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
 exit(main());
 
@@ -32,6 +35,7 @@ sub main{
   GetOptions($settings,qw(outfile=s help windowSize=i stepSize=i tempdir=s minCrisprSize=i maxCrisprSize=i));
   $$settings{windowSize}||=$$settings{maxCrisprSize}*3;
   $$settings{stepSize}||=$$settings{windowSize}-2*$$settings{maxCrisprSize};
+  $$settings{numcpus}||=AKUtils::getNumCPUs();
   die usage($settings) if(@ARGV<1 || $$settings{help});
   my $outfile=$$settings{outfile} || "$0.gff";
   my $infile=$ARGV[0];
@@ -41,7 +45,11 @@ sub main{
   logmsg "Detecting CRISPRs in $infile";
 
   my $contigs=AKUtils::readMfa($infile,{first_word_only=>1});
+
+  # this is the slow step. Running a repeat finder.
   my $smallTandemRepeatSeqs=findSmallTandemRepeats($contigs,$settings);
+
+  # Finding the actual identified repeats is fast
   $smallTandemRepeatSeqs=filterRepeatSeqs($smallTandemRepeatSeqs,$settings);
   my $positions=findSequencePositionsInGenome($smallTandemRepeatSeqs,$contigs,$settings);
   my $gff=positionsToGff($positions,$contigs,$settings);
@@ -156,32 +164,62 @@ sub findSequencePositionsInGenome{
 sub findSmallTandemRepeats{
   my($seqs,$settings)=@_;
   my $minCrisprSize=$$settings{minCrisprSize}||20;
+
+  # TODO make threads here for createSubassembly and findRepeats
+  # TODO repeat over a few different window sizes
+  my $Q=Thread::Queue->new;
+  my $outQ=Thread::Queue->new;
+  my @thr;
+  $thr[$_]=threads->create(sub{
+    my($Q,$outQ,$minCrisprSize,$settings)=@_;
+    while(defined(my $tmp=$Q->dequeue)){
+      my($i,$seqid,$seq)=@$tmp;
+      my $start=$i;
+      my $stop=$start+$$settings{windowSize}-1;
+      logmsg "Looking for repeats at bp $i in $seqid" if($i%(1000*$$settings{stepSize})==0);
+
+      my $tmpIn=createSubassembly($seq,$start,$stop,$settings);
+      my $tmpRepeats=findRepeats($tmpIn,$minCrisprSize,$settings);
+      next if(!keys(%$tmpRepeats));
+      $outQ->enqueue(keys(%$tmpRepeats));
+    }
+    return 1;
+  },$Q,$outQ,$minCrisprSize,$settings) for(0..$$settings{numcpus}-1);
   
   my %drSeq; # direct repeat sequence possibilities
   while(my($seqid,$seq)=each(%$seqs)){
     my $contigLength=length($seq);
+    my @window=();
     for(my $i=0;$i<$contigLength;$i+=$$settings{stepSize}){
-      my $start=$i;
-      my $stop=$start+$$settings{windowSize}-1;
-      #next if($i<2900000 || $i>3180000);
-      logmsg "Looking for repeats at bp $i in $seqid" if($i%(1000*$$settings{stepSize})==0);
-
-      my $tmpIn=createSubassembly($seq,$start,$stop,$settings);
-      my $tmp=findRepeats($tmpIn,$minCrisprSize,$settings);
-      next if(!keys(%$tmp));
-      %drSeq=(%drSeq,%$tmp);
+      next if($i<2900000 || $i>3000000);
+      push(@window,[$i,$seqid,$seq]);
+      sleep 1 while($Q->pending>5000);
+      if(@window>$$settings{numcpus}*2){ # enqueue if it is twice CPUs
+        $Q->enqueue(@window);
+        @window=();
+        #logmsg "Enqueued. ".$Q->pending." in the queue";
+      }
     }
+    $Q->enqueue(@window);
+    @window=();
   }
+  # join and terminate
+  $Q->enqueue(undef) for(@thr);
+  $_->join for(@thr);
+
+  my @tmp=$outQ->extract(0,$outQ->pending);
+  $drSeq{$_}=1 for(@tmp);
 
   return [keys(%drSeq)];
 }
 
+# TODO avoid the hard drive for repeatMatch.
 sub findRepeats{
   my($file,$minCrisprSize,$settings)=@_;
-  my $tmpout="$$settings{tempdir}/repeat-match.out";
+  my $TID="TID".threads->tid;
+  my $tmpout="$$settings{tempdir}/repeat-match.$TID.out";
   my $repeatMatch=AKUtils::fullPathToExec("repeat-match");
   command("$repeatMatch -E -t -n $minCrisprSize '$file' 2>/dev/null | tail -n +3 | sort -k1n -k2n > $tmpout",{quiet=>1});
-  #command("$repeatMatch -E -t -n $minCrisprSize '$file' 2>/dev/null | tail -n +3 | sort -k1n -k2n > $tmpout",{quiet=>1});
   #if(`wc -l $tmpout | awk '{print \$1}'`>5){system("cat $tmpout");die;}
   return {} if(`wc -l $tmpout | awk '{print \$1}'`<1);
   my $tmp=AKUtils::readMfa($file);
@@ -234,8 +272,9 @@ sub findRepeats{
 sub drAlignmentScore{
   my($crispr,$contigs,$settings)=@_;
   
-  my $seqIn ="$$settings{tempdir}/in.fna";
-  my $seqOut="$$settings{tempdir}/out.fna";
+  my $TID="TID".threads->tid;
+  my $seqIn ="$$settings{tempdir}/in.$TID.fna";
+  my $seqOut="$$settings{tempdir}/out.$TID.fna";
 
   # make input for alignment
   my $i=1;
@@ -263,7 +302,8 @@ sub drAlignmentScore{
 
 sub createSubassembly{
   my($seq,$start,$stop,$settings)=@_;
-  my $subasm="$$settings{tempdir}/asm.$start.$stop.fasta";
+  my $TID="TID".threads->tid;
+  my $subasm="$$settings{tempdir}/asm.$TID.$start.$stop.fasta";
   open(ASM,">",$subasm) or die "Could not open sub assembly for writing: $!";
   print ASM join("_",">subasm",$start,$stop)."\n".substr($seq,$start,($stop-$start+1))."\n";
   close ASM;
@@ -276,6 +316,7 @@ sub createSubassembly{
 # TODO run each given command in a new thread
 sub command{
   my ($command,$settings)=@_;
+  my $TID="TID".threads->tid;
   my $refType=ref($command);
   if($refType eq "ARRAY"){
     my $err=0;
@@ -284,7 +325,7 @@ sub command{
     }
     return $err;
   }
-  logmsg "RUNNING COMMAND\n  $command" if(!$$settings{quiet});
+  logmsg "$TID RUNNING COMMAND\n  $command" if(!$$settings{quiet});
   system($command);
   if($?){
     my $msg="ERROR running command $command\n  With error code $?. Reason: $!\n  in subroutine ".(caller(1))[3];
