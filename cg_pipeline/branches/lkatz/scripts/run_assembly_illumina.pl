@@ -40,13 +40,13 @@ exit(main());
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
 	$$settings{assembly_min_contig_length} ||= 100; #TODO put this into config file
-  $$settings{numcpus}||=AKUtils::getNumCPUs();
 
 	die(usage()) if @ARGV < 1;
 
-	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'outfile=s', 'estimatedGenomeSize=i');
+	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'outfile=s', 'estimatedGenomeSize=i','numcpus=i');
 	GetOptions($settings, @cmd_options) or die;
   $$settings{estimatedGenomeSize}||=5000000; # default: 5 MB
+  $$settings{numcpus}||=AKUtils::getNumCPUs();
 
 	$$settings{outfile} ||= "$0.out.fasta";
 	$$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
@@ -223,7 +223,7 @@ sub runVelvetAssembly($$){
   # figure out how many threads will be used, even when considering memory
   # Estimate based on the first set of reads. This is just an estimate.
   # -109635 + 18977*ReadSize + 86326*GenomeSize + 233353*NumReads - 51092*K
-  my $readLength=`head -6 $$fastqfiles[0] | tail -1 | wc -c`+0;
+  my $readLength=`head -6 $$fastqfiles[0] | tail -1 | wc -c`+0; # look at the second read
   my $numReads=`wc -l $$fastqfiles[0]`/4;
   my $memoryReqPerThread=-109635 + 18977*$readLength + 86326*$$settings{estimatedGenomeSize}/1000000 + 233353*$numReads/1000000 - 51092* sum(qw(19+21+23+25+27+29+31))/7;
   $memoryReqPerThread*=1024;

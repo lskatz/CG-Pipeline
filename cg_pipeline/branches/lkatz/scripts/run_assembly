@@ -38,8 +38,9 @@ sub main() {
 
 	die("Usage: $0 input.sff [, input2.sff, ... inputN.fastq, ... inputM.fasta] [-o output.fasta] [-R references.mfa] [-t tempdir]\n  Input files can be sff, fastq, and fasta.  *.fasta.qual files are considered as the relevant quality files") if @ARGV < 1;
 
-	my @cmd_options = ('Reference=s@', 'keep', 'tempdir=s', 'output=s', 'debug');
+	my @cmd_options = ('Reference=s@', 'keep', 'tempdir=s', 'output=s', 'debug','numcpus=i');
 	GetOptions($settings, @cmd_options) or die;
+	$$settings{numcpus}||=AKUtils::getNumCPUs();
 
 	$$settings{assembly_min_contig_length} ||= 500;
 	$$settings{outfile} = $$settings{output};
@@ -108,7 +109,7 @@ sub main() {
         my $illumina_basename=File::Spec->rel2abs("$$settings{tempdir}/$ref_name/illumina");
         mkdir($illumina_basename) if(!-d $illumina_basename);
         my $outIllumina="$illumina_basename/assembly.fasta";
-        system("run_assembly_illumina.pl ".join(" ",@{ $$fastaqualfiles{illumina} })." -R $ref_file -t $illumina_basename -o $illumina_basename/assembly.fasta 2>&1");
+        system("run_assembly_illumina.pl ".join(" ",@{ $$fastaqualfiles{illumina} })." -R $ref_file -t $illumina_basename -o $illumina_basename/assembly.fasta --numcpus=$$settings{numcpus} 2>&1");
         die "Could not perform illumina assembly" if $?;
         push(@ref_assembly,$outIllumina);
       }
