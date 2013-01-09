@@ -44,7 +44,6 @@ exit(main());
 
 sub main() {
   my $settings={
-    numcpus=>getNumCPUs(),
     #poly=>1, # number of reads per group (1=SE, 2=paired end)
     qualOffset=>33,
     # trimming
@@ -55,7 +54,8 @@ sub main() {
     min_length=>62,# twice kmer length sounds good
   };
   
-  GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter notrim debug qualOffset=i));
+  GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter notrim debug qualOffset=i numcpus=i));
+  $$settings{numcpus}||=getNumCPUs();
   
   my $infile=$$settings{infile} or die "Error: need an infile\n".usage($settings);
   my $outfile=$$settings{outfile} or die "Error: need an outfile\n".usage($settings);
@@ -398,6 +398,7 @@ sub usage{
   -quieter for somewhat quiet mode (use 1>/dev/null for totally quiet)
   --notrim to skip trimming of the reads. Useful for assemblers that require equal read lengths.
   -qual 64 to use an offset of 64 instead of 33(default).
+  --numcpus 1 or --numcpus 2 for single or multithreaded. Default: $$settings{numcpus}
 
   Use phred scores (e.g. 20 or 30) or length in base pairs if it says P or L, respectively
   --min_quality P             # trimming
