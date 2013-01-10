@@ -165,23 +165,26 @@ sub findSmallTandemRepeats{
   my($seqs,$settings)=@_;
   my $minCrisprSize=$$settings{minCrisprSize}||20;
 
-  # TODO make threads here for createSubassembly and findRepeats
   # TODO repeat over a few different window sizes
   my $Q=Thread::Queue->new;
   my $outQ=Thread::Queue->new;
   my @thr;
   $thr[$_]=threads->create(sub{
     my($Q,$outQ,$minCrisprSize,$settings)=@_;
+    my %seen;
     while(defined(my $tmp=$Q->dequeue)){
       my($i,$seqid,$seq)=@$tmp;
       my $start=$i;
       my $stop=$start+$$settings{windowSize}-1;
       logmsg "Looking for repeats at bp $i in $seqid" if($i%(1000*$$settings{stepSize})==0);
 
-      my $tmpIn=createSubassembly($seq,$start,$stop,$settings);
-      my $tmpRepeats=findRepeats($tmpIn,$minCrisprSize,$settings);
+      my $subAsm=substr($seq,$start,$stop-$start+1);
+      my $tmpRepeats=findRepeats($subAsm,$minCrisprSize,$settings);
       next if(!keys(%$tmpRepeats));
-      $outQ->enqueue(keys(%$tmpRepeats));
+      for(keys(%$tmpRepeats)){
+        next if($seen{$_}++);
+        $outQ->enqueue($_);
+      }
     }
     return 1;
   },$Q,$outQ,$minCrisprSize,$settings) for(0..$$settings{numcpus}-1);
@@ -191,13 +194,14 @@ sub findSmallTandemRepeats{
     my $contigLength=length($seq);
     my @window=();
     for(my $i=0;$i<$contigLength;$i+=$$settings{stepSize}){
-      next if($i<2900000 || $i>3000000);
+      #next if($i<2900000 || $i>3000000);
       push(@window,[$i,$seqid,$seq]);
-      sleep 1 while($Q->pending>5000);
-      if(@window>$$settings{numcpus}*2){ # enqueue if it is twice CPUs
+      sleep 1 while($Q->pending>($$settings{numcpus}*1000));
+      #logmsg "".$Q->pending." ".$outQ->pending if($i%100==0);
+      if(@window>$$settings{numcpus}*10){ # enqueue if it is 10x CPUs
         $Q->enqueue(@window);
         @window=();
-        #logmsg "Enqueued. ".$Q->pending." in the queue";
+        logmsg "Enqueued. ".$Q->pending." ".$outQ->pending;
       }
     }
     $Q->enqueue(@window);
@@ -207,7 +211,7 @@ sub findSmallTandemRepeats{
   $Q->enqueue(undef) for(@thr);
   $_->join for(@thr);
 
-  my @tmp=$outQ->extract(0,$outQ->pending);
+  my @tmp=($outQ->pending)?$outQ->extract(0,$outQ->pending):();
   $drSeq{$_}=1 for(@tmp);
 
   return [keys(%drSeq)];
@@ -215,22 +219,19 @@ sub findSmallTandemRepeats{
 
 # TODO avoid the hard drive for repeatMatch.
 sub findRepeats{
-  my($file,$minCrisprSize,$settings)=@_;
+  my($subAsm,$minCrisprSize,$settings)=@_;
   my $TID="TID".threads->tid;
-  my $tmpout="$$settings{tempdir}/repeat-match.$TID.out";
+  my $tmpfifo="$$settings{tempdir}/fifo.$TID.tmp";
   my $repeatMatch=AKUtils::fullPathToExec("repeat-match");
-  command("$repeatMatch -E -t -n $minCrisprSize '$file' 2>/dev/null | tail -n +3 | sort -k1n -k2n > $tmpout",{quiet=>1});
-  #if(`wc -l $tmpout | awk '{print \$1}'`>5){system("cat $tmpout");die;}
-  return {} if(`wc -l $tmpout | awk '{print \$1}'`<1);
-  my $tmp=AKUtils::readMfa($file);
-  my(undef,$seq)=each(%$tmp);
+  system("mkfifo $tmpfifo") if(!-e $tmpfifo);
+  my $tmpout=command("echo -e \">seq\n$subAsm\" > $tmpfifo & $repeatMatch -E -t -n $minCrisprSize $tmpfifo 2>/dev/null | tail -n +3 | sort -k1n -k2n",{quiet=>1,stdout=>1});
+  return {} if($tmpout=~/^\s*$/);
   
   # read the repeats file
   my %repeat;
-  open(REPEAT,"<",$tmpout) or die "Internal error: $!";
-  while(<REPEAT>){
-    s/^\s+|\s+$//g; # trim
-    my($start1,$start2,$length)=split /\s+/;
+  while($tmpout=~/\s*(.+)\s*\n/g){
+    #s/^\s+|\s+$//g; # trim
+    my($start1,$start2,$length)=split /\s+/, $1;
     next if($length>$$settings{maxCrisprSize});
     if($start2=~/(\d+)r/){ # revcom
       $start2=$1-1; # base 1 to base 0
@@ -238,12 +239,6 @@ sub findRepeats{
     } else { # not revcom
       push(@{ $repeat{$start1} },[$start2,$length]);
     }
-  }
-
-  # add the start1 site as a repeat too
-  while(my($start1,$repeatList)=each(%repeat)){
-    my $length=abs($$repeatList[0][1]);
-    #push(@{ $repeat{$start1} },[$start1,$length]);
   }
 
   # convert coordinates to sequences
@@ -255,11 +250,11 @@ sub findRepeats{
       if($length<0){
         my $tmp=$start;
         $start=$start-abs($length)+1;
-        $subseq=substr($seq,$start,abs($length));
+        $subseq=substr($subAsm,$start,abs($length));
         $subseq=~tr/ATCGatcg/TAGCtagc/;
         $subseq=reverse($subseq);
       } else {
-        $subseq=substr($seq,$start,abs($length));
+        $subseq=substr($subAsm,$start,abs($length));
       }
       $drSeq{$subseq}++;
     }
@@ -300,22 +295,14 @@ sub drAlignmentScore{
   return $alnScore;
 }
 
-sub createSubassembly{
-  my($seq,$start,$stop,$settings)=@_;
-  my $TID="TID".threads->tid;
-  my $subasm="$$settings{tempdir}/asm.$TID.$start.$stop.fasta";
-  open(ASM,">",$subasm) or die "Could not open sub assembly for writing: $!";
-  print ASM join("_",">subasm",$start,$stop)."\n".substr($seq,$start,($stop-$start+1))."\n";
-  close ASM;
-  return $subasm;
-}
-
 # run a command
 # settings params: warn_on_error (boolean)
+#                  stdout to return stdout instead of error code
 # returns error code
 # TODO run each given command in a new thread
 sub command{
   my ($command,$settings)=@_;
+  my $return;
   my $TID="TID".threads->tid;
   my $refType=ref($command);
   if($refType eq "ARRAY"){
@@ -326,13 +313,18 @@ sub command{
     return $err;
   }
   logmsg "$TID RUNNING COMMAND\n  $command" if(!$$settings{quiet});
-  system($command);
+  if($$settings{stdout}){
+    $return=`$command`;
+  } else {
+    system($command);
+    $return=$?;
+  }
   if($?){
     my $msg="ERROR running command $command\n  With error code $?. Reason: $!\n  in subroutine ".(caller(1))[3];
     logmsg $msg if($$settings{warn_on_error});
     die $msg if(!$$settings{warn_on_error});
   }
-  return $?;
+  return $return;
 }
 
 
