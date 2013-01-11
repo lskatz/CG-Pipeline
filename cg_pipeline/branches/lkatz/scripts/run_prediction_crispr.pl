@@ -169,25 +169,7 @@ sub findSmallTandemRepeats{
   my $Q=Thread::Queue->new;
   my $outQ=Thread::Queue->new;
   my @thr;
-  $thr[$_]=threads->create(sub{
-    my($Q,$outQ,$minCrisprSize,$settings)=@_;
-    my %seen;
-    while(defined(my $tmp=$Q->dequeue)){
-      my($i,$seqid,$seq)=@$tmp;
-      my $start=$i;
-      my $stop=$start+$$settings{windowSize}-1;
-      logmsg "Looking for repeats at bp $i in $seqid" if($i%(1000*$$settings{stepSize})==0);
-
-      my $subAsm=substr($seq,$start,$stop-$start+1);
-      my $tmpRepeats=findRepeats($subAsm,$minCrisprSize,$settings);
-      next if(!keys(%$tmpRepeats));
-      for(keys(%$tmpRepeats)){
-        next if($seen{$_}++);
-        $outQ->enqueue($_);
-      }
-    }
-    return 1;
-  },$Q,$outQ,$minCrisprSize,$settings) for(0..$$settings{numcpus}-1);
+  $thr[$_]=threads->create(\&findRepeatsWorker,$Q,$outQ,$minCrisprSize,$settings) for(0..$$settings{numcpus}-1);
   
   my %drSeq; # direct repeat sequence possibilities
   while(my($seqid,$seq)=each(%$seqs)){
@@ -196,12 +178,15 @@ sub findSmallTandemRepeats{
     for(my $i=0;$i<$contigLength;$i+=$$settings{stepSize}){
       #next if($i<2900000 || $i>3000000);
       push(@window,[$i,$seqid,$seq]);
-      sleep 1 while($Q->pending>($$settings{numcpus}*1000));
+      while($Q->pending>($$settings{numcpus}*1000)){
+        logmsg "Sleeping";
+        sleep 1;
+      }
       #logmsg "".$Q->pending." ".$outQ->pending if($i%100==0);
       if(@window>$$settings{numcpus}*10){ # enqueue if it is 10x CPUs
         $Q->enqueue(@window);
         @window=();
-        logmsg "Enqueued. ".$Q->pending." ".$outQ->pending;
+        #logmsg "Enqueued. ".$Q->pending." ".$outQ->pending;
       }
     }
     $Q->enqueue(@window);
@@ -217,7 +202,26 @@ sub findSmallTandemRepeats{
   return [keys(%drSeq)];
 }
 
-# TODO avoid the hard drive for repeatMatch.
+sub findRepeatsWorker{
+  my($Q,$outQ,$minCrisprSize,$settings)=@_;
+  my %seen;
+  while(defined(my $tmp=$Q->dequeue)){
+    my($i,$seqid,$seq)=@$tmp;
+    my $start=$i;
+    my $stop=$start+$$settings{windowSize}-1;
+    logmsg "Looking for repeats at bp $i in $seqid" if($i%(1000*$$settings{stepSize})==0);
+
+    my $subAsm=substr($seq,$start,$stop-$start+1);
+    my $tmpRepeats=findRepeats($subAsm,$minCrisprSize,$settings);
+    next if(!keys(%$tmpRepeats));
+    for(keys(%$tmpRepeats)){
+      next if($seen{$_}++);
+      $outQ->enqueue($_);
+    }
+  }
+  return 1;
+}
+
 sub findRepeats{
   my($subAsm,$minCrisprSize,$settings)=@_;
   my $TID="TID".threads->tid;
