@@ -18,6 +18,7 @@ use Getopt::Long;
 use File::Basename;
 use File::Copy qw/copy/;
 use Bio::AlignIO;
+use POSIX qw/mkfifo/;
 
 use threads;
 use Thread::Queue;
@@ -36,6 +37,7 @@ sub main{
   $$settings{windowSize}||=$$settings{maxCrisprSize}*3;
   $$settings{stepSize}||=$$settings{windowSize}-2*$$settings{maxCrisprSize};
   $$settings{numcpus}||=AKUtils::getNumCPUs();
+  $$settings{repeatMatch}=AKUtils::fullPathToExec("repeat-match");
   die usage($settings) if(@ARGV<1 || $$settings{help});
   my $outfile=$$settings{outfile} || "$0.gff";
   my $infile=$ARGV[0];
@@ -204,6 +206,9 @@ sub findSmallTandemRepeats{
 
 sub findRepeatsWorker{
   my($Q,$outQ,$minCrisprSize,$settings)=@_;
+  my $TID="TID".threads->tid;
+  my $tmpfifo="$$settings{tempdir}/fifo.$TID.tmp";
+  mkfifo($tmpfifo,'0500') if(!-e $tmpfifo);
   my %seen;
   while(defined(my $tmp=$Q->dequeue)){
     my($i,$seqid,$seq)=@$tmp;
@@ -226,14 +231,13 @@ sub findRepeats{
   my($subAsm,$minCrisprSize,$settings)=@_;
   my $TID="TID".threads->tid;
   my $tmpfifo="$$settings{tempdir}/fifo.$TID.tmp";
-  my $repeatMatch=AKUtils::fullPathToExec("repeat-match");
-  system("mkfifo $tmpfifo") if(!-e $tmpfifo);
-  my $tmpout=command("echo -e \">seq\n$subAsm\" > $tmpfifo & $repeatMatch -E -t -n $minCrisprSize $tmpfifo 2>/dev/null | tail -n +3 | sort -k1n -k2n",{quiet=>1,stdout=>1});
-  return {} if($tmpout=~/^\s*$/);
+  my $tmpout=command("echo -e \">seq\n$subAsm\" > $tmpfifo & $$settings{repeatMatch} -E -t -n $minCrisprSize $tmpfifo 2>/dev/null",{quiet=>1,stdout=>1});
   
   # read the repeats file
   my %repeat;
+  my $i=0;
   while($tmpout=~/\s*(.+)\s*\n/g){
+    next if($i++<2);
     #s/^\s+|\s+$//g; # trim
     my($start1,$start2,$length)=split /\s+/, $1;
     next if($length>$$settings{maxCrisprSize});
