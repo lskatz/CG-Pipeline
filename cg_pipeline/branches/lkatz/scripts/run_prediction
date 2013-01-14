@@ -131,6 +131,7 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 
   # TODO an extra blast here for IS elements and merge with $blast_predictions before making unified cds prediction. Database should be short terminal inverted repeat sequences
   # blastall -p blastn -W 7 -e 1e-5 -F F
+  # TODO correction: set up database such that IS elements are combined with sprot
 
 	# Combine and index predictions by strand, stop
 	foreach my $pred_set ($genemark_predictions, $glimmer_predictions, $blast_predictions) {
@@ -231,9 +232,49 @@ RNA:
     }
   }
 
-  #logmsg scalar(keys(%unified_predictions))." predictions made."; #LK
+  CRISPR:
+  my $crispr_predictions = getCrisprPredictions($input_seqs,$settings);
+  foreach my $seqname (keys %$crispr_predictions){
+    foreach my $pred (@{$$crispr_predictions{$seqname}}) {
+      $unified_predictions{$seqname}->{$$pred{strand}}->{$$pred{stop}} = $pred;
+    }
+  }
 
 	return \%unified_predictions;
+}
+
+sub getCrisprPredictions{
+  my($infile,$settings)=@_;
+  my $gff="$$settings{tempdir}/crispr.gff";
+
+  system("run_prediction_crispr.pl '$infile' -o '$gff' ") if(!-e $gff);
+  die if $?;
+
+  my $predictions={};
+  open(GFF,$gff) or die "Could not open crispr gff $gff: $!";
+  while(<GFF>){
+    next if(/^#/);
+    chomp;
+    my $attributes;
+    my $f={};
+    # hi lo stop start seqname strand type predictor 
+    ($$f{seqname},$$f{predictor},$$f{type},$$f{lo},$$f{hi},$$f{score},$$f{strand},undef,$attributes)=split /\t/;
+    if($$f{strand}=~/\+|\./){
+      $$f{start}=min($$f{lo},$$f{hi});
+      $$f{stop} =max($$f{lo},$$f{hi});
+    } else {
+      $$f{start}=max($$f{lo},$$f{hi});
+      $$f{stop} =min($$f{lo},$$f{hi});
+    }
+    my @attribute=split(/;/,$attributes);
+    for(@attribute){
+      my($key,$value)=split /=/;
+      $$f{$key}=$value;
+    }
+    push(@{ $$predictions{$$f{seqname}} },$f);
+  }
+  close GFF;
+  return $predictions;
 }
 
 sub generateGenBankFile($$$) {
