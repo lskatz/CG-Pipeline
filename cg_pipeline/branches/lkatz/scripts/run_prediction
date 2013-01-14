@@ -84,7 +84,6 @@ sub main() {
   return 0;
 }
 
-# TODO put stop codons in all frames around each input seq
 sub loadInputs($$) {
 	my ($input_files, $ref_files) = @_;
 	my ($input_seqs, $ref_seqs) = ({}, {});
