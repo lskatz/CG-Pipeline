@@ -2,6 +2,7 @@
 
 # run-prediction: Perform standard prediction protocol operations on input FASTA file(s)
 # Author: Andrey Kislyuk (kislyuk@gatech.edu)
+# Author: Lee Katz (lkatz@cdc.gov)
 
 # TODO: investigate integration of Genomix, Jigsaw, etc.
 
@@ -45,11 +46,11 @@ exit(main());
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
 
-	my $usage = "$0 input.mfa [, input2.mfa, ...] -strain_name=name [-tag_prefix=prefix] [-classification=classification] [-R references.mfa] [-C workdir] [-blast_db=db] [-o=output_filename.gb]";
+	my $usage = "$0 input.mfa [, input2.mfa, ...] -strain_name=name [-tag_prefix=prefix] [-classification=classification] [-R references.mfa] [-C workdir] [-blast_db=db] [-crisprPrediction] [-o=output_filename.gb]";
 
 	die("Usage: $usage\n") if @ARGV < 1;
 
-	my @cmd_options = ('tempdir=s','ChangeDir=s', 'Reference=s@', 'keep', 'blast_db=s', 'outfile=s', 'strain_name=s', 'tag_prefix=s', 'classification=s');
+	my @cmd_options = ('tempdir=s','ChangeDir=s', 'Reference=s@', 'keep', 'blast_db=s', 'outfile=s', 'strain_name=s', 'tag_prefix=s', 'classification=s', 'crisprPrediction');
 	GetOptions($settings, @cmd_options) or die;
 	die("Argument strain_name is required. Usage: $usage\n") unless defined $$settings{strain_name};
 	die("Argument classification is required. Usage: $usage\n") unless defined $$settings{classification};
@@ -232,10 +233,12 @@ RNA:
   }
 
   CRISPR:
-  my $crispr_predictions = getCrisprPredictions($input_seqs,$settings);
-  foreach my $seqname (keys %$crispr_predictions){
-    foreach my $pred (@{$$crispr_predictions{$seqname}}) {
-      $unified_predictions{$seqname}->{$$pred{strand}}->{$$pred{stop}} = $pred;
+  if($$settings{crisprPrediction}){
+    my $crispr_predictions = getCrisprPredictions($input_seqs,$settings);
+    foreach my $seqname (keys %$crispr_predictions){
+      foreach my $pred (@{$$crispr_predictions{$seqname}}) {
+        $unified_predictions{$seqname}->{$$pred{strand}}->{$$pred{stop}} = $pred;
+      }
     }
   }
 
@@ -249,7 +252,8 @@ sub getCrisprPredictions{
   system("run_prediction_crispr.pl '$infile' -o '$gff' ") if(!-e $gff);
   die if $?;
 
-  my $predictions={};
+  my $predictions={}; # what will be returned
+  my $crispr={}; # in order to get direct repeats etc
   open(GFF,$gff) or die "Could not open crispr gff $gff: $!";
   while(<GFF>){
     next if(/^#/);
@@ -258,6 +262,7 @@ sub getCrisprPredictions{
     my $f={};
     # hi lo stop start seqname strand type predictor 
     ($$f{seqname},$$f{predictor},$$f{type},$$f{lo},$$f{hi},$$f{score},$$f{strand},undef,$attributes)=split /\t/;
+    $$f{predictor}=[$$f{predictor}]; # this is an array because it can be multiple predictors
     if($$f{strand}=~/\+|\./){
       $$f{start}=min($$f{lo},$$f{hi});
       $$f{stop} =max($$f{lo},$$f{hi});
@@ -270,9 +275,21 @@ sub getCrisprPredictions{
       my($key,$value)=split /=/;
       $$f{$key}=$value;
     }
-    push(@{ $$predictions{$$f{seqname}} },$f);
+
+    # classify this particular crispr subfeature
+    die "ERROR: no ID or Parent attribute was found in the GFF line ".Dumper($f) if(!$$f{ID} && !$$f{Parent});
+    if($$f{type} =~/CRISPR/i){
+      $$f{DR}=[];
+      $$f{Spacer}=[];
+      $$crispr{$$f{ID}}=$f;
+    } elsif ($$f{type}=~/DirectRepeat/i){
+      push(@{ $$crispr{$$f{Parent}}{DR} },[$$f{lo},$$f{hi}]);
+    } elsif ($$f{type}=~/Spacer/i){
+      push(@{ $$crispr{$$f{Parent}}{Spacer} },[$$f{lo},$$f{hi}]);
+    }
   }
   close GFF;
+  push(@{ $$predictions{$$_{seqname}} },$_) for(values(%$crispr));
   return $predictions;
 }
 
@@ -299,6 +316,9 @@ sub generateGenBankFile($$$) {
 	my $rrna_tag_factory = CGPipeline::TagFactory->new({factory_type => "draft_orf_tagger",
 		strain_name => $$settings{strain_name},
 		tag_prefix => $$settings{tag_prefix}.'r'});
+	my $crispr_tag_factory = CGPipeline::TagFactory->new({factory_type => "draft_orf_tagger",
+		strain_name => $$settings{strain_name},
+		tag_prefix => $$settings{tag_prefix}.'c'});
 
 	foreach my $seqname (sort keys %$seqs) {
 		my $gb_seqname = $seqname; $gb_seqname =~ s/\s+/_/g;
@@ -369,7 +389,17 @@ sub generateGenBankFile($$$) {
 				$pred_feature->add_tag_value('note', 'Predictors: '.join(', ', @{$$pred{predictor}}));
 				$pred_feature->add_tag_value('product', $$pred{rrna_type});
 				# TODO: Finish me
-			} else { logmsg "Internal error"; die "Internal error: cannot determine feature type" }
+			} elsif ($$pred{type} eq 'CRISPR') {
+        my $locus_tag = $crispr_tag_factory->nextTag();
+				$pred_gene_feature->add_tag_value('locus_tag', $locus_tag);
+				$pred_feature->add_tag_value('locus_tag', $locus_tag);
+				$pred_feature->add_tag_value('evidence', 'predicted');
+				$pred_feature->add_tag_value('note', 'Predictors: '.join(', ', @{$$pred{predictor}}));
+        my $DRstr;
+        $DRstr.="$$_[0]..$$_[0], " for(@{$$pred{DR}});
+        $DRstr=~s/,\s*$//;
+				$pred_feature->add_tag_value('note', "Direct repeats: $DRstr");
+      }else { die "Internal error: cannot understand feature type $$pred{type}" }
 
 			$gbseq->add_SeqFeature($pred_gene_feature);
 			$gbseq->add_SeqFeature($pred_feature);
