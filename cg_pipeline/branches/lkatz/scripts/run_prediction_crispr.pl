@@ -33,7 +33,7 @@ sub main{
     minCrisprSize=>23,
     maxCrisprSize=>55,
   };
-  GetOptions($settings,qw(outfile=s help windowSize=i stepSize=i tempdir=s minCrisprSize=i maxCrisprSize=i));
+  GetOptions($settings,qw(outfile=s help windowSize=i stepSize=i tempdir=s minCrisprSize=i maxCrisprSize=i verbose));
   $$settings{windowSize}||=$$settings{maxCrisprSize}*3;
   $$settings{stepSize}||=$$settings{windowSize}-2*$$settings{maxCrisprSize};
   $$settings{numcpus}||=AKUtils::getNumCPUs();
@@ -53,40 +53,10 @@ sub main{
 
   # Finding the actual identified repeats is fast
   my $positions=findSequencePositionsInGenome($smallTandemRepeatSeqs,$contigs,$settings);
-  $positions=removeOverlappingPositions($positions,$settings);
   my $gff=positionsToGff($positions,$contigs,$settings);
   copy($gff,$outfile);
   logmsg "Finished. GFF is in $outfile";
   return 0;
-}
-
-sub removeOverlappingPositions{
-  my($positions,$settings)=@_;
-  my %nonOverlapping;
-  my %crisprStartStop;
-  while(my($sequence,$drArr)=each(%$positions)){
-    my @dr=sort({return 0 if($$a[0] ne $$b[0]); $$a[1] <=> $$b[1]} @$drArr);
-    my $numDr=@dr;
-    my $lo=$dr[0][1];
-    my $hi=$dr[$numDr-1][2];
-
-    # if this lo/hi is in another crispr, then don't use it
-    my $isGood=1;
-    for(values(%crisprStartStop)){
-      my($contig,$start,$stop)=@$_;
-      # inside
-      $isGood=0 if($lo>=$start && $hi<=$stop);
-      $isGood=0 if($lo<=$stop && $lo=>$start);
-      $isGood=0 if($hi<=$stop && $hi=>$start);
-    }
-    next if(!$isGood);
-    
-    # PASSED: include this in the positions hash
-    $crisprStartStop{$sequence}=[$dr[0][0],$lo,$hi];
-    $nonOverlapping{$sequence}=$drArr;
-  }
-
-  return \%nonOverlapping;
 }
 
 sub filterRepeatSeqs{
@@ -149,13 +119,24 @@ sub positionsToGff{
     $score=$score*.98 if($numDrs<5); # less confidence for few repeats
     $score=$score*.95 if($numDrs<4); # less confidence for few repeats
     $score=$score*.95 if($numDrs<3); # less confidence for few repeats
-    my $alnScore=drAlignmentScore($crispr,$contigs,$settings);
-    $score=$score*$alnScore;
     my $drLength=$$crispr[0][2]-$$crispr[0][1];
     # penalize for each out-of whack DR/spacer ratio
+    my @spacerLength;
     for(my $i=0;$i<@$crispr-1;$i++){
       my $spacerLength=$$crispr[$i+1][1]-1-$$crispr[$i][2]+1;
       $score=$score*.6 if($spacerLength>2.5*$drLength || $spacerLength<0.6*$drLength);
+      push(@spacerLength,$spacerLength);
+    }
+
+    # see how similar the DRs are to each other and how similar the spacers are
+    if(stdev(\@spacerLength)>9){ # spacers are pretty different; no need for MSA
+      $score=$score*drAlignmentScore($crispr,$contigs,$settings);
+    } elsif($spacerLength[0]>500 || ($spacerLength[1] && $spacerLength[1]>500)){
+      $score*=.8; # spacers more than even a couple hundred are rare, I'll bet
+    } else { # spacers are pretty similar--do an alignment
+      my($alnScore,$spacerScore)=drAlignmentScore($crispr,$contigs,$settings);
+      $score=$score*$alnScore;
+      $score=$score*$spacerScore;
     }
 
     # don't accept low-quality CRISPRs. This is very much a threshold that needs to be tested.
@@ -215,7 +196,6 @@ sub findSequencePositionsInGenome{
   }
   my $exhaustiveDrPos=pickUpMoreDrs(\%drPos,$contigs,$settings);
   return $exhaustiveDrPos;
-  return \%drPos;
 }
 
 sub pickUpMoreDrs{
@@ -235,7 +215,7 @@ sub pickUpMoreDrs{
     my @newDrPos;
     my $blsResults=command("echo '$drSeq'|legacy_blast.pl blastall -p blastn -d $db -e 0.05 -W 7 -F F -m 8 -a $$settings{numcpus}",{stdout=>1,quiet=>1});
     my @blsResults=split(/\n/,$blsResults);
-    logmsg "".scalar(@blsResults)."\t$drSeq";
+    logmsg "".scalar(@blsResults)."\t$drSeq" if($$settings{verbose});
     for(@blsResults){
       my($query,$hit,$identity,$length,$mismatch,$gap,$qStart,$qStop,$sStart,$sStop,$evalue,$score)=split(/\t/,$_);
       next if($length<$$settings{minCrisprSize} || $gap>0 || $mismatch>1 || $sStart>$sStop);
@@ -299,7 +279,8 @@ sub findRepeatsWorker{
     my($i,$seqid,$seq)=@$tmp;
     my $start=$i;
     my $stop=$start+$$settings{windowSize}-1;
-    logmsg "Looking for repeats at bp $i in $seqid" if($i%(1000*$$settings{stepSize})==0);
+    #logmsg "Looking for repeats at bp $i in $seqid" if($i%(1000*$$settings{stepSize})==0);
+    logmsg "Looking for repeats at bp $i in $seqid" if($i % (1000*$$settings{stepSize})==0);
 
     my $subAsm=substr($seq,$start,$stop-$start+1);
     my $tmpRepeats=findRepeats($subAsm,$minCrisprSize,$settings);
@@ -362,28 +343,68 @@ sub drAlignmentScore{
   my $TID="TID".threads->tid;
   my $seqIn ="$$settings{tempdir}/in.$TID.fna";
   my $seqOut="$$settings{tempdir}/out.$TID.fna";
+  my $spacersIn="$$settings{tempdir}/spacersin.$TID.fna";
+  my $spacersOut="$$settings{tempdir}/spacersout.$TID.fna";
+  my $bl2seqI="$$settings{tempdir}/bl2seqI.$TID.fna";
+  my $bl2seqJ="$$settings{tempdir}/bl2seqJ.$TID.fna";
+
+  # input for bl2seq
+  open(BL2SEQI,">",$bl2seqI) or die "Could not open $bl2seqI:$!";
+  open(BL2SEQJ,">",$bl2seqJ) or die "Could not open $bl2seqJ:$!";
 
   # make input for alignment
-  my $i=1;
   open(FNA,">",$seqIn) or die "Could not open $seqIn:$!";
-  for(@$crispr){
+  open(SPACER,">",$spacersIn) or die "Could not open $spacersIn:$!";
+  for(my $i=0;$i<@$crispr;$i++){
     # get all start/stop from @$crispr
-    my($seqname,$start,$stop)=@$_;
+    my($seqname,$start,$stop)=@{$$crispr[$i]};
     # get substr/subseq
     my $sequence=substr($$contigs{$seqname},$start,$stop-$start+1);
     print FNA ">seq$i\n$sequence\n";
+
+    if($i+1<@$crispr){
+      my $length=($$crispr[$i+1][1]-1)-$stop;
+      my $spacerSequence=substr($$contigs{$seqname},$stop,$length);
+      print SPACER ">spacer$i\n$spacerSequence\n";
+      #logmsg "Making MSAs and finding \% identity for DRs and spacers:\n$sequence\n$spacerSequence" if($i==0 && $$settings{verbose});
+      print BL2SEQI ">spacer$i\n$spacerSequence\n" if($i==0);
+      print BL2SEQJ ">spacer$i\n$spacerSequence\n" if($i==1);
+    }
     $i++;
   }
+  close SPACER;
   close FNA;
+  close BL2SEQI; close BL2SEQJ;
 
   # make multiple sequence alignment
   my $muscle=AKUtils::fullPathToExec("muscle");
-  command("$muscle -in $seqIn -out $seqOut -quiet",{quiet=>1});
+  command("$muscle -in $seqIn -out $seqOut -diags1 -quiet",{quiet=>1});
 
   # create an alignment score
   my $aln=Bio::AlignIO->new(-file=>$seqOut)->next_aln;
   my $identity=$aln->percentage_identity/100;
-  my $alnScore=sprintf("%0.2f",1-((1-$identity)*2));
+  my $alnScore=sprintf("%0.2f",1-(1-$identity));
+
+  # if requesting two values, then calc the spacer score
+  if(wantarray){
+    # there is no alignment to be had if there is only one spacer
+    return ($alnScore,1) if(-s $bl2seqJ < 1);
+
+    # if the first two seqs are really different, then it's fine. Return spacer score of 1
+    my $bl2seqRes=command("legacy_blast.pl bl2seq -i $bl2seqI -j $bl2seqJ -p blastn -W 7 -D 1",{quiet=>1,stdout=>1});
+    my $bl2seqIdentity=`echo '$bl2seqRes'|grep -v '^#'|head -n 1|cut -f 3`/100;
+    my $bl2seqLength=`echo '$bl2seqRes'|grep -v '^#'|head -n 1|cut -f 4`+0;
+    return ($alnScore,1) if($bl2seqIdentity<0.9 || $bl2seqLength<20);
+
+    # bl2seq shows that the first two spacers have high identity. Do MSA with all spacers to confirm.
+    command("$muscle -in $spacersIn -out $spacersOut -diags -maxiters 1 -quiet",{quiet=>1});
+    $aln=Bio::AlignIO->new(-file=>$spacersOut)->next_aln;
+    my $spacerIdentity=$aln->percentage_identity/100;
+    my $spacerScore=sprintf("%0.2f",(1-$spacerIdentity/5));
+    return ($alnScore,$spacerScore);
+  }
+
+  # if no array wanted, then it's just the DR score
   return $alnScore;
 }
 
@@ -420,6 +441,31 @@ sub command{
   return $return;
 }
 
+sub average{
+        my($data) = @_;
+        if (not @$data) {
+                die("Empty array\n");
+        }
+        my $total = 0;
+        foreach (@$data) {
+                $total += $_;
+        }
+        my $average = $total / @$data;
+        return $average;
+}
+sub stdev{
+        my($data) = @_;
+        if(@$data == 1){
+                return 0;
+        }
+        my $average = &average($data);
+        my $sqtotal = 0;
+        foreach(@$data) {
+                $sqtotal += ($average-$_) ** 2;
+        }
+        my $std = ($sqtotal / (@$data-1)) ** 0.5;
+        return $std;
+}
 
 sub usage{
   my($settings)=@_;
