@@ -52,12 +52,41 @@ sub main{
   my $smallTandemRepeatSeqs=findSmallTandemRepeats($contigs,$settings);
 
   # Finding the actual identified repeats is fast
-  $smallTandemRepeatSeqs=filterRepeatSeqs($smallTandemRepeatSeqs,$settings);
   my $positions=findSequencePositionsInGenome($smallTandemRepeatSeqs,$contigs,$settings);
+  $positions=removeOverlappingPositions($positions,$settings);
   my $gff=positionsToGff($positions,$contigs,$settings);
   copy($gff,$outfile);
   logmsg "Finished. GFF is in $outfile";
   return 0;
+}
+
+sub removeOverlappingPositions{
+  my($positions,$settings)=@_;
+  my %nonOverlapping;
+  my %crisprStartStop;
+  while(my($sequence,$drArr)=each(%$positions)){
+    my @dr=sort({return 0 if($$a[0] ne $$b[0]); $$a[1] <=> $$b[1]} @$drArr);
+    my $numDr=@dr;
+    my $lo=$dr[0][1];
+    my $hi=$dr[$numDr-1][2];
+
+    # if this lo/hi is in another crispr, then don't use it
+    my $isGood=1;
+    for(values(%crisprStartStop)){
+      my($contig,$start,$stop)=@$_;
+      # inside
+      $isGood=0 if($lo>=$start && $hi<=$stop);
+      $isGood=0 if($lo<=$stop && $lo=>$start);
+      $isGood=0 if($hi<=$stop && $hi=>$start);
+    }
+    next if(!$isGood);
+    
+    # PASSED: include this in the positions hash
+    $crisprStartStop{$sequence}=[$dr[0][0],$lo,$hi];
+    $nonOverlapping{$sequence}=$drArr;
+  }
+
+  return \%nonOverlapping;
 }
 
 sub filterRepeatSeqs{
@@ -87,8 +116,26 @@ sub positionsToGff{
   my $gff="$$settings{tempdir}/crispr.gff";
   open(GFF,">",$gff) or die "Could not open temporary GFF:$!";
   print GFF "##gff-version   3\n";
-  # TODO print source line, describing the whole contig(s)
+  print GFF "##feature-ontology http://song.cvs.sourceforge.net/viewvc/*checkout*/song/ontology/so.obo?revision=1.263\n";
+  while(my($id,$sequence)=each(%$contigs)){
+    my $start=1;
+    my $end=length($sequence);
+    print GFF "##sequence-region $id $start $end\n";
+  }
+  print GFF "###\n"; # indicates the end of directives
+  ## done with GFF directives
+  ###########################
+
+  # contigs
+  while(my($id,$sequence)=each(%$contigs)){
+    my $start=1;
+    my $end=length($sequence);
+    print GFF join("\t",$id,".","contig",$start,$end,".","+",".","ID=$id")."\n";
+  }
+  # CRISPRs
   my $crisprCounter=1;
+  my $drCounter=1;
+  my $spacerCounter=1;
   for my $drSeq(keys(%$positions)){
     my $crispr=$$positions{$drSeq};
     $crispr=[sort({$$a[1] <=> $$b[1]} @$crispr)];
@@ -114,19 +161,25 @@ sub positionsToGff{
     # don't accept low-quality CRISPRs. This is very much a threshold that needs to be tested.
     next if($score<0.7);
     my $seqname=$$crispr[0][0];
-    print GFF join("\t",$seqname,"CG-Pipeline","CRISPR",$crisprStart,$crisprStop,$score,'+','.',"ID=$crisprId")."\n";
+    $score=sprintf("%.02f",$score);
+    # CRISPR parent element
+    print GFF join("\t",$seqname,"CG-Pipeline","ncRNA",$crisprStart,$crisprStop,$score,'+','.',"ID=$crisprId;Parent=$seqname;Name=$crisprId")."\n";
 
     for(my $i=0;$i<$numDrs;$i++){
       my($seqname,$start,$stop)=@{$$crispr[$i]};
       my($drStart,$drStop)=($start+1,$stop+1);
       my $sequence=substr($$contigs{$seqname},$start,$stop-$start+1);
-      print GFF join("\t",$seqname,"CG-Pipeline","DirectRepeat",$drStart,$drStop,$score,'+','.',"Parent=$crisprId;DR=$sequence")."\n";
+      # Direct Repeat
+      my $DRid=sprintf("DR%s",$drCounter++);
+      print GFF join("\t",$seqname,"CG-Pipeline","direct_repeat",$drStart,$drStop,$score,'+','.',"ID=$DRid;Name=$DRid")."\n";
       # add a spacer between DRs
       if($i<$numDrs-1){
         my $nextDrStart=$$crispr[$i+1][1]+1;
         my($spacerStart,$spacerStop)=($drStop+1,$nextDrStart-1);
         my $spacerSeq=substr($$contigs{$seqname},$spacerStart-1,$spacerStop-$spacerStart+1);
-        print GFF join("\t",$seqname,"CG-Pipeline","Spacer",$spacerStart,$spacerStop,$score,'+','.',"Parent=$crisprId;Spacer=$spacerSeq")."\n";
+        # Spacer
+        my $spacerid=sprintf("spacer%s",$spacerCounter++);
+        print GFF join("\t",$seqname,"CG-Pipeline","ncRNA",$spacerStart,$spacerStop,$score,'+','.',"ID=$spacerid;Name=$spacerid;Parent=$seqname")."\n";
       }
     }
     $crisprCounter++;
@@ -160,7 +213,38 @@ sub findSequencePositionsInGenome{
       push(@{ $drPos{$drSeq} },@drPos);
     }
   }
+  my $exhaustiveDrPos=pickUpMoreDrs(\%drPos,$contigs,$settings);
+  return $exhaustiveDrPos;
   return \%drPos;
+}
+
+sub pickUpMoreDrs{
+  my($drPos,$contigs,$settings)=@_;
+
+  logmsg "Using blast to refine DR hits";
+
+  # put the contigs back to a file and make a blast database
+  my $db="$$settings{tempdir}/blastdb.fasta";
+  AKUtils::printSeqsToFile($contigs,$db);
+  command("legacy_blast.pl formatdb -i $db -p F 2>/dev/null",{stdout=>1,quiet=>1});
+
+  # blast with each DR
+  my $drSeqArr=filterRepeatSeqs([keys(%$drPos)],$settings);
+  my %newDrPos;
+  for my $drSeq(@$drSeqArr){
+    my @newDrPos;
+    my $blsResults=command("echo '$drSeq'|legacy_blast.pl blastall -p blastn -d $db -e 0.05 -W 7 -F F -m 8 -a $$settings{numcpus}",{stdout=>1,quiet=>1});
+    my @blsResults=split(/\n/,$blsResults);
+    logmsg "".scalar(@blsResults)."\t$drSeq";
+    for(@blsResults){
+      my($query,$hit,$identity,$length,$mismatch,$gap,$qStart,$qStop,$sStart,$sStop,$evalue,$score)=split(/\t/,$_);
+      next if($length<$$settings{minCrisprSize} || $gap>0 || $mismatch>1 || $sStart>$sStop);
+      push(@newDrPos,[$hit,$sStart-1,$sStop-1]);
+    }
+    $newDrPos{$drSeq}=\@newDrPos;
+  }
+  logmsg "Done";
+  return \%newDrPos;
 }
 
 sub findSmallTandemRepeats{
@@ -178,7 +262,7 @@ sub findSmallTandemRepeats{
     my $contigLength=length($seq);
     my @window=();
     for(my $i=0;$i<$contigLength;$i+=$$settings{stepSize}){
-      #next if($i<2900000 || $i>3000000);
+      #next if($i<2900000 || $i>2940000);
       push(@window,[$i,$seqid,$seq]);
       while($Q->pending>($$settings{numcpus}*1000)){
         logmsg "Sleeping";
@@ -201,7 +285,8 @@ sub findSmallTandemRepeats{
   my @tmp=($outQ->pending)?$outQ->extract(0,$outQ->pending):();
   $drSeq{$_}=1 for(@tmp);
 
-  return [keys(%drSeq)];
+  my $smallTandemRepeatSeqs=filterRepeatSeqs([keys(%drSeq)],$settings);
+  return $smallTandemRepeatSeqs;
 }
 
 sub findRepeatsWorker{
@@ -236,9 +321,8 @@ sub findRepeats{
   # read the repeats file
   my %repeat;
   my $i=0;
-  while($tmpout=~/\s*(.+)\s*\n/g){
-    next if($i++<2);
-    #s/^\s+|\s+$//g; # trim
+  while($tmpout=~/\s*(.+)\s*\n/g){ # go through lines and trim
+    next if($i++<2); # skip headers
     my($start1,$start2,$length)=split /\s+/, $1;
     next if($length>$$settings{maxCrisprSize});
     if($start2=~/(\d+)r/){ # revcom
@@ -306,6 +390,7 @@ sub drAlignmentScore{
 # run a command
 # settings params: warn_on_error (boolean)
 #                  stdout to return stdout instead of error code
+#                  quiet to not print the command unless an error/warning
 # returns error code
 # TODO run each given command in a new thread
 sub command{
