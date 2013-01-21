@@ -34,8 +34,9 @@ sub main{
     maxCrisprSize=>55,
   };
   GetOptions($settings,qw(outfile=s help windowSize=i stepSize=i tempdir=s minCrisprSize=i maxCrisprSize=i verbose));
-  $$settings{windowSize}||=$$settings{maxCrisprSize}*3;
-  $$settings{stepSize}||=$$settings{windowSize}-2*$$settings{maxCrisprSize};
+  $$settings{windowSize}||=10000;
+  $$settings{stepSize}||=9900;
+  # TODO modify the step size if it doesn't match the window size
   $$settings{numcpus}||=AKUtils::getNumCPUs();
   $$settings{repeatMatch}=AKUtils::fullPathToExec("repeat-match");
   die usage($settings) if(@ARGV<1 || $$settings{help});
@@ -53,10 +54,41 @@ sub main{
 
   # Finding the actual identified repeats is fast
   my $positions=findSequencePositionsInGenome($smallTandemRepeatSeqs,$contigs,$settings);
-  my $gff=positionsToGff($positions,$contigs,$settings);
+  die "TODO separate crisprs by 'LARGE' spacers";
+  my $nonOverlappingPos=removeOverlappingCrisprs($positions,$settings);
+  my $gff=positionsToGff($nonOverlappingPos,$contigs,$settings);
   copy($gff,$outfile);
   logmsg "Finished. GFF is in $outfile";
   return 0;
+}
+
+sub removeOverlappingCrisprs{
+  # TODO (?) retain sequences
+  my($crispr,$settings)=@_;
+  # sort CRISPRs by best score to worst score
+  my @crispr=sort({$$b[0][3] <=> $$a[0][3]} values(%$crispr));
+  
+  my %position; # record which spots are occupied
+  my %newCrispr; # nonoverlapping Crisprs to return
+  my $sequence=1;
+  for my $possibleCrispr(@crispr){
+    my ($contig,$lo,$hi,$score)=@{ $$possibleCrispr[0] };
+    next if($score<0.2);
+    my $isGood=1; # is a good crispr
+    # does this start/stop combination happen in the nonoverlapping crisprs?
+    for (@{$position{$contig}}){
+      my($start,$stop)=@$_;
+      # if it's inside of the range, no good
+      $isGood=0 if($lo<$start && $start<$hi);
+      $isGood=0 if($lo<$stop && $start<$stop);
+    }
+    next if(!$isGood);
+    
+    # it isn't overlapping with other crisprs: add it
+    push(@{ $position{$contig}}, [$lo,$hi]);
+    $newCrispr{$sequence++}=$possibleCrispr;
+  }
+  return \%newCrispr;
 }
 
 sub filterRepeatSeqs{
@@ -83,6 +115,7 @@ sub filterRepeatSeqs{
 
 sub positionsToGff{
   my($positions,$contigs,$settings)=@_;
+  logmsg "Starting";
   my $gff="$$settings{tempdir}/crispr.gff";
   open(GFF,">",$gff) or die "Could not open temporary GFF:$!";
   print GFF "##gff-version   3\n";
@@ -112,35 +145,12 @@ sub positionsToGff{
     my $numDrs=@$crispr;
     next if($numDrs<2); # need 2+ DRs for a CRISPR
 
-    # formulate the overall crispr element score. This needs to be tested.
-    my $score=1;
-    my $crisprId=sprintf("crispr%s",$crisprCounter);
-    my ($crisprStart,$crisprStop)=($$crispr[0][1]+1,$$crispr[-1][2]+1);
-    $score=$score*.98 if($numDrs<5); # less confidence for few repeats
-    $score=$score*.95 if($numDrs<4); # less confidence for few repeats
-    $score=$score*.95 if($numDrs<3); # less confidence for few repeats
-    my $drLength=$$crispr[0][2]-$$crispr[0][1];
-    # penalize for each out-of whack DR/spacer ratio
-    my @spacerLength;
-    for(my $i=0;$i<@$crispr-1;$i++){
-      my $spacerLength=$$crispr[$i+1][1]-1-$$crispr[$i][2]+1;
-      $score=$score*.6 if($spacerLength>2.5*$drLength || $spacerLength<0.6*$drLength);
-      push(@spacerLength,$spacerLength);
-    }
-
-    # see how similar the DRs are to each other and how similar the spacers are
-    if(stdev(\@spacerLength)>9){ # spacers are pretty different; no need for MSA
-      $score=$score*drAlignmentScore($crispr,$contigs,$settings);
-    } elsif($spacerLength[0]>500 || ($spacerLength[1] && $spacerLength[1]>500)){
-      $score*=.8; # spacers more than even a couple hundred are rare, I'll bet
-    } else { # spacers are pretty similar--do an alignment
-      my($alnScore,$spacerScore)=drAlignmentScore($crispr,$contigs,$settings);
-      $score=$score*$alnScore;
-      $score=$score*$spacerScore;
-    }
-
+    my $score=$$crispr[0][3]; #score is same on all DRs
     # don't accept low-quality CRISPRs. This is very much a threshold that needs to be tested.
-    next if($score<0.7);
+    next if($score<0.0);
+
+    my $crisprId=sprintf("Crispr\%s",$crisprCounter++);
+    my ($crisprStart,$crisprStop)=($$crispr[0][1]+1,$$crispr[-1][2]+1);
     my $seqname=$$crispr[0][0];
     $score=sprintf("%.02f",$score);
     # CRISPR parent element
@@ -171,7 +181,6 @@ sub positionsToGff{
 }
 
 # find the same small repeats throughout the genome to pick up more CIRSPRs
-# TODO Do I need to find small repeats on reverse strand also?
 sub findSequencePositionsInGenome{
   my($drSeqs,$contigs,$settings)=@_;
   #print Dumper $drSeqs;
@@ -179,22 +188,24 @@ sub findSequencePositionsInGenome{
   for my $contigid(keys(%$contigs)){
     my $contig=$$contigs{$contigid};
     for my $drSeq(@$drSeqs){
-      my $rcDrSeq=$drSeq;
-      $rcDrSeq=~tr/ATCGatcg/TAGCtagc/;
-      $rcDrSeq=reverse($rcDrSeq);
       my @drPos;
       while($contig=~m/($drSeq)/g){
         my($start,$stop)=($-[1],$+[1]);
         push(@drPos,[$contigid,$start,$stop,1]);
       }
-      #while($contig=~m/($rcDrSeq)/g){
-      #  my($start,$stop)=($-[1],$+[1]);
-      #  push(@drPos,[$contigid,$start,$stop,-1]);
-      #}
       push(@{ $drPos{$drSeq} },@drPos);
     }
   }
   my $exhaustiveDrPos=pickUpMoreDrs(\%drPos,$contigs,$settings);
+
+  # add a score to each CRISPR
+  while(my($sequence,$crispr)=each(%$exhaustiveDrPos)){
+    my $score=crisprScore($crispr,$contigs,$settings);
+    for my $DR(@$crispr){
+      $$DR[3]=$score; 
+    }
+  }
+
   return $exhaustiveDrPos;
 }
 
@@ -337,16 +348,38 @@ sub findRepeats{
   return \%drSeq;
 }
 
-sub drAlignmentScore{
+sub crisprScore{
   my($crispr,$contigs,$settings)=@_;
-  
   my $TID="TID".threads->tid;
+  $crispr=[sort({$$a[1] <=> $$b[1]} @$crispr)];
+  my $numDrs=@$crispr;
+
+  # need 2+ DRs for a CRISPR
+  return 0 if($numDrs<2);
+
+  # MSA and blast to determine any futher penalties
   my $seqIn ="$$settings{tempdir}/in.$TID.fna";
   my $seqOut="$$settings{tempdir}/out.$TID.fna";
   my $spacersIn="$$settings{tempdir}/spacersin.$TID.fna";
   my $spacersOut="$$settings{tempdir}/spacersout.$TID.fna";
   my $bl2seqI="$$settings{tempdir}/bl2seqI.$TID.fna";
   my $bl2seqJ="$$settings{tempdir}/bl2seqJ.$TID.fna";
+
+  # formulate the overall crispr element score. This needs to be tested.
+  my $score=1;
+  $score=$score*.98 if($numDrs<5); # less confidence for few repeats
+  $score=$score*.95 if($numDrs<4); # less confidence for few repeats
+  $score=$score*.95 if($numDrs<3); # less confidence for few repeats
+  my $drLength=$$crispr[0][2]-$$crispr[0][1];
+  # penalize for each out-of whack DR/spacer ratio
+  my @spacerLength;
+  for(my $i=0;$i<@$crispr-1;$i++){
+    my $spacerLength=$$crispr[$i+1][1]-1-$$crispr[$i][2]+1;
+    $score=$score*.6 if($spacerLength>2.5*$drLength || $spacerLength<0.6*$drLength);
+    push(@spacerLength,$spacerLength);
+  }
+  # spacers more than even a couple hundred are rare, I'll bet
+  $score*=0.8 if($spacerLength[0]>500 || ($spacerLength[1] && $spacerLength[1]>500));
 
   # input for bl2seq
   open(BL2SEQI,">",$bl2seqI) or die "Could not open $bl2seqI:$!";
@@ -380,32 +413,33 @@ sub drAlignmentScore{
   my $muscle=AKUtils::fullPathToExec("muscle");
   command("$muscle -in $seqIn -out $seqOut -diags1 -quiet",{quiet=>1});
 
-  # create an alignment score
+  # create an alignment score for how identical all DRs are
   my $aln=Bio::AlignIO->new(-file=>$seqOut)->next_aln;
   my $identity=$aln->percentage_identity/100;
   my $alnScore=sprintf("%0.2f",1-(1-$identity));
-
-  # if requesting two values, then calc the spacer score
-  if(wantarray){
-    # there is no alignment to be had if there is only one spacer
-    return ($alnScore,1) if(-s $bl2seqJ < 1);
+  $score=$score*$alnScore;
+  
+  # look at spacer similarity if there are multiples
+  # TODO just do a clustering method (blastclust or usearch)
+  if(-s $bl2seqJ > 1){
 
     # if the first two seqs are really different, then it's fine. Return spacer score of 1
     my $bl2seqRes=command("legacy_blast.pl bl2seq -i $bl2seqI -j $bl2seqJ -p blastn -W 7 -D 1",{quiet=>1,stdout=>1});
     my $bl2seqIdentity=`echo '$bl2seqRes'|grep -v '^#'|head -n 1|cut -f 3`/100;
     my $bl2seqLength=`echo '$bl2seqRes'|grep -v '^#'|head -n 1|cut -f 4`+0;
-    return ($alnScore,1) if($bl2seqIdentity<0.9 || $bl2seqLength<20);
 
     # bl2seq shows that the first two spacers have high identity. Do MSA with all spacers to confirm.
-    command("$muscle -in $spacersIn -out $spacersOut -diags -maxiters 1 -quiet",{quiet=>1});
-    $aln=Bio::AlignIO->new(-file=>$spacersOut)->next_aln;
-    my $spacerIdentity=$aln->percentage_identity/100;
-    my $spacerScore=sprintf("%0.2f",(1-$spacerIdentity/5));
-    return ($alnScore,$spacerScore);
+    if($bl2seqIdentity>0.9 && $bl2seqLength>20){
+      command("$muscle -in $spacersIn -out $spacersOut -diags -maxiters 1 -quiet",{quiet=>1});
+      $aln=Bio::AlignIO->new(-file=>$spacersOut)->next_aln;
+      my $spacerIdentity=$aln->percentage_identity/100;
+      my $spacerScore=sprintf("%0.2f",(1-$spacerIdentity/5));
+      $score=$score*$spacerScore;
+    } else { # dissimilar spacers: good!
+      $score=$score*1;
+    }
   }
-
-  # if no array wanted, then it's just the DR score
-  return $alnScore;
+  return $score;
 }
 
 # run a command
