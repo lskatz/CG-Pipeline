@@ -5,7 +5,6 @@
 
 # TODO multithread
 # TODO validate scoring mechanism
-# TODO make GFF source tag for each contig
 
 use strict;
 use warnings;
@@ -54,41 +53,111 @@ sub main{
 
   # Finding the actual identified repeats is fast
   my $positions=findSequencePositionsInGenome($smallTandemRepeatSeqs,$contigs,$settings);
-  die "TODO separate crisprs by 'LARGE' spacers";
-  my $nonOverlappingPos=removeOverlappingCrisprs($positions,$settings);
-  my $gff=positionsToGff($nonOverlappingPos,$contigs,$settings);
+  my $crisprs=drsToCrisprs($positions,$contigs,$settings);
+  my $nonOverlappingCrisprs=removeOverlappingCrisprs($crisprs,$settings);
+  my $gff=positionsToGff($nonOverlappingCrisprs,$contigs,$settings);
   copy($gff,$outfile);
   logmsg "Finished. GFF is in $outfile";
   return 0;
 }
 
+# Changes DRs to CRISPRs
+# sequence=>[[contig,start,stop],[contig,start,stop]...]
+#   to
+# {contig}{sequence} => [start=>start,stop=>stop,score=>score,DR=>[[start,stop],...],spacer=>[[start,stop]...]]
+sub drsToCrisprs{
+  my($DR,$contigs,$settings)=@_;
+
+  # Put DRs into %crispr without worrying about distances (yet).
+  # Will still need to add start/stop/score/etc later.
+  my %crispr;
+  while(my($sequence,$drArr)=each(%$DR)){
+    $drArr=[sort({return 0 if($$a[0] ne $$b[0]); $$a[1]<=>$$b[1]} @$drArr)];
+    next if(@$drArr<2); # MUST have >1 DR to be a crispr
+    for(my $i=0;$i<@$drArr;$i++){
+      my $dr=$$drArr[$i];
+      my $contig=$$dr[0];
+      push(@{ $crispr{$contig}{$sequence}{DR} },[$$dr[1],$$dr[2]]);
+      if($i+1<@$drArr){
+        my $nextDr=$$drArr[$i+1];
+        my $spacer=[$$dr[2]+1,$$nextDr[1]-1];
+        push(@{ $crispr{$contig}{$sequence}{spacer} },$spacer);
+      }
+    }
+  }
+  
+  # start separating out CRISPRs into an array
+  # a spacer cannot be longer than 2.6x the DR
+  my @separatedCrispr;
+  while(my($contig,$contigCrisprs)=each(%crispr)){
+    while(my($sequence,$crispr)=each(%$contigCrisprs)){
+      my $drLength=length($sequence);
+      my $drElementStart=0;
+      my @spacers=@{$$crispr{spacer}};
+      my @DRs=@{$$crispr{DR}};
+      my $numDrs=@DRs;
+      for(my $i=0;$i<$numDrs;$i++){
+        my $spacer=$spacers[$i];
+        # If the spacer is too long, make a distinct CRISPR.
+        # Or, just do it if this is the last DR/spacer
+        if($i+1==$numDrs || $$spacer[1]-$$spacer[0] > 3*$drLength){
+          my @drSet=@DRs[$drElementStart..$i];
+          my @spacerSet=@spacers[$drElementStart..($i-1)]; # this kills off the long spacer
+          $drElementStart=$i+1;
+          next if(@spacerSet<1); # need at least one spacer for CRISPR
+          push(@separatedCrispr, {contig=>$contig,sequence=>$sequence,DR=>\@drSet,spacer=>\@spacerSet,tmp=>$numDrs});
+        }
+      }
+    }
+  }
+
+  # make scores for each spacer and note the start/stop to complete it
+  for my $crispr(@separatedCrispr){
+    $$crispr{score}=crisprScore($crispr,$contigs,$settings);
+    $$crispr{start}=$$crispr{DR}[0][0];  # first DR start
+    $$crispr{stop} =$$crispr{DR}[-1][1]; # last DR stop
+  }
+
+  return \@separatedCrispr;
+}
+
 sub removeOverlappingCrisprs{
-  # TODO (?) retain sequences
   my($crispr,$settings)=@_;
-  # sort CRISPRs by best score to worst score
-  my @crispr=sort({$$b[0][3] <=> $$a[0][3]} values(%$crispr));
+  # Sort CRISPRs by best score to worst score so that the best occupy spots before the bad ones do.
+  # Tie-breaker if scores are same: longest length
+  $crispr=[sort({
+    if($$b{score}==$$a{score}){
+      return ($$b{stop}-$$b{start} <=> $$a{stop}-$$a{start});
+    }
+    $$b{score}<=>$$a{score}} @$crispr
+  )];
   
   my %position; # record which spots are occupied
-  my %newCrispr; # nonoverlapping Crisprs to return
-  my $sequence=1;
-  for my $possibleCrispr(@crispr){
-    my ($contig,$lo,$hi,$score)=@{ $$possibleCrispr[0] };
-    next if($score<0.2);
+  my @newCrispr; # nonoverlapping Crisprs to return
+  for my $possibleCrispr(@$crispr){
+    #my ($contig,$lo,$hi,$score)=@{ $$possibleCrispr[0] };
+    my $contig=$$possibleCrispr{contig};
+    my $lo=$$possibleCrispr{start} or die "ERROR need start key in crispr";
+    my $hi=$$possibleCrispr{stop};
     my $isGood=1; # is a good crispr
     # does this start/stop combination happen in the nonoverlapping crisprs?
     for (@{$position{$contig}}){
       my($start,$stop)=@$_;
       # if it's inside of the range, no good
-      $isGood=0 if($lo<$start && $start<$hi);
-      $isGood=0 if($lo<$stop && $start<$stop);
+      $isGood=0 if($lo<=$start && $stop <=$hi);
+      $isGood=0 if($start<=$lo && $stop >=$hi);
+
+      # overlapping with a better crispr
+      $isGood=0 if($lo<=$start && $start<=$hi); #  lo----start-----hi
+      $isGood=0 if($lo<=$stop && $stop<=$hi);   #  lo----stop---hi
     }
     next if(!$isGood);
     
     # it isn't overlapping with other crisprs: add it
     push(@{ $position{$contig}}, [$lo,$hi]);
-    $newCrispr{$sequence++}=$possibleCrispr;
+    push(@newCrispr,$possibleCrispr);
   }
-  return \%newCrispr;
+  return \@newCrispr;
 }
 
 sub filterRepeatSeqs{
@@ -114,7 +183,8 @@ sub filterRepeatSeqs{
 }
 
 sub positionsToGff{
-  my($positions,$contigs,$settings)=@_;
+  my($crisprs,$contigs,$settings)=@_;
+  logmsg "Warning: need to finish converting Positions to Crisprs";
   logmsg "Starting";
   my $gff="$$settings{tempdir}/crispr.gff";
   open(GFF,">",$gff) or die "Could not open temporary GFF:$!";
@@ -133,50 +203,33 @@ sub positionsToGff{
   while(my($id,$sequence)=each(%$contigs)){
     my $start=1;
     my $end=length($sequence);
-    print GFF join("\t",$id,".","contig",$start,$end,".","+",".","ID=$id")."\n";
+    print GFF join("\t",$id,".","contig",$start+1,$end+1,".","+",".","ID=$id")."\n";
   }
   # CRISPRs
-  my $crisprCounter=1;
+  my $crisprCounter=0; # making unique crispr counters
   my $drCounter=1;
   my $spacerCounter=1;
-  for my $drSeq(keys(%$positions)){
-    my $crispr=$$positions{$drSeq};
-    $crispr=[sort({$$a[1] <=> $$b[1]} @$crispr)];
-    my $numDrs=@$crispr;
-    next if($numDrs<2); # need 2+ DRs for a CRISPR
-
-    my $score=$$crispr[0][3]; #score is same on all DRs
-    # don't accept low-quality CRISPRs. This is very much a threshold that needs to be tested.
+  for my $crispr(@$crisprs){
+    my $score=$$crispr{score};
     next if($score<0.0);
-
-    my $crisprId=sprintf("Crispr\%s",$crisprCounter++);
-    my ($crisprStart,$crisprStop)=($$crispr[0][1]+1,$$crispr[-1][2]+1);
-    my $seqname=$$crispr[0][0];
+    
     $score=sprintf("%.02f",$score);
-    # CRISPR parent element
-    print GFF join("\t",$seqname,"CG-Pipeline","ncRNA",$crisprStart,$crisprStop,$score,'+','.',"ID=$crisprId;Parent=$seqname;Name=$crisprId")."\n";
-
-    for(my $i=0;$i<$numDrs;$i++){
-      my($seqname,$start,$stop)=@{$$crispr[$i]};
-      my($drStart,$drStop)=($start+1,$stop+1);
-      my $sequence=substr($$contigs{$seqname},$start,$stop-$start+1);
-      # Direct Repeat
+    my $crisprId=sprintf("Crispr\%s",++$crisprCounter);
+    my $seqname=$$crispr{contig};
+    my @DRs=@{$$crispr{DR}};
+    my @spacers=@{$$crispr{spacer}};
+    print GFF join("\t",$seqname,"CG-Pipeline","ncRNA",$$crispr{start}+1,$$crispr{stop}+1,$score,'+','.',"ID=$crisprId;Parent=$seqname;Name=$crisprId")."\n";
+    for my $dr(@DRs){
       my $DRid=sprintf("DR%s",$drCounter++);
-      print GFF join("\t",$seqname,"CG-Pipeline","direct_repeat",$drStart,$drStop,$score,'+','.',"ID=$DRid;Name=$DRid")."\n";
-      # add a spacer between DRs
-      if($i<$numDrs-1){
-        my $nextDrStart=$$crispr[$i+1][1]+1;
-        my($spacerStart,$spacerStop)=($drStop+1,$nextDrStart-1);
-        my $spacerSeq=substr($$contigs{$seqname},$spacerStart-1,$spacerStop-$spacerStart+1);
-        # Spacer
-        my $spacerid=sprintf("spacer%s",$spacerCounter++);
-        print GFF join("\t",$seqname,"CG-Pipeline","ncRNA",$spacerStart,$spacerStop,$score,'+','.',"ID=$spacerid;Name=$spacerid;Parent=$seqname")."\n";
-      }
+      print GFF join("\t",$seqname,"CG-Pipeline","direct_repeat",$$dr[0]+1,$$dr[1]+1,$score,'+','.',"ID=$DRid;Name=$DRid")."\n";
     }
-    $crisprCounter++;
+    for my $spacer(@spacers){
+      my $spacerid=sprintf("spacer%s",$spacerCounter++);
+      print GFF join("\t",$seqname,"CG-Pipeline","ncRNA",$$spacer[0]+1,$$spacer[1]+1,$score,'+','.',"ID=$spacerid;Name=$spacerid;Parent=$seqname")."\n";
+    }
   }
   close GFF;
-  logmsg "Done making GFF. Found ".($crisprCounter-1)." CRISPRs";
+  logmsg "Done making GFF. Found $crisprCounter CRISPRs";
   return $gff;
 }
 
@@ -198,6 +251,8 @@ sub findSequencePositionsInGenome{
   }
   my $exhaustiveDrPos=pickUpMoreDrs(\%drPos,$contigs,$settings);
 
+  logmsg "WARNING need to add score to crispr instead of DRs";
+  return $exhaustiveDrPos;
   # add a score to each CRISPR
   while(my($sequence,$crispr)=each(%$exhaustiveDrPos)){
     my $score=crisprScore($crispr,$contigs,$settings);
@@ -351,8 +406,9 @@ sub findRepeats{
 sub crisprScore{
   my($crispr,$contigs,$settings)=@_;
   my $TID="TID".threads->tid;
-  $crispr=[sort({$$a[1] <=> $$b[1]} @$crispr)];
-  my $numDrs=@$crispr;
+  my @DR=sort({$$a[1] <=> $$b[1]} @{$$crispr{DR}});
+  my @spacer=sort({$$a[1]<=>$$b[1]} @{$$crispr{spacer}});
+  my $numDrs=@DR;
 
   # need 2+ DRs for a CRISPR
   return 0 if($numDrs<2);
@@ -370,16 +426,16 @@ sub crisprScore{
   $score=$score*.98 if($numDrs<5); # less confidence for few repeats
   $score=$score*.95 if($numDrs<4); # less confidence for few repeats
   $score=$score*.95 if($numDrs<3); # less confidence for few repeats
-  my $drLength=$$crispr[0][2]-$$crispr[0][1];
   # penalize for each out-of whack DR/spacer ratio
+  my $drLength=length($$crispr{sequence});
   my @spacerLength;
-  for(my $i=0;$i<@$crispr-1;$i++){
-    my $spacerLength=$$crispr[$i+1][1]-1-$$crispr[$i][2]+1;
-    $score=$score*.6 if($spacerLength>2.5*$drLength || $spacerLength<0.6*$drLength);
+  for my $spacer(@spacer){
+    my $spacerLength=$$spacer[1]-$$spacer[0];
+    $score=$score*0.6 if($spacerLength>2.5*$drLength || $spacerLength<0.6*$drLength);
     push(@spacerLength,$spacerLength);
   }
   # spacers more than even a couple hundred are rare, I'll bet
-  $score*=0.8 if($spacerLength[0]>500 || ($spacerLength[1] && $spacerLength[1]>500));
+  #$score*=0.8 if($spacerLength[0]>500 || ($spacerLength[1] && $spacerLength[1]>500));
 
   # input for bl2seq
   open(BL2SEQI,">",$bl2seqI) or die "Could not open $bl2seqI:$!";
@@ -388,15 +444,15 @@ sub crisprScore{
   # make input for alignment
   open(FNA,">",$seqIn) or die "Could not open $seqIn:$!";
   open(SPACER,">",$spacersIn) or die "Could not open $spacersIn:$!";
-  for(my $i=0;$i<@$crispr;$i++){
-    # get all start/stop from @$crispr
-    my($seqname,$start,$stop)=@{$$crispr[$i]};
+  my $seqname=$$crispr{contig} or die "Could not determine the contig";
+  for(my $i=0;$i<@DR;$i++){
+    my($start,$stop)=@{$DR[$i]};
     # get substr/subseq
     my $sequence=substr($$contigs{$seqname},$start,$stop-$start+1);
     print FNA ">seq$i\n$sequence\n";
 
-    if($i+1<@$crispr){
-      my $length=($$crispr[$i+1][1]-1)-$stop;
+    if($i+1<@DR){
+      my $length=$spacer[$i][1]-$spacer[$i][0]+1;
       my $spacerSequence=substr($$contigs{$seqname},$stop,$length);
       print SPACER ">spacer$i\n$spacerSequence\n";
       #logmsg "Making MSAs and finding \% identity for DRs and spacers:\n$sequence\n$spacerSequence" if($i==0 && $$settings{verbose});
