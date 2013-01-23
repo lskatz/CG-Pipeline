@@ -81,6 +81,9 @@ sub drsToCrisprs{
       if($i+1<@$drArr){
         my $nextDr=$$drArr[$i+1];
         my $spacer=[$$dr[2]+1,$$nextDr[1]-1];
+        #die "start>stop\n".Dumper([$spacer,$drArr]) if($$spacer[0]>$$spacer[1]);
+        # avoid spacers on the opposite strand
+        ($$spacer[0],$$spacer[1])=($$spacer[1],$$spacer[0]) if($$spacer[0]>$$spacer[1]);
         push(@{ $crispr{$contig}{$sequence}{spacer} },$spacer);
       }
     }
@@ -95,12 +98,25 @@ sub drsToCrisprs{
       my $drElementStart=0;
       my @spacers=@{$$crispr{spacer}};
       my @DRs=@{$$crispr{DR}};
+      
+      # remove overlapping DRs
+      my @tmp=($DRs[0]); # keep the first of the DRs
       my $numDrs=@DRs;
+      for(my $i=1;$i<$numDrs;$i++){
+        # Don't keep the DR if the start is before the last stop
+        next if($DRs[$i][0]<$DRs[$i-1][1]);
+        push(@tmp,$DRs[$i]);
+      }
+      @DRs=@tmp; $$crispr{DR}=\@DRs;
+
+      # look into separating clusters of DRs into CRISPRs
+      $numDrs=@DRs;
       for(my $i=0;$i<$numDrs;$i++){
         my $spacer=$spacers[$i];
-        # If the spacer is too long, make a distinct CRISPR.
+        # If the spacer is too long or too short, make a distinct CRISPR.
         # Or, just do it if this is the last DR/spacer
-        if($i+1==$numDrs || $$spacer[1]-$$spacer[0] > 3*$drLength){
+        my $spacerLength=$$spacer[1]-$$spacer[0];
+        if($i+1==$numDrs || $spacerLength>3*$drLength || $spacerLength<0.3*$drLength){
           my @drSet=@DRs[$drElementStart..$i];
           my @spacerSet=@spacers[$drElementStart..($i-1)]; # this kills off the long spacer
           $drElementStart=$i+1;
@@ -184,7 +200,6 @@ sub filterRepeatSeqs{
 
 sub positionsToGff{
   my($crisprs,$contigs,$settings)=@_;
-  logmsg "Warning: need to finish converting Positions to Crisprs";
   logmsg "Starting";
   my $gff="$$settings{tempdir}/crispr.gff";
   open(GFF,">",$gff) or die "Could not open temporary GFF:$!";
@@ -210,7 +225,7 @@ sub positionsToGff{
   my $drCounter=1;
   my $spacerCounter=1;
   for my $crispr(@$crisprs){
-    my $score=$$crispr{score};
+    my $score=(defined($$crispr{score}))?$$crispr{score}:"undefined-internalError";
     next if($score<0.0);
     
     $score=sprintf("%.02f",$score);
@@ -250,16 +265,6 @@ sub findSequencePositionsInGenome{
     }
   }
   my $exhaustiveDrPos=pickUpMoreDrs(\%drPos,$contigs,$settings);
-
-  logmsg "WARNING need to add score to crispr instead of DRs";
-  return $exhaustiveDrPos;
-  # add a score to each CRISPR
-  while(my($sequence,$crispr)=each(%$exhaustiveDrPos)){
-    my $score=crisprScore($crispr,$contigs,$settings);
-    for my $DR(@$crispr){
-      $$DR[3]=$score; 
-    }
-  }
 
   return $exhaustiveDrPos;
 }
@@ -423,15 +428,13 @@ sub crisprScore{
 
   # formulate the overall crispr element score. This needs to be tested.
   my $score=1;
-  $score=$score*.98 if($numDrs<5); # less confidence for few repeats
   $score=$score*.95 if($numDrs<4); # less confidence for few repeats
-  $score=$score*.95 if($numDrs<3); # less confidence for few repeats
   # penalize for each out-of whack DR/spacer ratio
   my $drLength=length($$crispr{sequence});
   my @spacerLength;
   for my $spacer(@spacer){
     my $spacerLength=$$spacer[1]-$$spacer[0];
-    $score=$score*0.6 if($spacerLength>2.5*$drLength || $spacerLength<0.6*$drLength);
+    $score=$score*0.7 if($spacerLength>(2.5*$drLength) || $spacerLength<(0.6*$drLength));
     push(@spacerLength,$spacerLength);
   }
   # spacers more than even a couple hundred are rare, I'll bet
