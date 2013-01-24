@@ -225,7 +225,7 @@ sub runVelvetAssembly($$){
   # -109635 + 18977*ReadSize + 86326*GenomeSize + 233353*NumReads - 51092*K
   my $readLength=`head -6 $$fastqfiles[0] | tail -1 | wc -c`+0; # look at the second read
   my $numReads=`wc -l $$fastqfiles[0]`/4;
-  my $memoryReqPerThread=-109635 + 18977*$readLength + 86326*$$settings{estimatedGenomeSize}/1000000 + 233353*$numReads/1000000 - 51092* sum(qw(19+21+23+25+27+29+31))/7;
+  my $memoryReqPerThread=-109635 + 18977*$readLength + 86326*$$settings{estimatedGenomeSize}/1000000 + 233353*$numReads/1000000 - 51092* sum(qw(19 21 23 25 27 29 31))/7;
   $memoryReqPerThread*=1024;
   my $totalMem=AKUtils::getFreeMem();
   my $memNumThreads=$totalMem/$memoryReqPerThread;
