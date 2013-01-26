@@ -11,9 +11,9 @@ my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 my $settings = {
     appname => 'cgpipeline',
     # these are the subroutines for all assembly metrics
-    metrics=>[qw(N50 genomeLength longestContig numContigs avgContigLength assemblyScore minContigLength expectedGenomeLength)],
+    metrics=>[qw(N50 genomeLength longestContig numContigs avgContigLength assemblyScore minContigLength expectedGenomeLength mer21)],
     # these are the subroutines for all standard assembly metrics
-    stdMetrics=>[qw(N50 genomeLength numContigs assemblyScore)],
+    stdMetrics=>[qw(genomeLength mer21 N50 numContigs assemblyScore)],
 };
 my $stats;
 
@@ -211,6 +211,28 @@ sub N50($;$){
   # return the length of the contig
   $N50||=0.01;
   return $N50;
+}
+
+# what percent of kmers are repeated
+sub mer21{
+  my($seqs,$settings)=@_;
+  my %mer21;
+  for my $sequence(values(%$seqs)){
+    my $length=length($sequence);
+    for(my $i=0;$i<$length-21;$i++){
+      my $kmer=substr($sequence,$i,21);
+      $mer21{$kmer}++;
+    }
+  }
+
+  my $mer21;
+  my $totalKmer;
+  for(values(%mer21)){
+    $mer21++ if($_>1);
+    $totalKmer+=$_;
+  }
+  my $kmer21Freq=sprintf("%0.4f",($mer21/$totalKmer));
+  return $kmer21Freq;
 }
 
 # Find the length of a genome assembly
