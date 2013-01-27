@@ -75,39 +75,51 @@ sub main() {
 	my ($combined_filename,$final_seqs);
 
 	if (@ref_files) {
-    #die "Using references for illumina assembly is not working right now";
-    logmsg "Warning: paired end reference illumina assemby is not supported right now (I'm not sure if you supplied a paired end parameter though)";
+    my $smalt=AKUtils::fullPathToExec("smalt");
+    my $samtools=AKUtils::fullPathToExec("samtools");
+    my $bcfutils=AKUtils::fullPathToExec("bcftools");
+    my $vcfutils=AKUtils::fullPathToExec("vcfutils.pl");
 
-    logmsg "Concatenating the reference sequence(s) into one file. And then all reads into one file.";
+    logmsg "Concatenating the reference sequence(s) into one file and building a database";
     my $concatenatedReferences="$$settings{tempdir}/ref_seqs.fna";
     my $concatenatedReads="$$settings{tempdir}/reads.fastq";
     system("cat ".join(" ",@ref_files)." >$concatenatedReferences") if(!-e $concatenatedReferences); die "Could not concatenate references because $!" if $?;
+    system("$smalt index -k 13 -s 2 $concatenatedReferences $concatenatedReferences"); die "Could not index the reference assembly $concatenatedReferences" if $?;
 
-    # create a 0-byte file for reads, and then append reads
-    if(!-e $concatenatedReads){
-      system("echo -n '' > $concatenatedReads"); die "Could not create file $concatenatedReads" if $?;
-      for(@$fastqfiles){
-        if(is_fastqGz($_)){
-          logmsg "Gunzipping/concating $_";
-          system("gunzip -c '$_' >> $concatenatedReads");
-        } elsif(is_fastq($_)){
-          logmsg "Concating $_";
-          system("cat '$_' >> $concatenatedReads")
-        }
-        die "Could not concatenate reads because $!" if $?;
+    # map each fastq against the database
+    my @bam;
+    for my $fastq (@$fastqfiles){
+      my $sam="$$settings{tempdir}/".fileparse($fastq).".sam";
+      my $bam="$$settings{tempdir}/".fileparse($fastq).".bam";
+      my $sorted="$$settings{tempdir}/".fileparse($fastq).".sorted";
+
+      my $isPe=AKUtils::is_fastqPE($fastq);
+      die "SORRY but PE reads is not implemented for reference Illumina assembly yet" if($isPe);
+      logmsg "Mapping $fastq to assembly";
+      if(!-e "$sorted.bam"){
+        system("$smalt map -o $sam -n $$settings{numcpus} $concatenatedReferences $fastq"); die "Error with smalt mapping" if $?;
+        system("$samtools view -bSh $sam > $bam"); die if $?;
+        system("$samtools sort $bam $sorted"); die if $?;
+        unlink($sam);unlink($bam);
       }
+      push(@bam,"$sorted.bam");
     }
-    
-    # bowtie2
-    # (for p in $genomes2; do echo "Mapping $p"; run_pipeline create -p $p; mkdir -p $p/build/assembly/2010EL-1786.fasta/bowtie2; ref="$p/build/assembly/2010EL-1786.fasta/bowtie2/ref.fa"; ln -sv `pwd -P`/../refGenomes/2010EL-1786.fasta $ref; bowtie2-build $ref $ref; gunzip -c combined/$p.filtered.fastq.gz > combined/$p.filtered.fastq; bowtie2 -p 12 -x $ref -S "$p/build/assembly/2010EL-1786.fasta/bowtie2/mapping.sam" -q combined/$p.filtered.fastq; rm combined/$p.filtered.fastq; run_assembly_samToFasta.pl -s "$p/build/assembly/2010EL-1786.fasta/bowtie2/mapping.sam" -a $ref -t "$p/build/assembly/2010EL-1786.fasta/bowtie2/toFasta" -o "$p/build/assembly/2010EL-1786.fasta/bowtie2/bowtie.fasta"; echo "Finished with $p"; done;) 2>&1 | tee --append bowtie2_again.log
-    die "TODO";
-    my $bowtie_sam=bowtie2($concatenatedReferences,$concatenatedReads,$settings);
-    my $bowtie_assembly=samToFasta($bowtie_sam,$concatenatedReferences,$settings);
-    my $bowtie_unmappedContigs=assembleUnmappedContigs($bowtie_sam,$settings);
+    logmsg "Done mapping";
 
-    # should we concatenate unmapped contigs onto the reference assembly?  I think so, because contamination can be filtered out later.
+    my $combinedBam="$$settings{tempdir}/combined.bam";
+    if(@bam>1){
+      logmsg "Combining output bam files.";
+      system("$samtools merge $combinedBam ".join(" ",@bam)); die if $?;
+    } else {
+      system("cp $bam[0] $combinedBam"); die if $?;
+    }
 
-    $combined_filename="$$settings{tempdir}/mappingAssembly_combined.fasta";
+    logmsg "Changing mapped reads into an assembly";
+    my $fasta="$$settings{tempdir}/reference.$$.fasta";
+    system("run_assembly_samToFasta.pl -b $combinedBam -a $concatenatedReferences -t $$settings{tempdir}/samToFasta -o $fasta -q"); die if $?;
+    # TODO assemble unmapped contigs
+
+    $combined_filename=$fasta;
 
     
 	} else {
