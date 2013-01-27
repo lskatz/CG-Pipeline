@@ -94,10 +94,15 @@ sub main() {
       my $sorted="$$settings{tempdir}/".fileparse($fastq).".sorted";
 
       my $isPe=AKUtils::is_fastqPE($fastq);
-      die "SORRY but PE reads is not implemented for reference Illumina assembly yet" if($isPe);
       logmsg "Mapping $fastq to assembly";
       if(!-e "$sorted.bam"){
-        system("$smalt map -o $sam -n $$settings{numcpus} $concatenatedReferences $fastq"); die "Error with smalt mapping" if $?;
+        my $smaltxopts="-o $sam -n $$settings{numcpus}";
+        if($isPe){
+          my($mate1,$mate2)=deshuffleFastq($fastq,$settings);
+          system("$smalt map $smaltxopts $concatenatedReferences $mate1 $mate2"); die "Error with smalt mapping" if $?;
+        }else{
+          system("$smalt map $smaltxopts $concatenatedReferences $fastq"); die "Error with smalt mapping" if $?;
+        }
         system("$samtools view -bSh $sam > $bam"); die if $?;
         system("$samtools sort $bam $sorted"); die if $?;
         unlink($sam);unlink($bam);
@@ -425,6 +430,32 @@ sub fastqToFasta{
   }
   close FASTQ; close FASTA; close QUAL;
   return ($outfasta,$outqual);
+}
+
+sub deshuffleFastq{
+  my($fastq,$settings)=@_;
+
+  # random names for the two mates
+  my @set = ('0' ..'9', 'A' .. 'F');
+  my $rand; $rand.=join("",map($set[rand @set],1..8));
+  my $mate1="$$settings{tempdir}/$rand.$$.1.fastq";
+  my $mate2="$$settings{tempdir}/$rand.$$.2.fastq";
+
+  my $i=0;
+  open(MATE1,">",$mate1) or die "Could not open mate1 for writing:$!";
+  open(MATE2,">",$mate2) or die "Could not open mate2 for writing:$!";
+  open(FASTQ,$fastq) or die "Could not open interleved fastq $fastq: $!";
+  while(<FASTQ>){
+    my $mod=$i%8;
+    if($mod<4){ # 0,1,2,3 belong to mate1
+      print MATE1 $_;
+    } else {    # 4,5,6,7 belong to mate2
+      print MATE2 $_;
+    }
+    $i++;
+  }
+  close FASTQ;close MATE1; close MATE2;
+  return($mate1,$mate2);
 }
 
 # run a command
