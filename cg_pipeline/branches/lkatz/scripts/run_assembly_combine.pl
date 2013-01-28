@@ -44,8 +44,9 @@ sub main() {
 
   $$settings{cpus}=AKUtils::getNumCPUs();
   $$settings{minContigSize}||=500;
+  $$settings{assembly}||=[];
 
-  my @assembly=@{ $$settings{assembly} } or die "Need assemblies:\n".usage($settings);
+  my @assembly=(@ARGV,@{$$settings{assembly}}) or die "Need assemblies:\n".usage($settings);
   $$settings{outfile} ||= "$0.out.fasta"; # TODO determine if an ace should be the output
   $$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
   open(FH, '>', $$settings{outfile}) or die("Error writing to output file $$settings{outfile}: $!");
@@ -178,9 +179,8 @@ sub assembly_metrics{
 
 sub usage{
   "Combines two or more assemblies into one assembly, using Minimus2
-  Usage: $0 -a assembly1 -a assembly2 [-a ...] -o output.assembly.fasta
-    -a assembly file in fasta format
-      multiple assemblies are allowed (and expected)
+  Usage: $0 assembly1.fasta asm2.fasta [asm3.fasta...] -o output.assembly.fasta
+    multiple assemblies are allowed and expected
     -r reads file in fasta format
       Reads that have not been used in the individual assemblies
     -o outputfile
