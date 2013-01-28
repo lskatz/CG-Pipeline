@@ -84,7 +84,8 @@ sub main() {
     my $concatenatedReferences="$$settings{tempdir}/ref_seqs.fna";
     my $concatenatedReads="$$settings{tempdir}/reads.fastq";
     system("cat ".join(" ",@ref_files)." >$concatenatedReferences") if(!-e $concatenatedReferences); die "Could not concatenate references because $!" if $?;
-    system("$smalt index -k 13 -s 2 $concatenatedReferences $concatenatedReferences"); die "Could not index the reference assembly $concatenatedReferences" if $?;
+    system("$smalt index -k 13 -s 2 $concatenatedReferences $concatenatedReferences") if(!-e "$concatenatedReferences.sma"); 
+    die "Could not index the reference assembly $concatenatedReferences" if $?;
 
     # map each fastq against the database
     my @bam;
@@ -114,19 +115,34 @@ sub main() {
     my $combinedBam="$$settings{tempdir}/combined.bam";
     if(@bam>1){
       logmsg "Combining output bam files.";
-      system("$samtools merge $combinedBam ".join(" ",@bam)); die if $?;
+      system("$samtools merge $combinedBam ".join(" ",@bam)) if(!-e $combinedBam); die if $?;
     } else {
       system("cp $bam[0] $combinedBam"); die if $?;
     }
 
+    # create the reference assembly from BAM
     logmsg "Changing mapped reads into an assembly";
-    my $fasta="$$settings{tempdir}/reference.$$.fasta";
-    system("run_assembly_samToFasta.pl -b $combinedBam -a $concatenatedReferences -t $$settings{tempdir}/samToFasta -o $fasta -q"); die if $?;
-    # TODO assemble unmapped contigs
+    my $referenceAsm="$$settings{tempdir}/reference.$$.fasta";
+    system("run_assembly_samToFasta.pl -b $combinedBam -a $concatenatedReferences -t $$settings{tempdir}/samToFasta -o $referenceAsm -q"); die if $?;
 
-    $combined_filename=$fasta;
+    # assemble unmapped reads
+    # run de novo assembly, keeping unused reads
+    logmsg "Recovering leftover unmapped reads";
+    my $unmappedFastq="$$settings{tempdir}/unmapped";
+    my ($uMate1,$uMate2)=($unmappedFastq."_1.fastq",$unmappedFastq."_2.fastq");
+    system("bam2fastq -o '$unmappedFastq#.fastq' --no-aligned --unaligned --force $combinedBam"); die if $?;
+    my $uShuffled=shuffleFastq([$uMate1,$uMate2],$settings);
+    my $velvet_basename=runVelvetAssembly([$uShuffled],$settings);
+    my $velvetAsm="$velvet_basename/contigs.fa";
 
-    
+    # mix in those de novo contigs
+    $combined_filename="$$settings{tempdir}/referenceCombined.fasta";
+    system("run_assembly_combine.pl -a $referenceAsm -a $velvetAsm -m 100 -o $combined_filename");
+    # if combining doesn't work, just use the ref assembly
+    if($?){
+      logmsg "WARNING: Combining assemblies didn't work. Just using your reference assembly instead.";
+      system("cp -v $referenceAsm $combined_filename");
+    }
 	} else {
     my($velvet_basename,$velvet_assembly);
 
@@ -233,6 +249,7 @@ sub fastq2fastaqual($$) {
 sub runVelvetAssembly($$){
   my($fastqfiles,$settings)=@_;
   my $run_name = "$$settings{tempdir}/velvet";
+  return $run_name if(-d $run_name);
   #system("mkdir -p $run_name") if(!-d $run_name); # is made by Voptimiser
   logmsg "Executing Velvet assembly $run_name";
   my $velvetPrefix=File::Spec->abs2rel("$$settings{tempdir}/auto"); # VelvetOptimiser chokes on an abs path
@@ -432,6 +449,23 @@ sub fastqToFasta{
   return ($outfasta,$outqual);
 }
 
+sub shuffleFastq{
+  my($fastqs,$settings)=@_;
+  my $fastq="$$settings{tempdir}/shuffled.$$.fastq";
+  my($mate1,$mate2)=@$fastqs;
+  open(MATE1,$mate1) or die "Could not open $mate1:$!";
+  open(MATE2,$mate2) or die "Could not open $mate2:$!";
+  open(SHUFFLED,">",$fastq) or die "Could not open $fastq:$!";
+  while(my $id=<MATE1>){
+    my $read1=$id;
+    my $read2;
+    $read1.=<MATE1> for(1..3);
+    $read2.=<MATE2> for(1..4);
+    print SHUFFLED "$read1$read2";
+  }
+  close SHUFFLED; close MATE1; close MATE2;
+  return $fastq;
+}
 sub deshuffleFastq{
   my($fastq,$settings)=@_;
 
@@ -456,6 +490,86 @@ sub deshuffleFastq{
   }
   close FASTQ;close MATE1; close MATE2;
   return($mate1,$mate2);
+}
+
+sub bamUnmappedReads{
+  my($bam,$settings)=@_;
+  my $fastq="$$settings{tempdir}/unmapped.fastq";
+  logmsg "Getting unmapped reads from $bam and putting them into $fastq";
+  open(BAM,"samtools view $bam|") or die "Could not open $bam: $!";
+  open(FASTQ,">",$fastq) or die "Could not open $fastq for writing:$!";
+  while(<BAM>){
+    my $flags=samFlags($_,$settings);
+    next if(!$$flags{unmapped});
+    chomp;
+    my($id,$sequence,$qual)=(split(/\t/,$_))[0,9,10];
+    print FASTQ "\@$id\n$sequence\n+\n$qual\n";
+  }
+  close FASTQ;close BAM;
+  return $fastq;
+}
+
+# return which flags are true/false in a sam line
+sub samFlags{
+  my ($line,$settings)=@_;
+  my $f=(split(/\t/,$line))[1];
+  #my $dec=dec2bin($f);
+  my %flag=(dup=>0,poorQual=>0,notPrimary=>0,mate2=>0,mate1=>0,mateReversed=>0,reversed=>0,mateUnmapped=>0,unmapped=>0,mappedWithMate=>0,paired=>0);
+  if($f-0x0400 > -1){
+    $flag{dup}=1;
+    $f-=0x0400;
+  }
+  if($f-0x0200 > -1){
+    $flag{poorQual}=1;
+    $f-=0x0200;
+  }
+  if($f-0x0100 > -1){
+    $flag{notPrimary}=1;
+    $f-=0x0100;
+  }
+  if($f-0x0080 > -1){
+    $flag{mate2}=1;
+    $f-=0x0080;
+  }
+  if($f-0x0040 > -1){
+    $flag{mate1}=1;
+    $f-=0x0040;
+  }
+  if($f-0x0020 > -1){
+    $flag{mateReversed}=1;
+    $f-=0x0020;
+  }
+  if($f-0x0010 > -1){
+    $flag{reversed}=1;
+    $f-=0x0010;
+  }
+  if($f-0x0008 > -1){
+    $flag{mateUnmapped}=1;
+    $f-=0x0008;
+  }
+  if($f-0x0004 > -1){
+    $flag{unmapped}=1;
+    $f-=0x0004;
+  }
+  if($f-0x0002 > -1){
+    $flag{mappedWithMate}=1;
+    $f-=0x0002;
+  }
+  if($f-0x0001 > -1){
+    $flag{paired}=1;
+    $f-=0x0001;
+  }
+  if($f>0){
+    die "ERROR: there is something unaccounted for in the flag for this line: $line\nFound flags:\n".Dumper(\%flag);
+  }
+  return \%flag;
+}
+
+# decimal to binary
+sub dec2bin {
+  my $str = unpack("B32", pack("N", shift));
+  $str =~ s/^0+(?=\d)//;   # otherwise you'll get leading zeros
+  return $str;
 }
 
 # run a command
