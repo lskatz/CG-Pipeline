@@ -1,0 +1,199 @@
+#!/usr/bin/env perl
+
+# run_annotation: Perform standard annotation protocol operations
+# Author: Andrey Kislyuk (kislyuk@gatech.edu)
+
+package PipelineRunner;
+my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
+
+my $settings = {
+  appname => 'cgpipeline',
+};
+my $stats;
+
+use strict;
+use FindBin;
+use lib "$FindBin::RealBin/../lib";
+$ENV{PATH} = "$FindBin::RealBin:".$ENV{PATH};
+
+use Getopt::Long;
+use File::Temp ('tempdir');
+use File::Path;
+use File::Spec;
+use File::Copy;
+use File::Basename;
+use List::Util qw(min max sum shuffle);
+use Bio::Seq;
+use Bio::SeqIO;
+use Bio::SeqFeature::Gene::GeneStructure;
+use Bio::SeqFeature::Generic;
+use Bio::Species;
+use Bio::Annotation::SimpleValue;
+use AKUtils;
+use Data::Dumper;
+
+$0 = fileparse($0);
+local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
+sub logmsg {my $FH = $PipelineRunner::LOG || *STDOUT; print $FH "$0: ".(caller(1))[3].": @_\n";}
+
+exit(main());
+
+sub main() {
+  $settings = AKUtils::loadConfig($settings);
+  die("Usage: $0 input.gb -o annotation.gb \nOptional switches\n --goto=[PDB|TMHMM|COGS|VFDB|BLAST|INTERPRO] : skips steps until this annotation step is reached") if @ARGV < 1;
+
+  $$settings{uniprot_db3} = $$settings{annotation_uniprot_db3};
+  $$settings{uniprot_evidence_db3} = $$settings{annotation_uniprot_evidence_db3};
+  $$settings{blast_db} = $$settings{annotation_blast_db};
+
+  my @cmd_options = ('ChangeDir=s', 'keep', 'blast_db=s', 'outdir=s', 'tempdir=s', 'uniprot_db3=s', 'uniprot_evidence_db3=s', 'reporting_email=s', 'goto=s');
+  GetOptions($settings, @cmd_options) or die;
+  die("Option blast_db is required") unless $$settings{blast_db}; # TODO: more error checks
+  die("Option uniprot_db3 is required") unless $$settings{uniprot_db3}; # TODO: more error checks
+  die("Option uniprot_evidence_db3 is required") unless $$settings{uniprot_evidence_db3}; # TODO: more error checks
+  die("Option reporting_email is required") unless $$settings{reporting_email}; # TODO: more error checks
+  my $input_gbk = $ARGV[0];
+
+  $$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
+  $$settings{outdir} ||= $input_gbk."_annotation_sql";
+  unless (-d $$settings{outdir}) {
+    mkdir($$settings{outdir}) or die("Unable to create output directory $$settings{outdir}: $!");
+  }
+  
+  logmsg "Temporary directory is $$settings{tempdir}";
+  logmsg "Output directory is $$settings{outdir}";
+
+  my $genes = AKUtils::loadCDSFromGenbankFile($input_gbk);
+
+  my $aa_file = "$$settings{tempdir}/aa.fasta";
+  my $fasta_h = Bio::SeqIO->new(-file => '>'.$aa_file, -format => 'Fasta');
+  # die("Multiple organisms in GenBank input") if keys(%$genes) > 1; -- need better sanity checks
+  my @genes=(); # array of genes to be sorted
+  foreach my $org (keys %$genes) {
+    push(@genes,values(%{$$genes{$org}}));
+  }
+  my @sortedGenes=sort {
+    my($idA,$idB)=(($a->get_tag_values('locus_tag'))[0],($b->get_tag_values('locus_tag'))[0]);
+    $idA=~s/.+_0*(\d+)$/$1/;
+    $idB=~s/.+_0*(\d+)$/$1/;
+    $idA <=> $idB;
+  } @genes;
+  foreach my $gene (@sortedGenes){
+    $fasta_h->write_seq(Bio::Seq->new(-seq => $gene->seq->translate()->seq(),
+                        -display_id => ($gene->get_tag_values('locus_tag'))[0]));
+  }
+
+  # TODO Verify presence of pipeline requirements (SignalP, TMHMM, Uniprot, Uniprot DB3, ...)
+  # Error checking with blast databases
+  my $blastErrMsgF ="ERROR: Need \%s in conf file set to a database. Current value is \%s.";
+  my $blastErrMsgF2="ERROR: Could not detect a protein blast database at \%s.";
+  for my $db(qw(is_blast_db pdb_blast_db vfdb_blast_db cogs_blast_db blast_db)){
+    my $dbPath=$$settings{$db};
+    die sprintf($blastErrMsgF,$db,$dbPath) if(!$dbPath);
+    die sprintf($blastErrMsgF2,$dbPath) if(!-e "$dbPath.pin" && !-e "$dbPath.pal");
+  }
+  
+  # skip to any particular part of annotation
+  if(my $goto=$$settings{goto}){
+    $goto=uc($goto); # case insensitive
+    if($goto eq 'TMHMM'){
+      logmsg "Going straight to TMHMM";goto TMHMM;
+    } elsif($goto eq 'PDB'){
+      logmsg "Going straight to PDB";goto PDB;
+    } elsif($goto eq 'VFDB'){
+      logmsg "Going straight to VFDB";goto VFDB;
+    } elsif($goto eq 'COGS'){
+      logmsg "Going straight to COGS";goto COGS;
+    } elsif($goto=~/BLAST|BLAST_VS_UNIPROT|UNIPROT/){
+      logmsg "Going straight to BLAST_VS_UNIPROT";goto BLAST_VS_UNIPROT;
+    } elsif($goto eq 'INTERPRO'){
+      logmsg "Going straight to INTERPRO";goto INTERPRO;
+    } else{
+      warn "Warning: Argument goto was given as $$settings{goto} but it is not one of the accepted arguments. $0 --help for more info. Not skipping any annotation steps";
+      sleep 2; # in case ctrl-c needs to be hurried
+    }
+  }
+
+  #########################################
+  ## Begin annotation with all modules here
+
+  # IS elements
+  # Credit to some parameters goes to ISsaga http://genomebiology.com/2011/12/3/R30
+  my $is_command="run_annotation_blast.pl $aa_file -d $$settings{is_blast_db} -o $aa_file.is_hits.sql --min_aa_coverage 30 --min_aa_identity 20 --min_aa_similarity 30 -p '-W 2 -F F -e 1E-5 -b 1 -v 1' 2>&1";
+  logmsg "Finding IS elements with command\n  $is_command";
+  system($is_command); die "Problem with IS element blasting" if $?;
+  flushSql($settings);
+
+  # Run SignalP on all proteins
+  system("run_annotation_signalp.pl $aa_file"); die if $?;
+  flushSql($settings);
+
+  # Run TMHMM on all proteins
+  TMHMM:
+  system("run_annotation_tmhmm.pl $aa_file"); die if $?;
+  flushSql($settings);
+
+  # run against PDB
+  PDB:
+  logmsg "Checking for proteins with structural similarities in the Protein Databank";
+  system("run_annotation_blast.pl $aa_file -d $$settings{pdb_blast_db} -o $aa_file.pdb_hits.sql --min_aa_coverage 40 --min_aa_identity 40 --min_aa_similarity 40 -p '-b 10 -v 10' 2>&1"); die "Problem with Protein Databank blasting" if $?;
+  flushSql($settings);
+
+  # Check all proteins against VFDB
+  VFDB:
+  logmsg "Finding virulence factors";
+  system("run_annotation_blast.pl $aa_file -d $$settings{vfdb_blast_db} -o $aa_file.vfdb_hits.sql --min_aa_coverage 40 --min_aa_identity 40 --min_aa_similarity 40 -p '-b 1 -v 1' 2>&1"); die "Problem with vfdb" if $?;
+  flushSql($settings);
+
+  # Check all proteins against COGs 
+  COGS:
+  logmsg "Finding COGs";
+  system("run_annotation_blast.pl $aa_file -d $$settings{cogs_blast_db} -o $aa_file.cogs_hits.sql --min_aa_coverage 80 --min_aa_identity 40 --min_aa_similarity 70 -p '-b 10 -v 10'"); die "Problem with blast against COGs" if $?;
+  #system("run_annotation_cogs.pl -tempdir=$$settings{tempdir} $aa_file"); die if $?;
+  flushSql($settings);
+
+  # Run BLAST on all proteins vs. Uniprot
+  BLAST_VS_UNIPROT:
+  logmsg "BLASTp vs Uniprot (this might take a while)";
+  my $invoke_string = "run_annotation_blast.pl $aa_file -db=$$settings{blast_db}";
+  $invoke_string .= " -outfile='$$settings{tempdir}/blast.sql'";
+  $invoke_string .= " -keep" if $$settings{keep};
+  $invoke_string .= " -tempdir='$$settings{tempdir}'";
+  $invoke_string .= " --min_aa_coverage 70 --min_aa_identity 50 -p '-b 15 -v 15'";
+  logmsg "COMMAND\n  $invoke_string";
+  system($invoke_string) if(!-e "$$settings{outdir}/blast.sql"); die "Problem with BLAST vs Uniprot" if $?;
+  flushSql($settings);
+
+  # TODO: auto-build uniprot database (and VFDB database)
+
+  # Fetch Uniprot metadata for BLAST hits
+  $invoke_string = "run_annotation_uniprot2sql.pl '$$settings{outdir}/blast.sql'";
+  $invoke_string .= " -uniprot_db3='$$settings{uniprot_db3}'";
+  $invoke_string .= " -uniprot_evidence_db3='$$settings{uniprot_evidence_db3}'";
+  $invoke_string .= " -uniprot_sql_outfile='$$settings{tempdir}/uniprot.sql'";
+  $invoke_string .= " -uniprot_evidence_sql_outfile='$$settings{tempdir}/uniprot_evidence.sql'";
+  logmsg "Parsing the uniprot result with\n    $invoke_string";
+  system($invoke_string); die if $?;
+  flushSql($settings);
+
+  INTERPRO:
+  # Run InterProScan on all proteins
+  $invoke_string = "run_annotation_interpro.pl $aa_file";
+  system($invoke_string); die if $?;
+  flushSql($settings);
+
+  logmsg "Annotation complete! SQL results are in $$settings{outdir}";
+
+  return 0;
+}
+
+sub flushSql{
+  my($settings)=@_;
+  foreach my $file (glob "$$settings{tempdir}/*.sql") {
+    move($file, $$settings{outdir});
+  }
+  logmsg "SQL files have been moved to $$settings{outdir}";
+  return 1;
+}
+
+
