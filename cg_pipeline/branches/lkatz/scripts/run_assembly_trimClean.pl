@@ -323,14 +323,20 @@ sub trimRead{
   my($numToTrim3,$numToTrim5,@qual)=(0,0,);
   @qual=map(ord($_)-$$settings{qualOffset},split(//,$$read{qual}));
   for(my $i=0;$i<$$settings{bases_to_trim};$i++){
-    $numToTrim5++ if(sum(@qual[0..$i])/($i+1)<$$settings{min_quality});
-    #last if($qual[$i]>=$$settings{min_quality});
+    if(sum(@qual[0..$i])/($i+1)<$$settings{min_quality}){
+      $numToTrim5++;
+    } else {
+      last if($i>5); # check minimum 5 bases before quitting
+    }
   }
   #for(my $i=$$read{length}-$$settings{bases_to_trim};$i<@qual;$i++){
   for(my $i=0;$i<$$settings{bases_to_trim};$i++){
     my $pos=$$read{length}-$i;
-    $numToTrim3++ if(sum(@qual[$pos..$#qual])/($i+1)<$$settings{min_quality});
-    #last if($qual[$i]>=$$settings{min_quality});
+    if(sum(@qual[$pos..$#qual])/($i+1)<$$settings{min_quality}){
+      $numToTrim3++;
+    } else {
+      last if($i>5); # check minimum 5 bases before quitting
+    }
   }
   if($numToTrim3 || $numToTrim5){
     #my $tmp= "TRIM  ==>$numToTrim5 ... $numToTrim3<==\n  >$$read{seq}<\n   $$read{qual}";
