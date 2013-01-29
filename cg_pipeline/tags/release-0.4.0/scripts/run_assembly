@@ -255,9 +255,11 @@ sub baseCall($$){
       push(@$long,$seqQualPair);
     }
     elsif(is_fastq($file) || is_fastqGz($file)){
+      my $singletons;
       # quality trim fastq files
-      $file=qualityControlFastq($file,$settings);
+      ($file,$singletons)=qualityControlFastq($file,$settings);
       push(@$short,$file);
+      push(@$short,$singletons) if(-s $singletons>0);
     }
     else{
       die "The format of $file is incompatible because its extension ".ext($file)." is not recognized";
@@ -270,11 +272,13 @@ sub baseCall($$){
 sub qualityControlFastq{
   my($file,$settings)=@_;
   my $outfile="$$settings{tempdir}/".fileparse($file).".trimmed.fastq";
-  return $outfile if(-s $outfile > 100); # skip this sub if the file already has some content
+  # vc-25.filtered.fastq.trimmed.singletons.fastq
+  my $singletons="$$settings{tempdir}/".fileparse($file).".trimmed.singletons.fastq";
+  return ($outfile,$singletons) if(-s $outfile > 100); # skip this sub if the file already has some content
   logmsg "Performing a quality filter on the reads in $file ==> $outfile with CG-Pipeline's in-house method.";
   system("run_assembly_trimClean.pl --min_length=30 --numcpus=$$settings{numcpus} -i '$file' -o '$outfile' 2>&1");
   die if $?;
-  return $outfile;
+  return ($outfile,$singletons);
 }
 
 # given a file containing one read accession per line and a pattern for all SFFs, extracts the reads and creates a new SFF
