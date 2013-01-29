@@ -54,16 +54,20 @@ sub main() {
     min_length=>62,# twice kmer length sounds good
   };
   
-  GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter notrim debug qualOffset=i numcpus=i));
+  # TODO option to not have singletons (annoying!)
+  GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter notrim debug qualOffset=i numcpus=i unique));
   $$settings{numcpus}||=getNumCPUs();
   
   my $infile=$$settings{infile} or die "Error: need an infile\n".usage($settings);
   my $outfile=$$settings{outfile} or die "Error: need an outfile\n".usage($settings);
+
+  $infile=removeDuplicateReads($infile,$settings) if($$settings{unique});
   
   my $outfileDir;
   ($$settings{outBasename},$outfileDir,$$settings{outSuffix}) = fileparse($outfile,@IOextensions);
   my $singletonOutfile="$outfileDir/$$settings{outBasename}.singletons$$settings{outSuffix}";
 
+  # trimming/filtering starts here
   my $printQueue=Thread::Queue->new;
   my $singletonPrintQueue=Thread::Queue->new;
   my $printThread=threads->new(\&printWorker,$outfile,$printQueue,$settings);
@@ -82,6 +86,66 @@ sub main() {
   logmsg "\nFinished! $freq_isClean pass rate.";
 
   return 0;
+}
+
+sub removeDuplicateReads{
+  my($infile,$settings)=@_;
+  logmsg "WARNING: Removing duplicates is experimental";
+
+  eval{
+    require AKUtils;
+  };
+  if($@){
+    warn "WARNING: AKUtils is not present. I will not remove duplicate reads";
+    return 1;
+  }
+
+  $$settings{tempdir}||=AKUtils::mktempdir();
+
+  my @nodupes;
+  for my $fastq(@$infile){
+    my ($basename,$dir,$inSuffix) = fileparse($fastq,@IOextensions);
+    my $poly=$$settings{poly}||checkPolyness($fastq,$settings);
+    my $nodupes="$$settings{tempdir}/$basename.noduplicates.fastq";
+    push(@nodupes,$nodupes);
+    logmsg "$fastq => $nodupes";
+    open(OUT,">",$nodupes) or die "Could not open fastq file $nodupes for writing: $!";
+    if($inSuffix=~/\.fastq$/){
+      open(FQ,'<',$fastq) or die "Could not open $fastq for reading: $!";
+    }
+    elsif($inSuffix=~/\.fastq\.gz/){
+      open(FQ,"gunzip -c $fastq | ") or die "Could not open $fastq for reading: $!";
+    }
+    else{
+      die "Could not determine the file type for reading based on your extension $inSuffix";
+    }
+    my $i=0;
+    my %read;
+    while(my $id=<FQ>){
+      my $sequence=<FQ>; chomp($sequence);
+      my $discard=<FQ>;
+      my $qual=<FQ>;
+      my $read="$id$sequence\n+\n$qual";
+      my $hashId=$sequence;
+      for(my $j=1;$j<$poly;$j++){
+        my $id2=<FQ>;
+        my $sequence2=<FQ>; chomp($sequence2);
+        my $discard2=<FQ>;
+        my $qual2=<FQ>;
+        $read.="$id2$sequence2\n+\n$qual2";
+        $hashId.="~~~~$sequence2"; # tildes are probably not in the sequence, so it's probably safe for putting into the hash ID
+      }
+      $read{$hashId}=$read;
+    }
+    close FQ;
+
+    while(my($hashId,$read)=each(%read)){
+      print OUT $read;
+    }
+    close OUT;
+  }
+  logmsg "Done";
+  return \@nodupes;
 }
 
 # returns a reference to an array of fastq entries.
@@ -259,20 +323,14 @@ sub trimRead{
   my($numToTrim3,$numToTrim5,@qual)=(0,0,);
   @qual=map(ord($_)-$$settings{qualOffset},split(//,$$read{qual}));
   for(my $i=0;$i<$$settings{bases_to_trim};$i++){
-    if(sum(@qual[0..$i])/($i+1)<$$settings{min_quality}){
-      $numToTrim5++;
-    }else{
-      last if($i>5); # check minimum 5 bases before quitting
-    }
+    $numToTrim5++ if(sum(@qual[0..$i])/($i+1)<$$settings{min_quality});
+    #last if($qual[$i]>=$$settings{min_quality});
   }
   #for(my $i=$$read{length}-$$settings{bases_to_trim};$i<@qual;$i++){
   for(my $i=0;$i<$$settings{bases_to_trim};$i++){
     my $pos=$$read{length}-$i;
-    if(sum(@qual[$pos..$#qual])/($i+1)<$$settings{min_quality}){
-      $numToTrim3++;
-    }else{
-      last if($i>5); # check minimum 5 bases before quitting
-    }
+    $numToTrim3++ if(sum(@qual[$pos..$#qual])/($i+1)<$$settings{min_quality});
+    #last if($qual[$i]>=$$settings{min_quality});
   }
   if($numToTrim3 || $numToTrim5){
     #my $tmp= "TRIM  ==>$numToTrim5 ... $numToTrim3<==\n  >$$read{seq}<\n   $$read{qual}";
@@ -280,7 +338,6 @@ sub trimRead{
     $$read{qual}=substr($$read{qual},$numToTrim5,$$read{length}-$numToTrim5-$numToTrim3);
     #print "$tmp\n  >$$read{seq}<\n\n";
   }
-  # trims by reference. No need to return anything.
 }
 
 # Deterimine if a single read is good or bad (0 or 1)
@@ -406,6 +463,7 @@ sub usage{
   --notrim to skip trimming of the reads. Useful for assemblers that require equal read lengths.
   -qual 64 to use an offset of 64 instead of 33(default).
   --numcpus 1 or --numcpus 2 for single or multithreaded. Default: $$settings{numcpus}
+  --unique for removing duplicate read fragments
 
   Use phred scores (e.g. 20 or 30) or length in base pairs if it says P or L, respectively
   --min_quality P             # trimming
