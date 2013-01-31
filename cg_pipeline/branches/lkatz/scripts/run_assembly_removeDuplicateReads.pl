@@ -38,7 +38,6 @@ my @IOextensions=qw(.fastq .fastq.gz .fq);
 exit(main());
 
 sub main{
-  logmsg "WARNING: Removing duplicates is experimental";
   my $settings = {
       appname => 'cgpipeline',
   };
@@ -46,15 +45,17 @@ sub main{
   # get settings from cg_pipeline/conf/cgpipelinerc and ./cgpipelinerc
   $settings=AKUtils::loadConfig($settings);
   # get CLI flags into $settings with Getopt::Long
-  GetOptions($settings,qw(help tempdir=s)); 
+  GetOptions($settings,qw(help tempdir=s compress)); 
   die usage() if(@ARGV<1 || $$settings{help});
   
   # additional settings using ||= operator
   $$settings{tempdir}||=AKUtils::mktempdir(); # any temp file you make should go under the tempdir
-  $$settings{is_PE}||=AKUtils::is_fastqPE($infile,$settings); # 0 for SE; 1 for PE
-  $$settings{poly}=$$settings{is_PE}+1;
+  #$$settings{is_PE}||=AKUtils::is_fastqPE($infile,$settings); # 0 for SE; 1 for PE
+  #$$settings{poly}=$$settings{is_PE}+1;
+
+  my $infile=[@ARGV];
   
-  my($peFastq,$seFastq)=removeDuplicateReads($infile,$settings);
+  removeDuplicateReads($infile,$settings);
 
   return 0;
 }
@@ -62,14 +63,9 @@ sub main{
 sub removeDuplicateReads{
   my($infile,$settings)=@_;
 
-  my @nodupes;
   for my $fastq(@$infile){
     my ($basename,$dir,$inSuffix) = fileparse($fastq,@IOextensions);
-    my $poly=$$settings{poly}||checkPolyness($fastq,$settings);
-    my $nodupes="$$settings{tempdir}/$basename.noduplicates.fastq";
-    push(@nodupes,$nodupes);
-    logmsg "$fastq => $nodupes";
-    open(OUT,">",$nodupes) or die "Could not open fastq file $nodupes for writing: $!";
+    my $poly=AKUtils::is_fastqPE($fastq,$settings)+1;
     if($inSuffix=~/\.fastq$/){
       open(FQ,'<',$fastq) or die "Could not open $fastq for reading: $!";
     }
@@ -79,6 +75,7 @@ sub removeDuplicateReads{
     else{
       die "Could not determine the file type for reading based on your extension $inSuffix";
     }
+    logmsg "Reading $fastq with poly=$poly";
     my $i=0;
     my %read;
     while(my $id=<FQ>){
@@ -99,19 +96,19 @@ sub removeDuplicateReads{
     }
     close FQ;
 
+    logmsg "Writing unique reads from $fastq";
     while(my($hashId,$read)=each(%read)){
-      print OUT $read;
+      print $read;
     }
-    close OUT;
   }
   logmsg "Done";
-  return \@nodupes;
 }
 
 
 sub usage{
   "Removes duplicate reads from a raw read set
-  Usage: $0 read.fastq[.gz] > read.fastq.gz
+  Usage: $0 read.fastq[.gz] > read.fastq
+         $0 read.fastq[.gz] | gzip -c > read.fastq.gz
   ";
 }
 
