@@ -40,7 +40,7 @@ exit(main());
 
 sub main() {
   $settings = AKUtils::loadConfig($settings);
-  die("Usage: $0 input.gb -o annotation.gb \nOptional switches\n --goto=[PDB|TMHMM|COGS|VFDB|BLAST|INTERPRO] : skips steps until this annotation step is reached") if @ARGV < 1;
+  die("Usage: $0 input.gb -o annotationDir \nOptional switches\n --goto=[PDB|TMHMM|COGS|VFDB|BLAST|INTERPRO] : skips steps until this annotation step is reached") if @ARGV < 1;
 
   $$settings{uniprot_db3} = $$settings{annotation_uniprot_db3};
   $$settings{uniprot_evidence_db3} = $$settings{annotation_uniprot_evidence_db3};
