@@ -6,8 +6,6 @@
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 
-my $stats;
-
 use strict;
 use FindBin;
 use lib "$FindBin::RealBin/../lib";
@@ -45,13 +43,12 @@ sub main{
   # get settings from cg_pipeline/conf/cgpipelinerc and ./cgpipelinerc
   $settings=AKUtils::loadConfig($settings);
   # get CLI flags into $settings with Getopt::Long
-  GetOptions($settings,qw(help tempdir=s compress)); 
+  GetOptions($settings,qw(help tempdir=s downsample=s)); 
   die usage() if(@ARGV<1 || $$settings{help});
-  
   # additional settings using ||= operator
   $$settings{tempdir}||=AKUtils::mktempdir(); # any temp file you make should go under the tempdir
-  #$$settings{is_PE}||=AKUtils::is_fastqPE($infile,$settings); # 0 for SE; 1 for PE
-  #$$settings{poly}=$$settings{is_PE}+1;
+  $$settings{downsample}||=0;
+  die "ERROR: downsample should be a number and less than 1".usage() if($$settings{downsample}=~/[A-Za-z]/ || $$settings{downsample}>1);
 
   my $infile=[@ARGV];
   
@@ -92,6 +89,12 @@ sub removeDuplicateReads{
         $read.="$id2$sequence2\n+\n$qual2";
         $hashId.="~~~~$sequence2"; # tildes are probably not in the sequence, so it's probably safe for putting into the hash ID
       }
+
+      # downsampling at this step is more accurate than later, after dupes are removed
+      if($$settings{downsample}){
+        next if(rand(1)>$$settings{downsample});
+      }
+      
       $read{$hashId}=$read;
     }
     close FQ;
@@ -107,8 +110,9 @@ sub removeDuplicateReads{
 
 sub usage{
   "Removes duplicate reads from a raw read set
-  Usage: $0 read.fastq[.gz] > read.fastq
+   Usage: $0 read.fastq[.gz] > read.fastq
          $0 read.fastq[.gz] | gzip -c > read.fastq.gz
+     --downsample 0.5  # filter 50% of reads out
   ";
 }
 
