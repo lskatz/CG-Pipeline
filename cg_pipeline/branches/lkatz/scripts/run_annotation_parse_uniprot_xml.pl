@@ -74,6 +74,7 @@ sub main{
     my $reader = new XML::LibXML::Reader(location => $infile) or die "cannot read $infile\n";	
 
     my $i;
+    my @outerXml=();
     while ($reader->read) {
       if ($reader->name eq 'entry' and $reader->nodeType != XML_READER_TYPE_END_ELEMENT) {
         $i++;
@@ -86,17 +87,24 @@ sub main{
           # keep the queue down below 10k
           while($xmlToDbQueue->pending > 9999 || $printQueue->pending > 9999){
             logmsg "Slowing the analysis because the queue for printing to the database or the queue for analyzing the XML is quite large:". $printQueue->pending." ".$xmlToDbQueue->pending." respectively";
-            sleep 1 while($xmlToDbQueue->pending>9999 || $printQueue->pending>9999);
+            sleep 1 while($xmlToDbQueue->pending>999 || $printQueue->pending>999);
           }
         }
-        $xmlToDbQueue->enqueue($reader->readOuterXml);
+
+        # build the queue in an array because enqueue is CPU intensive
+        push(@outerXml,$reader->readOuterXml);
+        if(@outerXml>9999){
+          $xmlToDbQueue->enqueue(@outerXml);
+          @outerXml=();
+        }
 
         $reader->next; # skip subtree
       }
-      if($i>100000){
-        logmsg "DEBUG";last;
-      }
+      #if($i>100000){
+      #  logmsg "DEBUG";last;
+      #}
     }
+    $xmlToDbQueue->enqueue(@outerXml);
     logmsg "Processed $i records, done with file $infile";
   }
   logmsg "Processed $recordsWritten records, done";
