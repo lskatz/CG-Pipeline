@@ -205,6 +205,9 @@ sub processUniprotXMLEntry($) {
   return($info{accession},$uniprot_h,$uniprot_evidence_h);
 }
 
+# TODO Speed up the printer.
+# Ideas: multithread this subroutine (one for each database)
+#        dequeue many at once
 sub db3Printer{
   my($Q,$settings)=@_;
   my ($dbfile, $evidence_dbfile) = ("cgpipeline.db3", "cgpipeline.evidence.db3");
@@ -213,10 +216,16 @@ sub db3Printer{
   openDbs();
 
   while(defined(my $queueItem=$Q->dequeue)){
-    my($accession,$uniprot_h,$uniprot_evidence_h)=@$queueItem;
-    $uniprot_h{$accession}=$uniprot_h;
-    $uniprot_evidence_h{$accession}=$_ for(@$uniprot_evidence_h);
-    $recordsWritten++;
+    my @cache=($queueItem);
+    if($Q->pending>1000){
+      push(@cache,$Q->dequeue(998)); # leave room for a possible undef
+    }
+    for (@cache){
+      my($accession,$uniprot_h,$uniprot_evidence_h)=@$_;
+      $uniprot_h{$accession}=$uniprot_h;
+      $uniprot_evidence_h{$accession}=$_ for(@$uniprot_evidence_h);
+      $recordsWritten++;
+    }
   }
   flushdb();
   return 1;
