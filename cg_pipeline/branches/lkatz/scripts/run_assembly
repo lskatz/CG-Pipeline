@@ -1,7 +1,8 @@
 #!/usr/bin/env perl
 
-# run-assembly: Perform standard assembly protocol operations on 454 pyrosequenced flowgram file(s)
+# run-assembly: Perform standard assembly protocol operations on 454 SFFs, Ion Torrent SFFs, and/or Illumina fastqs
 # Author: Andrey Kislyuk (kislyuk@gatech.edu)
+# Author: Lee Katz (lkatz@cdc.gov)
 
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
