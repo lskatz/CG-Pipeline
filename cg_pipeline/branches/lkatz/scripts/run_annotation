@@ -83,16 +83,6 @@ sub main() {
                         -display_id => ($gene->get_tag_values('locus_tag'))[0]));
   }
 
-  # TODO Verify presence of pipeline requirements (SignalP, TMHMM, Uniprot, Uniprot DB3, ...)
-  # Error checking with blast databases
-  my $blastErrMsgF ="ERROR: Need \%s in conf file set to a database. Current value is \%s.";
-  my $blastErrMsgF2="ERROR: Could not detect a protein blast database at \%s.";
-  for my $db(qw(is_blast_db pdb_blast_db vfdb_blast_db cogs_blast_db blast_db)){
-    my $dbPath=$$settings{$db};
-    die sprintf($blastErrMsgF,$db,$dbPath) if(!$dbPath);
-    die sprintf($blastErrMsgF2,$dbPath) if(!-e "$dbPath.pin" && !-e "$dbPath.pal");
-  }
-  
   # skip to any particular part of annotation
   if(my $goto=$$settings{goto}){
     $goto=uc($goto); # case insensitive
@@ -114,6 +104,17 @@ sub main() {
     }
   }
 
+  ## check pipeline requirements, but not if skipping ahead with goto
+  # TODO Verify presence of pipeline requirements (SignalP, TMHMM, Uniprot, Uniprot DB3, ...)
+  # Error checking with blast databases
+  my $blastErrMsgF ="ERROR: Need \%s in conf file set to a database. Current value is \%s.";
+  my $blastErrMsgF2="ERROR: Could not detect a protein blast database at \%s.";
+  for my $db(qw(is_blast_db pdb_blast_db vfdb_blast_db cogs_blast_db blast_db)){
+    my $dbPath=$$settings{$db};
+    die sprintf($blastErrMsgF,$db,$dbPath) if(!$dbPath);
+    die sprintf($blastErrMsgF2,$dbPath) if(!-e "$dbPath.pin" && !-e "$dbPath.pal");
+  }
+  
   #########################################
   ## Begin annotation with all modules here
 
