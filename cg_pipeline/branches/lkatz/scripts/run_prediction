@@ -390,6 +390,11 @@ sub generateGenBankFile($$$) {
 				$pred_feature->add_tag_value('product', $$pred{rrna_type});
 				# TODO: Finish me
 			} elsif ($$pred{type} eq 'CRISPR') {
+        # TODO follow this style http://www.ncbi.nlm.nih.gov/nuccore/HE980450
+        # type is "repeat_region" with 
+        # /standard_name="DR3" # how do I know which DR ID it is??
+        # /rpt_type=DIRECT
+        # /rpt_unit_seq="agaagcttatcataaat"
         my $locus_tag = $crispr_tag_factory->nextTag();
 				$pred_gene_feature->add_tag_value('locus_tag', $locus_tag);
 				$pred_feature->add_tag_value('locus_tag', $locus_tag);
