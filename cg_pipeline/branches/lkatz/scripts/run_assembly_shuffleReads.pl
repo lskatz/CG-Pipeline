@@ -7,6 +7,8 @@ use warnings;
 use Getopt::Long;
 use File::Basename;
 
+
+local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
 exit(main());
 
 sub main{
