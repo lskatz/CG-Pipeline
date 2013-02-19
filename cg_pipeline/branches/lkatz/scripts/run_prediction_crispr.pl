@@ -1,8 +1,10 @@
 #!/usr/bin/env perl
 
-# Predict CRISPRs in a fasta file
+# Predict CRISPRs in a fasta file. Presently, just using Piler-CR
 # Author: Lee Katz <lkatz@cdc.gov>
-# TODO output the entire crispr in a GFF line and not just DRs
+
+# Note: if any other CRISPR detection programs are added to CG-Pipeline,
+# they should be added here.
 
 use strict;
 use warnings;
@@ -15,6 +17,7 @@ use Getopt::Long;
 use File::Basename;
 use File::Copy qw/copy/;
 use Bio::AlignIO;
+use List::Util qw/sum min max/;
 
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
 exit(main());
@@ -23,10 +26,8 @@ sub main{
   local $0=fileparse $0;
   my $settings={
     appname=>"cgpipeline",
-    minCrisprSize=>23,
-    maxCrisprSize=>55,
   };
-  GetOptions($settings,qw(outfile=s help windowSize=i stepSize=i tempdir=s minCrisprSize=i maxCrisprSize=i verbose));
+  GetOptions($settings,qw(outfile=s help tempdir=s verbose));
   $$settings{tempdir}||=AKUtils::mktempdir($settings);
 
   $$settings{pilerCr}=AKUtils::fullPathToExec("pilercr");
@@ -83,12 +84,22 @@ sub pilerCrToGff{
       my $crisprId=$1;
       my $seqname=<PILERCR>; chomp($seqname);
       $seqname=~s/\s+.*//; # remove anything after whitespace
+      $seqname=~s/^>//; # remove > in defline
       my $undef=<PILERCR> for(1..3); # discard: blank, headers, ===
+      my($start,$stop,@score);
       while(<PILERCR>){
         last if /===/;
         my @F=split /\s+/; @F=grep(!/^\s*$/,@F);
-        print GFF join("\t",$seqname,"Piler-CR","direct_repeat",$F[0],($F[0]+$F[1]-1),$F[2],'.','.',"")."\n";
+        my $drStop=($F[0]+$F[1]-1);
+        print GFF join("\t",$seqname,"Piler-CR","direct_repeat",$F[0],$drStop,$F[2],'.','.',"Parent=CRISPR${crisprId}")."\n";
+
+        # CRISPR region data
+        push(@score,$F[2]);
+        $start=$F[0] if(!defined($start) || $start>$F[0]);
+        $stop=$drStop if(!defined($stop) || $stop<$drStop);
       }
+      my $score=sum(@score)/@score;
+      print GFF join("\t",$seqname,"Piler-CR","repeat_region",$start,$stop,$score,'.','.',"ID=CRISPR${crisprId};Name=CRISPR${crisprId}")."\n";
     }
 
   }
