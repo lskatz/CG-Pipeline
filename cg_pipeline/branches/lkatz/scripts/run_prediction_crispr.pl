@@ -17,7 +17,6 @@ use Getopt::Long;
 use File::Basename;
 use File::Copy qw/copy/;
 use Bio::AlignIO;
-use POSIX qw/mkfifo/;
 
 use threads;
 use Thread::Queue;
@@ -113,6 +112,7 @@ sub drsToCrisprs{
       $numDrs=@DRs;
       for(my $i=0;$i<$numDrs;$i++){
         my $spacer=$spacers[$i];
+        next if(!defined($spacer));
         # If the spacer is too long or too short, make a distinct CRISPR.
         # Or, just do it if this is the last DR/spacer
         my $spacerLength=$$spacer[1]-$$spacer[0];
@@ -178,12 +178,54 @@ sub removeOverlappingCrisprs{
 
 sub filterRepeatSeqs{
   my($seqs,$settings)=@_;
+  
+  # cluster the putative DRs to get consensus sequences
+  my $fasta;
+  for(@$seqs){
+    $fasta.=">$_\n$_\n";
+  }
+
+  # blastclust and ignore the first line of blastclus
+  # blastclust -a 8 -i drs.fasta -S 0.3 -W 15 -L 0.3 -p F
+  system("echo '$fasta' > $$settings{tempdir}/tmp.fasta");
+  my $clusters=command("blastclust -S 0.98 -L 0.97 -p F -W 15 -i $$settings{tempdir}/tmp.fasta -a $$settings{numcpus} |tail -n +2",{stdout=>1,quiet=>1});
+  my @cluster=split(/\n/,$clusters);
+
+  my @consensusDr;
+  for(@cluster){
+    my @seq=split /\s+/;
+    push(@seq,$seq[0]) if(@seq<2); # aln with self if only one
+    my $fasta2="";
+    my $i=0;
+    for(@seq){
+      next if(/^\s*$/);
+      $fasta2.=">".$i++."\n$_\n";
+    }
+    #perform the alignment
+    my $out=command("echo '$fasta2' | muscle -clwstrict -quiet",{quiet=>1,stdout=>1});
+    my $outfh;
+    open($outfh,"<",\$out);
+    my $aln=Bio::AlignIO->new(-format=>"clustalw",-fh=>$outfh)->next_aln;
+    #bioperl consensus string with 100% identity
+    my $consensus=$aln->consensus_string(100);
+    $consensus=~s/^\?*|\?*$//g; # leading and trailing ?s are because of gaps
+    $consensus=~s/\?/N/g; # pick up remaining ?s
+    push(@consensusDr,$consensus);
+  }
+  #print Dumper \@consensusDr;
+
+
+  # Try to collapse very similar sequences.
+  # TODO collapse by 1 nt on either side if it helps
   my %badSeqIndex;
-  my $numSeqs=@$seqs;
+  my $numSeqs=@consensusDr;
   for(my $i=0;$i<$numSeqs;$i++){
-    my $seqI=$$seqs[$i];
+    # allow for a 1-off using substr
+    #my $seqI=substr($consensusDr[$i],1,-1);
+    my $seqI=$consensusDr[$i];
     for(my $j=$i+1;$j<$numSeqs;$j++){
-      my $seqJ=$$seqs[$j];
+      #my $seqJ=substr($consensusDr[$j],1,-1);
+      my $seqJ=$consensusDr[$j];
       if($seqI=~/$seqJ/){ # if $seqJ is inside of $seqI, then $seqJ is a more likely, smaller repeat
         $badSeqIndex{$i}=1;
       }
@@ -195,6 +237,7 @@ sub filterRepeatSeqs{
     next if($badSeqIndex{$i});
     push(@filteredSeq,$$seqs[$i]);
   }
+  #print Dumper \@filteredSeq;die;
   return \@filteredSeq;
 }
 
@@ -233,14 +276,14 @@ sub positionsToGff{
     my $seqname=$$crispr{contig};
     my @DRs=@{$$crispr{DR}};
     my @spacers=@{$$crispr{spacer}};
-    print GFF join("\t",$seqname,"CG-Pipeline","ncRNA",$$crispr{start}+1,$$crispr{stop}+1,$score,'+','.',"ID=$crisprId;Parent=$seqname;Name=$crisprId")."\n";
+    print GFF join("\t",$seqname,"CG-Pipeline","CRISPR",$$crispr{start}+1,$$crispr{stop}+1,$score,'+','.',"ID=$crisprId;Parent=$seqname;Name=$crisprId")."\n";
     for my $dr(@DRs){
       my $DRid=sprintf("DR%s",$drCounter++);
       print GFF join("\t",$seqname,"CG-Pipeline","direct_repeat",$$dr[0]+1,$$dr[1]+1,$score,'+','.',"ID=$DRid;Name=$DRid")."\n";
     }
     for my $spacer(@spacers){
       my $spacerid=sprintf("spacer%s",$spacerCounter++);
-      print GFF join("\t",$seqname,"CG-Pipeline","ncRNA",$$spacer[0]+1,$$spacer[1]+1,$score,'+','.',"ID=$spacerid;Name=$spacerid;Parent=$seqname")."\n";
+      print GFF join("\t",$seqname,"CG-Pipeline","spacer",$$spacer[0]+1,$$spacer[1]+1,$score,'+','.',"ID=$spacerid;Name=$spacerid;Parent=$seqname")."\n";
     }
   }
   close GFF;
@@ -281,10 +324,11 @@ sub pickUpMoreDrs{
 
   # blast with each DR
   my $drSeqArr=filterRepeatSeqs([keys(%$drPos)],$settings);
+  my $drSeqArr=[keys(%$drPos)];
   my %newDrPos;
   for my $drSeq(@$drSeqArr){
     my @newDrPos;
-    my $blsResults=command("echo '$drSeq'|legacy_blast.pl blastall -p blastn -d $db -e 0.05 -W 7 -F F -m 8 -a $$settings{numcpus}",{stdout=>1,quiet=>1});
+    my $blsResults=command("echo '$drSeq'|legacy_blast.pl blastall -p blastn -d $db -e 0.05 -W 7 -F F -m 8 -q -80 -f 20 -X 10 -a $$settings{numcpus}",{stdout=>1,quiet=>1});
     my @blsResults=split(/\n/,$blsResults);
     logmsg "".scalar(@blsResults)."\t$drSeq" if($$settings{verbose});
     for(@blsResults){
@@ -335,16 +379,16 @@ sub findSmallTandemRepeats{
 
   my @tmp=($outQ->pending)?$outQ->extract(0,$outQ->pending):();
   $drSeq{$_}=1 for(@tmp);
+  my @drSeq=keys(%drSeq);
 
-  my $smallTandemRepeatSeqs=filterRepeatSeqs([keys(%drSeq)],$settings);
+  #my $i=0; print ">$_\n$_\n" for(@drSeq);die;
+  my $smallTandemRepeatSeqs=filterRepeatSeqs(\@drSeq,$settings);
   return $smallTandemRepeatSeqs;
 }
 
 sub findRepeatsWorker{
   my($Q,$outQ,$minCrisprSize,$settings)=@_;
   my $TID="TID".threads->tid;
-  my $tmpfifo="$$settings{tempdir}/fifo.$TID.tmp";
-  mkfifo($tmpfifo,'0500') if(!-e $tmpfifo);
   my %seen;
   while(defined(my $tmp=$Q->dequeue)){
     my($i,$seqid,$seq)=@$tmp;
@@ -367,22 +411,17 @@ sub findRepeatsWorker{
 sub findRepeats{
   my($subAsm,$minCrisprSize,$settings)=@_;
   my $TID="TID".threads->tid;
-  my $tmpfifo="$$settings{tempdir}/fifo.$TID.tmp";
-  my $tmpout=command("echo -e \">seq\n$subAsm\" > $tmpfifo & $$settings{repeatMatch} -E -t -n $minCrisprSize $tmpfifo 2>/dev/null",{quiet=>1,stdout=>1});
+  my $repeatmatchout=command("echo -e \">seq\n$subAsm\" | $$settings{repeatMatch} -E -f -t -n $minCrisprSize /dev/stdin 2>/dev/null",{quiet=>1,stdout=>1});
   
   # read the repeats file
   my %repeat;
   my $i=0;
-  while($tmpout=~/\s*(.+)\s*\n/g){ # go through lines and trim
+  while($repeatmatchout=~/\s*(.+)\s*\n/g){ # go through lines and trim
     next if($i++<2); # skip headers
     my($start1,$start2,$length)=split /\s+/, $1;
     next if($length>$$settings{maxCrisprSize});
-    if($start2=~/(\d+)r/){ # revcom
-      $start2=$1-1; # base 1 to base 0
-      push(@{ $repeat{$start1} },[$start2,$length*-1]);
-    } else { # not revcom
-      push(@{ $repeat{$start1} },[$start2,$length]);
-    }
+    next if($start2=~/r/);
+    push(@{ $repeat{$start1} },[$start2,$length]);
   }
 
   # convert coordinates to sequences
@@ -470,7 +509,7 @@ sub crisprScore{
 
   # make multiple sequence alignment
   my $muscle=AKUtils::fullPathToExec("muscle");
-  command("$muscle -in $seqIn -out $seqOut -diags1 -quiet",{quiet=>1});
+  command("$muscle -in $seqIn -out $seqOut -diags1 -quiet",{quiet=>1,stdout=>1});
 
   # create an alignment score for how identical all DRs are
   my $aln=Bio::AlignIO->new(-file=>$seqOut)->next_aln;
@@ -564,7 +603,7 @@ sub usage{
   my($settings)=@_;
   local $0=fileparse $0;
   "Finds CRISPRs in a fasta file
-  Usage: $0 assembly.fasta -o outfile.sql
+  Usage: $0 assembly.fasta -o outfile.gff
     -w window size in bp. Default: $$settings{windowSize}
     -s step size in bp. Default: $$settings{stepSize}
   "
