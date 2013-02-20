@@ -46,7 +46,7 @@ exit(main());
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
 
-	my $usage = "$0 input.mfa [, input2.mfa, ...] -strain_name=name [-tag_prefix=prefix] [-classification=classification] [-R references.mfa] [-C workdir] [-blast_db=db] [-crisprPrediction] [-o=output_filename.gb]";
+	my $usage = "$0 input.mfa [, input2.mfa, ...] -strain_name=name [-crispr] [-tag_prefix=prefix] [-classification=classification] [-R references.mfa] [-C workdir] [-blast_db=db] [-crisprPrediction] [-o=output_filename.gb]";
 
 	die("Usage: $usage\n") if @ARGV < 1;
 
@@ -75,6 +75,7 @@ sub main() {
 
 	$$settings{tempdir} ||= tempdir($$settings{tempdir} or File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
   $$settings{tempdir} = File::Spec->rel2abs($$settings{tempdir});
+  mkdir $$settings{tempdir} if(!-d $$settings{tempdir});
 	logmsg "Temporary directory is $$settings{tempdir}";
 
 	my ($input_seqs, $ref_seqs) = loadInputs(\@input_files, \@ref_files);
@@ -121,6 +122,7 @@ sub getGenePredictions($$$$$) {
 $$settings{gm_trainer_xopts} .= " --motif=0";
 
 #goto RNA;
+logmsg "DEBUG";goto CRISPR;
 	# Obtain ab initio predictions
 	my $genemark_predictions;
 	if ($$settings{prediction_use_genemark}) {
@@ -234,7 +236,7 @@ RNA:
 
   CRISPR:
   if($$settings{crisprPrediction}){
-    my $crispr_predictions = getCrisprPredictions($input_seqs,$settings);
+    my $crispr_predictions = getCrisprPredictions($input_files,$settings);
     foreach my $seqname (keys %$crispr_predictions){
       foreach my $pred (@{$$crispr_predictions{$seqname}}) {
         $unified_predictions{$seqname}->{$$pred{strand}}->{$$pred{stop}} = $pred;
@@ -249,7 +251,7 @@ sub getCrisprPredictions{
   my($infile,$settings)=@_;
   my $gff="$$settings{tempdir}/crispr.gff";
 
-  system("run_prediction_crispr.pl '$infile' -o '$gff' ") if(!-e $gff);
+  system("run_prediction_crispr.pl ".join(" ",@$infile)." > '$gff' ") if(!-e $gff && -s $gff < 1);
   die if $?;
 
   my $predictions={}; # what will be returned
@@ -275,6 +277,7 @@ sub getCrisprPredictions{
       my($key,$value)=split /=/;
       $$f{$key}=$value;
     }
+    $$f{Parent}||=$$f{seqname};
 
     # classify this particular crispr subfeature
     die "ERROR: no ID or Parent attribute was found in the GFF line ".Dumper($f) if(!$$f{ID} && !$$f{Parent});
@@ -282,14 +285,19 @@ sub getCrisprPredictions{
       $$f{DR}=[];
       $$f{Spacer}=[];
       $$crispr{$$f{ID}}=$f;
-    } elsif ($$f{type}=~/DirectRepeat/i){
+    } elsif ($$f{type}=~/direct_repeat/i){
       push(@{ $$crispr{$$f{Parent}}{DR} },[$$f{lo},$$f{hi}]);
-    } elsif ($$f{type}=~/Spacer/i){
+    } elsif ($$f{type}=~/repeat_region/i){
       push(@{ $$crispr{$$f{Parent}}{Spacer} },[$$f{lo},$$f{hi}]);
+    } else{
+      die "Could not interpret type $$f{type} in $gff";
     }
   }
   close GFF;
+  die "CRISPR finding isn't working, for obtaining the actual predictions into a hash";
+  print Dumper %$crispr;
   push(@{ $$predictions{$$_{seqname}} },$_) for(values(%$crispr));
+  print Dumper %$$predictions;die;
   return $predictions;
 }
 
