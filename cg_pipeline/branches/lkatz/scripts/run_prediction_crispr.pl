@@ -11,7 +11,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::RealBin/../lib";
 $ENV{PATH} = "$FindBin::RealBin:".$ENV{PATH};
-use AKUtils qw/logmsg/;
+use AKUtils;
 use Data::Dumper;
 use Getopt::Long;
 use File::Basename;
@@ -19,15 +19,16 @@ use File::Copy qw/copy/;
 use Bio::AlignIO;
 use List::Util qw/sum min max/;
 
+$0=fileparse $0;
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
 exit(main());
 
+sub logmsg{print STDERR "$0: ".(caller(1))[3].": @_\n";}
 sub main{
-  local $0=fileparse $0;
   my $settings={
     appname=>"cgpipeline",
   };
-  GetOptions($settings,qw(outfile=s help tempdir=s verbose));
+  GetOptions($settings,qw(help tempdir=s));
   $$settings{tempdir}||=AKUtils::mktempdir($settings);
 
   $$settings{pilerCr}=AKUtils::fullPathToExec("pilercr");
@@ -41,10 +42,15 @@ sub main{
     my $gff=pilerCrToGff($pilerCrOut,$settings);
     push(@gff,$gff);
   }
-  
-  system("cat ".join(" ",@gff)." > $outfile");
-  die if $?;
 
+  # write the composite GFF
+  print "##gff-version  3\n";
+  open(GFF,"sort -k1,1 -k4,4n -k5,5nr ".join(" ",@gff)." |") or die "Could not open GFFs:$!";
+  while(<GFF>){
+    print;
+  }
+  close GFF;
+  
   return 0;
 }
 
@@ -112,6 +118,7 @@ sub usage{
   my($settings)=@_;
   local $0=fileparse $0;
   "Finds CRISPRs in a fasta file
-  Usage: $0 assembly.fasta -o outfile.gff
+  Usage: $0 assembly.fasta > outfile.gff
+    -t tempdir [optional]
   "
 }
