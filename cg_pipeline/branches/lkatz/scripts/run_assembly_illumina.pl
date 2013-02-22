@@ -264,7 +264,12 @@ sub runVelvetAssembly($$){
   my $totalMem=AKUtils::getFreeMem();
   my $memNumThreads=$totalMem/$memoryReqPerThread;
   my $numThreads=int(min($$settings{numcpus},$memNumThreads));
-  logmsg "I estimate that you have enough memory for $memNumThreads threads, and you have $$settings{numcpus} max threads.";
+  if($numThreads<1){ # a zero will make it hang forever
+    $numThreads=1;
+    logmsg "WARNING you are low on memory. However, I will set the number of threads to 1 so that the script progresses.";
+  }else{
+    logmsg "I estimate that you have enough memory for $memNumThreads threads, and you have $$settings{numcpus} max threads. Threads set to $numThreads.";
+  }
 
   my $command="VelvetOptimiser.pl -a -v -p $velvetPrefix -d $run_name -t $numThreads ";
   #warn "=======Debugging: only running hashes of 29 and 31\n"; $command.=" -s 29 -e 31 ";
