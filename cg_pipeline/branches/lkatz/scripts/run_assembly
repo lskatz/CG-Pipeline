@@ -37,7 +37,7 @@ exit(main());
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
 
-	die("Usage: $0 input.sff [, input2.sff, ... inputN.fastq, ... inputM.fasta] [-o output.fasta] [-R references.mfa] [-t tempdir]\n  Input files can be sff, fastq, and fasta.  *.fasta.qual files are considered as the relevant quality files") if @ARGV < 1;
+	die usage() if @ARGV < 1;
 
 	my @cmd_options = ('Reference=s@', 'keep', 'tempdir=s', 'output=s', 'debug','numcpus=i');
 	GetOptions($settings, @cmd_options) or die;
@@ -534,3 +534,13 @@ sub count_contigs{
 	my @contigs=grep /^>/,@lines;
 	return scalar @contigs;
 }
+
+sub usage{
+	"Usage: $0 input.sff [, input2.sff, ... inputN.fastq, ... inputM.fasta] [-o output.fasta]
+    Input files can be sff, fastq, and fasta.  *.fasta.qual files are considered as the relevant quality files
+    -R references.mfa to perform a reference assembly 
+    -t tempdir to name a specific temporary directory
+    -n numcpus to specify a number of threads, instead of all possible threads
+  "
+}
+
