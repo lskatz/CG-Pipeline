@@ -39,7 +39,7 @@ sub main() {
 
 	die usage() if @ARGV < 1;
 
-	my @cmd_options = ('Reference=s@', 'keep', 'tempdir=s', 'output=s', 'debug','numcpus=i');
+	my @cmd_options = ('Reference=s@', 'keep', 'tempdir=s', 'output=s', 'debug','numcpus=i', 'expectedGenomeSize=i');
 	GetOptions($settings, @cmd_options) or die;
 	$$settings{numcpus}||=AKUtils::getNumCPUs();
 
@@ -63,8 +63,6 @@ sub main() {
 		$file = File::Spec->rel2abs($file);
 		die("Input or reference file $file not found") unless -f $file;
 	}
-
-  # TODO make a distinction between long and short reads
 
   my $fastaqualfiles=baseCall(\@input_files,$settings); #array of [0=>fna,1=>qual file] (array of arrays)
 
@@ -272,6 +270,29 @@ sub baseCall($$){
 # quality control the fastq reads.
 sub qualityControlFastq{
   my($file,$settings)=@_;
+
+  # TODO integrate FastQC here, to trim bad 5' and 3' ends
+
+  # First, downsample if it helps.
+  # Pretend like this is the ony read set.
+  # TODO downsample later in the pipeline again or remove singletons if downsampling is needed
+  if(my $e=$$settings{expectedGenomeSize}){
+    my $downsampled="$$settings{tempdir}/".fileparse($file).".downsampled.fastq.gz";
+    my $targetCoverage=90;
+    logmsg "Expected genome size was given as $e. Downsampling to target coverage of $targetCoverage";
+
+    my $numBasesInReads=`run_assembly_readMetrics.pl '$file' | tail -n +2 | cut -f 3`+0;
+    die "Could not determine the number of bases in $file" if(!$numBasesInReads);
+    my $neededBases=$e*$targetCoverage;
+    my $keepPercentage=$neededBases/$numBasesInReads;
+    $keepPercentage=.9999 if($keepPercentage>1);
+    logmsg "Total bases in reads were $numBasesInReads. Needed bases are only $neededBases. Therefore I am downsampling by $keepPercentage of the total reads";
+    system("run_assembly_removeDuplicateReads.pl '$file' --downsample $keepPercentage | gzip -c > '$downsampled'");
+    die if $?;
+    $file=$downsampled;
+  }
+
+  # trimClean step
   my $outfile="$$settings{tempdir}/".fileparse($file).".trimmed.fastq";
   # vc-25.filtered.fastq.trimmed.singletons.fastq
   my $singletons="$$settings{tempdir}/".fileparse($file).".trimmed.singletons.fastq";
@@ -541,6 +562,8 @@ sub usage{
     -R references.mfa to perform a reference assembly 
     -t tempdir to name a specific temporary directory
     -n numcpus to specify a number of threads, instead of all possible threads
+    -e for an expected genome size, in bp (for 4MB genome, use -e 4000000)
+      This is used for downsampling and for displaying more accurate assembly metrics
   "
 }
 
