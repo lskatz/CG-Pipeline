@@ -278,7 +278,7 @@ sub qualityControlFastq{
   # TODO downsample later in the pipeline again or remove singletons if downsampling is needed
   if(my $e=$$settings{expectedGenomeSize}){
     my $downsampled="$$settings{tempdir}/".fileparse($file).".downsampled.fastq.gz";
-    my $targetCoverage=90;
+    my $targetCoverage=100;
     logmsg "Expected genome size was given as $e. Downsampling to target coverage of $targetCoverage";
 
     my $numBasesInReads=`run_assembly_readMetrics.pl '$file' | tail -n +2 | cut -f 3`+0;
