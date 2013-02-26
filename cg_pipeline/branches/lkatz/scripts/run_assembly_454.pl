@@ -312,39 +312,11 @@ sub combineNewblerAMOS($$$) {
 	my $repeat_fastaqual = sff2fastaqual(["$$settings{tempdir}/newbler_repeat.sff"], $settings);
 
   my $combiningDir="$$settings{tempdir}/454combine";
-  my $combined_filename="$combiningDir/assembly.fasta";
+  my $combined_filename="$combiningDir/minimus.combined.fasta";
   system("mkdir $combiningDir") if(!-d $combiningDir);
   die "Couldn't make combining directory because $!" if $?;
-  system("run_assembly_combine.pl -a '$newbler_basename/mapping/454AllContigs.fna' -a '$amos_basename.fasta' -r '$$unmapped_fastaqual[0]->[0]' -t $combiningDir -o $combined_filename");
+  system("run_assembly_combine.pl '$newbler_basename/mapping/454AllContigs.fna' '$amos_basename.fasta' -r '$$unmapped_fastaqual[0]->[0]' -t $combiningDir -o $combined_filename");
   die "Couldn't combine mapping assemblies" if $?;
   return $combined_filename;
-
-	my $newbler_contigs = count_contigs("$newbler_basename/mapping/454AllContigs.fna");
-	my $amos_contigs = count_contigs("$amos_basename.fasta");
-	my $combined_fasta_file = "$$settings{tempdir}/combined_in.fasta";
-	my $numcontigs=0;
-	if($newbler_contigs < $amos_contigs){
-		system("cat '$newbler_basename/mapping/454AllContigs.fna' '$amos_basename.fasta' '$$unmapped_fastaqual[0]->[0]' > $combined_fasta_file");
-		$numcontigs=$newbler_contigs;
-		logmsg("Newbler reference assembly selected as reference for minimus2");
-	}
-	else{
-		system("cat '$amos_basename.fasta' '$newbler_basename/mapping/454AllContigs.fna' '$$unmapped_fastaqual[0]->[0]' > $combined_fasta_file");
-		$numcontigs=$amos_contigs;
-		logmsg("AMOScmp reference assembly selected as reference for minimus2");
-	}
-	die if $?;
-	system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
-	system("minimus2 -D REFCOUNT=$numcontigs '$$settings{tempdir}/minimus.combined'");
-
-	return "$$settings{tempdir}/minimus.combined.fasta";
 }
-# TODO use run_assembly_metrics.pl instead to streamline
-sub count_contigs{
-	my $file=shift;
-	open(FH,"<$file")or die "Could not find $file because $!";
-	my @lines=<FH>;
-	close(FH);
-	my @contigs=grep /^>/,@lines;
-	return scalar @contigs;
-}
+
