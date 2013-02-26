@@ -43,7 +43,7 @@ sub main(){
     chomp($home);
   
   # get options
-  my @cmd_options = ('help','deNovo=s','force','project=s','input=s@','tag_prefix=s','Reference=s','command=s','verbose=i','goto=s');
+  my @cmd_options = ('help','deNovo=s','force','project=s','input=s@','tag_prefix=s','Reference=s','command=s','verbose=i','goto=s','expectedGenomeSize=i');
   GetOptions($settings,@cmd_options) or die;
   $verbose =(defined($$settings{verbose}))?$$settings{verbose}:2;
   
@@ -112,6 +112,7 @@ sub main(){
       }
       $invoke_string="time run_assembly $sffarg --tempdir=$home/$project/build/assembly --keep $refarg --output $home/$project/assembly.fasta ";
       $invoke_string.="-d T " if($$settings{deNovo});
+      $invoke_string.="-e $$settings{expectedGenomeSize} " if($$settings{expectedGenomeSize});
       if($verbose>1){
         $invoke_string.=" 2>&1 |tee --append $logfile";
       }
@@ -283,6 +284,7 @@ Parameters:
     default: 2
   -g Go to a particular stage in a particular phase. You should usually omit this.
     current options: [TMHMM|COGS|VFDB|BLAST|INTERPRO]
+  -e expected genome size in bp (4MB genome: -e 4000000)
 
 examples:
 
