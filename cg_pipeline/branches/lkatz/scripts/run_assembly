@@ -57,6 +57,7 @@ sub main() {
 	my @input_files = @ARGV;
 
 	$$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
+  mkdir $$settings{tempdir} if(!-d $$settings{tempdir});
 	logmsg "Temporary directory is $$settings{tempdir}";
 
 	foreach my $file (@input_files, @ref_files) {
