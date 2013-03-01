@@ -21,7 +21,7 @@ use Getopt::Long;
 use File::Temp ('tempdir');
 use File::Path;
 use File::Spec;
-use File::Copy;
+use File::Copy qw/copy/;
 use File::Basename;
 use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
@@ -45,6 +45,7 @@ sub main(){
   die usage() if($$settings{help});
   my $outfile=$$settings{outfile} or die "Missing outfile parameter:\n".usage();
   $$settings{order_seqs_by_name}=1;
+  $$settings{tempdir}||=AKUtils::mktempdir();
  
   my $isElementUrlList=isElementUrlList($settings);
   my ($isFna,$isFaa)=isElementFasta($isElementUrlList,$outfile,$settings);
@@ -56,10 +57,14 @@ sub main(){
 
 sub isElementFasta{
   my($isElementUrlList,$outfile,$settings)=@_;
-  my(%fna,%faa);
 
-  logmsg "Downloading IS sequences; " .scalar(@$isElementUrlList)." sequences to download";
+  my $tmpFna="$$settings{tempdir}/is.fna";
+  my $tmpFaa="$$settings{tempdir}/is.faa";
+  open(NT,">",$tmpFna) or die "Could not write to $tmpFna: $!";
+  open(AA,">",$tmpFaa) or die "Could not write to $tmpFaa: $!";
+  logmsg "Downloading IS sequences; " .scalar(@$isElementUrlList)." IS to download";
   my $isCount=0;
+  my $missingCount=0; # sequences that aren't found
   for my $url(@$isElementUrlList){
     my %is=(fna=>"NNN",faa=>"XXX",family=>"unknown",group=>"unknown");
     my $isPage=get($url);
@@ -67,14 +72,6 @@ sub isElementFasta{
     $is{name}=$url;
     $is{name}=~s/.+name=(.+)/$1/;
 
-    if($isPage=~/IS_SEQ:\s*.+?<tt>(.+?)<\/tt>/){
-      $is{fna}=$1;
-      $is{fna}=~s/<.*?br.*?>//g; # remove html
-    }
-    if($isPage=~/IS_PEP:\s*.+?<tt>(.+?)<\/tt>/){
-      $is{faa}=$1;
-      $is{faa}=~s/<.*?br.*?>//g;
-    }
     # family, group
     if($isPage=~/<td>((?:IS|Tn).+?)<\/td>\s*<td>(IS.+?|\-|)<\/td>/){
       $is{family}=$1;
@@ -82,10 +79,23 @@ sub isElementFasta{
       $is{name}="$is{family} name=$is{name} family=$is{family} group=$is{group}";
     }
 
-    #$is{name}="lcl|$is{name}";
-    $fna{$is{name}}=$is{fna};
-    $faa{$is{name}}=$is{faa};
-
+    # nt and aa sequences
+    if($isPage=~/IS_SEQ:\s*.+?<tt>(.+?)<\/tt>/){
+      my $sequence=$1;
+      $sequence=~s/<.*?br.*?>//g; # remove html
+      print NT ">$is{name}\n$sequence\n";
+    }
+    my $aaCount=0;
+    while($isPage=~/IS_PEP(\d+)?:\s*.+?<tt>(.+?)<[^b]/g){
+      my $sequence=$2;
+      $sequence=~s/<.*?br.*?>//g;
+      print AA ">$is{name}\n$sequence\n";
+      $aaCount++;
+    }
+    if(!$aaCount){
+      logmsg "WARNING Could not find a sequence for $is{name} via\n  $url";
+      $missingCount++;
+    }
 
     $isCount++;
     if($isCount % 50 == 0){
@@ -93,10 +103,12 @@ sub isElementFasta{
       #logmsg "debugging...";last;
     }
   }
+  close NT; close AA;
   logmsg "$isCount IS elements downloaded (done downloading).";
+  logmsg "$missingCount sequences were not found and were skipped.";
 
-  AKUtils::printSeqsToFile(\%fna,"$outfile.fna",$settings);
-  AKUtils::printSeqsToFile(\%faa,"$outfile.faa",$settings);
+  copy($tmpFna,"$outfile.fna");
+  copy($tmpFaa,"$outfile.faa");
 
   # make the blast dbs and move them here
   my $formatdbOpts={formatdb_protein_db=>0,formatdb_in_place=>1};
@@ -137,7 +149,8 @@ sub isElementUrlList{
 
   # http://www-is.biotoul.fr/is/scripts/is_spec.php?name=ISPsp2
   #push(@URL,"http://www-is.biotoul.fr/is/scripts/is_spec.php?name=$_") for(@name);
-  push(@URL,"https://www-is.biotoul.fr//index.html?is_special_name=$_") for(@name);
+  #push(@URL,"https://www-is.biotoul.fr//index.html?is_special_name=$_") for(@name);
+  push(@URL,"https://www-is.biotoul.fr/is/scripts/is_spec.php?name=$_") for(@name);
   
   return \@URL;
 }
