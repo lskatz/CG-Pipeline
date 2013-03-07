@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-# Predict CRISPRs in a fasta file. Presently, just using Piler-CR
+# Predict CRISPRs in a fasta file.
 # Author: Lee Katz <lkatz@cdc.gov>
 
 # Note: if any other CRISPR detection programs are added to CG-Pipeline,
@@ -15,7 +15,7 @@ use AKUtils;
 use Data::Dumper;
 use Getopt::Long;
 use File::Basename;
-use File::Copy qw/copy/;
+use File::Copy qw/copy move/;
 use Bio::AlignIO;
 use List::Util qw/sum min max/;
 
@@ -28,7 +28,7 @@ sub main{
   my $settings={
     appname=>"cgpipeline",
   };
-  GetOptions($settings,qw(help tempdir=s));
+  GetOptions($settings,qw(help tempdir=s crtJar=s));
   $$settings{tempdir}||=AKUtils::mktempdir($settings);
 
   $$settings{pilerCr}=AKUtils::fullPathToExec("pilercr");
@@ -38,8 +38,12 @@ sub main{
   
   my @gff;
   for my $assembly(@assembly){
-    my $pilerCrOut=runPilerCr($assembly,$settings);
-    my $gff=pilerCrToGff($pilerCrOut,$settings);
+    logmsg "$assembly";
+    my $crtGff=runCrt($assembly,$settings);
+    #my $pilerCrOut=runPilerCr($assembly,$settings);
+    #my $gff=pilerCrToGff($pilerCrOut,$settings);
+
+    my $gff=$crtGff; # combine the gffs somehow
     push(@gff,$gff);
   }
 
@@ -53,11 +57,75 @@ sub main{
   
   return 0;
 }
+sub runCrt{
+  my($assembly,$settings)=@_;
+  my $crtJar=$$settings{crtJar}||"";
+  die "ERROR Cannot find CRT jar file at $crtJar" if(!-f $crtJar);
+  my $basename=fileparse $assembly;
+  my $crtOut="$$settings{tempdir}/$basename.crt.out";
+  my $java=AKUtils::fullPathToExec("java");
+  my $seqs=AKUtils::readMfa($assembly,{first_word_only=>1});
+  # CRT has a problem with multifasta, so run it once per contig
+  mkdir "$$settings{tempdir}/gff";
+  while(my($id,$sequence)=each(%$seqs)){
+    my $contig="$$settings{tempdir}/tmpcontig.fasta";
+    AKUtils::printSeqsToFile({$id=>$sequence},$contig);
+    my $command="$java -cp $crtJar crt -minNR 2 -maxSL 100 '$contig' '$crtOut' 1>/dev/null 2>&1";
+    system($command);
+    die if $?;
+    my $crtGff=crtToGff($crtOut,$settings);
+    move("$crtGff","$$settings{tempdir}/gff/$id.gff"); die $! if $?;
+  }
+  system("cat $$settings{tempdir}/gff/*.gff > $$settings{tempdir}/$basename.gff"); die if $?;
+  return "$$settings{tempdir}/$basename.gff";
+}
+
+sub crtToGff{
+  my($crtOut,$settings)=@_;
+  my $gff="$crtOut.gff";
+  open(CRT,"<",$crtOut) or die "Could not read $crtOut:$!";
+  open(GFF,">",$gff) or die "Could not write to $gff:$!";
+  my $drId=0;
+  my $seqname="UNDEFINED";
+  while(<CRT>){
+    if(/ORGANISM:\s+(\S+)/){
+      $seqname=$1;
+    }
+    if(/CRISPR (\d+)/){
+      my $crisprId=$1;
+      my $crisprStart=0;
+      my $crisprStop=0;
+      while(<CRT>){
+        next if(/^POSITION/);
+        next if(/^\-\-/);
+        last if(/^Repeats/);
+        chomp;
+        my($drStart,$DR,$spacer,$lengths)=split /\t+/;
+        my $drLength=length($DR);
+        my $drStop=$drStart+$drLength-1;
+        $crisprStart||=$drStart;
+        if($spacer){
+          my $spacerLength=length($spacer);
+          my $spacerStart=$drStop+1;
+          my $spacerStop=$spacerStart+$spacerLength-1;
+        } else {
+          $crisprStop=$drStop;
+        }
+        $drId++;
+        print GFF join("\t",$seqname,"CrisprRecognitionTool","direct_repeat",$drStart,$drStop,'.','.','.',"Parent=CRISPR$crisprId;Name=DR$drId;ID=DR$drId")."\n";
+      }
+      next if(!$crisprStart);
+      print GFF join("\t",$seqname,"CrisprRecognitionTool","repeat_region",$crisprStart,$crisprStop,'.','.','.',"Name=CRISPR$crisprId;Id=CRISPR$crisprId")."\n";
+    }
+  }
+  close CRT;
+  close GFF;
+  return $gff;
+}
 
 sub runPilerCr{
   my($assembly,$settings)=@_;
 
-  logmsg "$assembly";
   my $basename=fileparse $assembly;
   my $pilerCrOut="$$settings{tempdir}/$basename.pilerCr.out";
   my $pilerCrDr="$$settings{tempdir}/$basename.pilerCr.dr.fasta";
