@@ -122,7 +122,7 @@ sub getGenePredictions($$$$$) {
 $$settings{gm_trainer_xopts} .= " --motif=0";
 
 #goto RNA;
-logmsg "DEBUG";goto CRISPR;
+#logmsg "DEBUG";goto CRISPR;
 	# Obtain ab initio predictions
 	my $genemark_predictions;
 	if ($$settings{prediction_use_genemark}) {
@@ -251,8 +251,10 @@ sub getCrisprPredictions{
   my($infile,$settings)=@_;
   my $gff="$$settings{tempdir}/crispr.gff";
 
-  system("run_prediction_crispr.pl ".join(" ",@$infile)." > '$gff' ") if(!-e $gff && -s $gff < 1);
-  die if $?;
+  if(!-f $gff || -s $gff<1){
+    system("run_prediction_crispr.pl ".join(" ",@$infile)." > '$gff' ") if(!-e $gff && -s $gff < 1);
+    die if $?;
+  }
 
   my $predictions={}; # what will be returned
   my $crispr={}; # in order to get direct repeats etc
