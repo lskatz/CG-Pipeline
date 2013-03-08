@@ -28,10 +28,12 @@ sub main{
   my $settings={
     appname=>"cgpipeline",
   };
+  $settings=AKUtils::loadConfig($settings);
   GetOptions($settings,qw(help tempdir=s crtJar=s));
   $$settings{tempdir}||=AKUtils::mktempdir($settings);
+  $$settings{crtJar}||=$$settings{prediction_crt_jar};
 
-  $$settings{pilerCr}=AKUtils::fullPathToExec("pilercr");
+  #$$settings{pilerCr}=AKUtils::fullPathToExec("pilercr");
   my $outfile=$$settings{outfile} || "$0.gff";
   die usage() if(@ARGV<1);
   my @assembly=@ARGV;
@@ -47,7 +49,7 @@ sub main{
     push(@gff,$gff);
   }
 
-  # write the composite GFF
+  # write the composite GFF, sorting by contig and then start/stop
   print "##gff-version  3\n";
   open(GFF,"sort -k1,1 -k4,4n -k5,5nr ".join(" ",@gff)." |") or die "Could not open GFFs:$!";
   while(<GFF>){
