@@ -1455,6 +1455,11 @@ sub getGlimmer3Predictions($;$) {
 		$renamed_seqs{$seqname_orig2working{$seqname}} = $$seqs{$seqname};
 	}
 
+  if(-e "$$settings{tempdir}/glimmer3.predict"){
+    logmsg "Found Glimmer3 output file at $$settings{tempdir}/glimmer3.predict. Not going to run it again";
+    return loadGlimmer3Predictions("$$settings{tempdir}/glimmer3.predict", $seqs, \%seqname_working2orig);
+  }
+
 	my $glimmer_infile = "$$settings{tempdir}/glimmer3_in.fasta";
 	printSeqsToFile(\%renamed_seqs, $glimmer_infile);
 
@@ -1654,6 +1659,9 @@ sub getGenemarkPredictions($;$) {
 	logmsg "Running $$settings{gm_predictor} on $gm_input_file using model $$settings{gmhmm_model}...";
 
 	my $lst_file = "$$settings{tempdir}/gm_out.lst";
+  if(-f $lst_file && -s $lst_file>1){
+    return loadGMHMMPredictions($lst_file, $seqs, \%seqname_working2orig);
+  }
 	unlink $lst_file;
 	while (my ($seqname, $seq) = each(%renamed_seqs)) {
 		my $temp_fna = "$$settings{tempdir}/temp.fna";
@@ -1894,7 +1902,7 @@ sub getBLASTGenePredictions($$) {
 	$$settings{quiet} = 1;
   # use -m 9 such that comment lines become separators
   if(!-e $blast_outfile){
-    system("legacy_blast.pl blastall -p blastp -d $$settings{blast_db} -m 9 -a $$settings{num_cpus} -i $blastIn -o $blast_outfile $$settings{blast_xopts} 2>&1");
+    system("legacy_blast.pl blastall -p blastp -d '$$settings{blast_db}' -m 9 -a $$settings{num_cpus} -i $blastIn -o '$blast_outfile' $$settings{blast_xopts} 2>&1");
     die if $?;
     # add a comment line at the end of the blast file to mark the end of the last entry
     system("echo '# last line' >> $blast_outfile"); die if $?; 
