@@ -19,6 +19,8 @@ use File::Copy qw/copy move/;
 use Bio::AlignIO;
 use List::Util qw/sum min max/;
 
+my $directRepeatId=0; # this is a global var to keep track of unique IDs
+
 $0=fileparse $0;
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
 exit(main());
@@ -66,7 +68,7 @@ sub runCrt{
   my $basename=fileparse $assembly;
   my $crtOut="$$settings{tempdir}/$basename.crt.out";
   my $java=AKUtils::fullPathToExec("java");
-  my $seqs=AKUtils::readMfa($assembly,{first_word_only=>1});
+  my $seqs=AKUtils::readMfa($assembly,{first_word_only=>0});
   # CRT has a problem with multifasta, so run it once per contig
   mkdir "$$settings{tempdir}/gff";
   while(my($id,$sequence)=each(%$seqs)){
@@ -87,10 +89,10 @@ sub crtToGff{
   my $gff="$crtOut.gff";
   open(CRT,"<",$crtOut) or die "Could not read $crtOut:$!";
   open(GFF,">",$gff) or die "Could not write to $gff:$!";
-  my $drId=0;
+  my $drId=$directRepeatId; # value is from a global scope
   my $seqname="UNDEFINED";
   while(<CRT>){
-    if(/ORGANISM:\s+(\S+)/){
+    if(/ORGANISM:\s+(.+)\s*$/){
       $seqname=$1;
     }
     if(/CRISPR (\d+)/){
@@ -120,6 +122,7 @@ sub crtToGff{
       print GFF join("\t",$seqname,"CrisprRecognitionTool","repeat_region",$crisprStart,$crisprStop,'.','.','.',"Name=CRISPR$crisprId;Id=CRISPR$crisprId")."\n";
     }
   }
+  $directRepeatId=$drId; # return the value back to global scope
   close CRT;
   close GFF;
   return $gff;

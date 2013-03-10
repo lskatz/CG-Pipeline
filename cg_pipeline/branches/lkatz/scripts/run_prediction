@@ -252,7 +252,7 @@ sub getCrisprPredictions{
   my $gff="$$settings{tempdir}/crispr.gff";
 
   if(!-f $gff || -s $gff<1){
-    system("run_prediction_crispr.pl ".join(" ",@$infile)." > '$gff' ") if(!-e $gff && -s $gff < 1);
+    system("run_prediction_crispr.pl --tempdir $$settings{tempdir} ".join(" ",@$infile)." > '$gff' ") if(!-e $gff && -s $gff < 1);
     die if $?;
   }
 
@@ -263,9 +263,11 @@ sub getCrisprPredictions{
     next if(/^#/);
     chomp;
     my $attributes;
-    my $f={};
+    my $f={}; # features from a single GFF line
+    my $p={}; # this prediction
     # hi lo stop start seqname strand type predictor 
     ($$f{seqname},$$f{predictor},$$f{type},$$f{lo},$$f{hi},$$f{score},$$f{strand},undef,$attributes)=split /\t/;
+    $$f{strand}=($$f{strand} eq '.')?"+":$$f{strand}; #strand is + if undefined
     $$f{predictor}=[$$f{predictor}]; # this is an array because it can be multiple predictors
     if($$f{strand}=~/\+|\./){
       $$f{start}=min($$f{lo},$$f{hi});
@@ -283,23 +285,17 @@ sub getCrisprPredictions{
 
     # classify this particular crispr subfeature
     die "ERROR: no ID or Parent attribute was found in the GFF line ".Dumper($f) if(!$$f{ID} && !$$f{Parent});
-    if($$f{type} =~/CRISPR/i){
+    if($$f{type} =~/repeat_region/i){
       $$f{DR}=[];
       $$f{Spacer}=[];
-      $$crispr{$$f{ID}}=$f;
+      push(@{$$predictions{$$f{seqname}}},$f);
     } elsif ($$f{type}=~/direct_repeat/i){
-      push(@{ $$crispr{$$f{Parent}}{DR} },[$$f{lo},$$f{hi}]);
-    } elsif ($$f{type}=~/repeat_region/i){
-      push(@{ $$crispr{$$f{Parent}}{Spacer} },[$$f{lo},$$f{hi}]);
+      # maybe TODO find which crispr this belongs to and add it
     } else{
       die "Could not interpret type $$f{type} in $gff";
     }
   }
   close GFF;
-  die "CRISPR finding isn't working, for obtaining the actual predictions into a hash";
-  print Dumper %$crispr;
-  push(@{ $$predictions{$$_{seqname}} },$_) for(values(%$crispr));
-  print Dumper %$$predictions;die;
   return $predictions;
 }
 
@@ -399,21 +395,12 @@ sub generateGenBankFile($$$) {
 				$pred_feature->add_tag_value('note', 'Predictors: '.join(', ', @{$$pred{predictor}}));
 				$pred_feature->add_tag_value('product', $$pred{rrna_type});
 				# TODO: Finish me
-			} elsif ($$pred{type} eq 'CRISPR') {
-        # TODO follow this style http://www.ncbi.nlm.nih.gov/nuccore/HE980450
-        # type is "repeat_region" with 
-        # /standard_name="DR3" # how do I know which DR ID it is??
-        # /rpt_type=DIRECT
-        # /rpt_unit_seq="agaagcttatcataaat"
+			} elsif ($$pred{type} eq 'repeat_region') { # CRISPRs
         my $locus_tag = $crispr_tag_factory->nextTag();
 				$pred_gene_feature->add_tag_value('locus_tag', $locus_tag);
 				$pred_feature->add_tag_value('locus_tag', $locus_tag);
 				$pred_feature->add_tag_value('evidence', 'predicted');
 				$pred_feature->add_tag_value('note', 'Predictors: '.join(', ', @{$$pred{predictor}}));
-        my $DRstr;
-        $DRstr.="$$_[0]..$$_[0], " for(@{$$pred{DR}});
-        $DRstr=~s/,\s*$//;
-				$pred_feature->add_tag_value('note', "Direct repeats: $DRstr");
       }else { die "Internal error: cannot understand feature type $$pred{type}" }
 
 			$gbseq->add_SeqFeature($pred_gene_feature);
