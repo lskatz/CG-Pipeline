@@ -30,7 +30,7 @@ sub new {
 	die("Unknown factory type $$self{factory_type}. Implemented factory types: draft_orf_tagger")
 		if $$self{factory_type} ne "draft_orf_tagger";
 
-	$$self{tag_prefix} ||= $$self{strain_name}."_draft_";
+	$$self{tag_prefix} ||= $$self{strain_name}."_";
 	$$self{idx_counter} = 0;
 
     bless $self, $class;
