@@ -45,42 +45,24 @@ sub main() {
   my $project=File::Spec->rel2abs($project);
   die("Project $project not found") unless -d $project;
 
-  my $metrics=metrics($project,$settings);
-  # TODO print metrics in an understandable and parsable way
-  print join("\t","Project",$project)."\n";
-  foreach my $metric (sort keys %$metrics){
-    print join("\t",$metric,$$metrics{$metric});
-    print "\n";
-  }
+  metrics($project,$settings);
   return 0;
 }
 
 sub metrics{
   my($project,$settings)=@_;
-  my (%metrics,$command,$out);
   
-  return \%metrics if(!-e "$$settings{project}/assembly.fasta");
-  $out=`run_assembly_metrics.pl $$settings{project}/assembly.fasta`;
-  readMetrics($out,\%metrics,'assembly_');
-  
-  return \%metrics if(!-e "$$settings{project}/prediction.gb");
-  $out=`run_prediction_metrics.pl $$settings{project}/prediction.gb`;
-  readMetrics($out,\%metrics,'prediction_');
-
-  return \%metrics if(!-e "$$settings{project}/annotation.gb");
-  $out=`run_prediction_metrics.pl $$settings{project}/annotation.gb`;
-  readMetrics($out,\%metrics,'annotation_');
-
-  return \%metrics;
-}
-
-# read a metrics output into a hash
-sub readMetrics{
-  my($metricsStr,$hash,$key_prefix)=@_;
-  
-  for(split /\n/,$metricsStr){
-    my($key,$value)=split /\t/;
-    $$hash{"$key_prefix$key"}=$value;
+  if(-e "$project/assembly.fasta"){
+    system("run_assembly_metrics.pl $project/assembly.fasta");
+    die if $?;
   }
-  return 1;
+  if(-e "$$settings{project}/prediction.gb"){
+    system("run_prediction_metrics.pl $project/prediction.gb");
+    die if $?;
+  }
+  if(-e "$project/annotation.gb"){
+    system("run_prediction_metrics.pl $project/annotation.gb");
+    die if $?;
+  }
 }
+

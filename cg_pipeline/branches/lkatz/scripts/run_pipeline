@@ -219,7 +219,7 @@ sub finalStats{
   CGLog($logfile,"FINAL STATS - ".date(),'append');
   my $invoke_string="run_pipeline_metrics.pl -p $project 2>&1 ";
   if($verbose>1){
-    $invoke_string.="|tee --append $logfile";
+    $invoke_string.="|column -t|tee --append $logfile";
   }
   else{
     $invoke_string.=">>$logfile";
