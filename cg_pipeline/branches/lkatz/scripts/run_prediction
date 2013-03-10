@@ -251,13 +251,15 @@ sub getCrisprPredictions{
   my($infile,$settings)=@_;
   my $gff="$$settings{tempdir}/crispr.gff";
 
+  my $predictions={}; # what will be returned
   if(!-f $gff || -s $gff<1){
-    system("run_prediction_crispr.pl --tempdir $$settings{tempdir} ".join(" ",@$infile)." > '$gff' ") if(!-e $gff && -s $gff < 1);
-    die if $?;
+    system("run_prediction_crispr.pl --tempdir $$settings{tempdir} ".join(" ",@$infile)." > '$gff' ");
+    if($?){
+      logmsg "WARNING: I ran CRISPR prediction but got an error. CRISPRs will not be reported.";
+      return $predictions;
+    }
   }
 
-  my $predictions={}; # what will be returned
-  my $crispr={}; # in order to get direct repeats etc
   open(GFF,$gff) or die "Could not open crispr gff $gff: $!";
   while(<GFF>){
     next if(/^#/);
