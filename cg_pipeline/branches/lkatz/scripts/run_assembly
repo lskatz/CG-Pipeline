@@ -88,7 +88,7 @@ sub main() {
         system($command) unless(-s $out454 > 1 || $$settings{debug});
         die "Could not run Newbler" if $?;
 
-        DENOVO_POLISHING:
+        MAPPING_POLISHING:
         if(@{ $$fastaqualfiles{illumina} }){
           logmsg "Polishing the 454 assembly with Nesoni";
           my $polishing_basename=File::Spec->rel2abs("$$settings{tempdir}/$ref_name/polishing");
@@ -143,6 +143,8 @@ sub main() {
       die "Could not run Newbler" if $?;
 
       DENOVO_POLISHING:
+      # TODO turn polishing into a subroutine.
+      # TODO make it a combination b/n smalt and samToFasta
       if(@{ $$fastaqualfiles{illumina} }){
         logmsg "Polishing the 454 assembly with Nesoni";
         my $polishing_basename=File::Spec->rel2abs("$$settings{tempdir}/DENOVO/polishing");
