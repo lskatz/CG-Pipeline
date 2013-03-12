@@ -89,18 +89,8 @@ sub main() {
         die "Could not run Newbler" if $?;
 
         MAPPING_POLISHING:
-        if(@{ $$fastaqualfiles{illumina} }){
-          logmsg "Polishing the 454 assembly with Nesoni";
-          my $polishing_basename=File::Spec->rel2abs("$$settings{tempdir}/$ref_name/polishing");
-          my $outPolishing=File::Spec->abs2rel("$polishing_basename/consensus_masked.fa");
-          #push(@assembly,$out454); goto MAPPING_ILLUMINA;
-          system("mkdir $polishing_basename") if(!-d $polishing_basename);
-          system("nesoni samshrimp: $polishing_basename $out454 reads: ".join(" ",@{ $$fastaqualfiles{illumina} })." --sam-unaligned no") unless($$settings{debug} || -e "$polishing_basename/alignments.bam");
-          die "Problem with Nesoni and/or SHRiMP" if $?;
-          system("nesoni samconsensus: $polishing_basename --majority 0.9 --cutoff 0.9") unless($$settings{debug} || -e "$polishing_basename/consensus.fa");
-          die "Problem with Nesoni and/or Samtools" if $?;
-          $out454=$outPolishing;
-        }
+        # polish the 454 assembly with Illumina reads
+        $out454=polish454($$fastaqualfiles{illumina},$out454,$settings) if(@{ $$fastaqualfiles{illumina}});
         push(@ref_assembly, $out454);
       }
 
@@ -143,20 +133,8 @@ sub main() {
       die "Could not run Newbler" if $?;
 
       DENOVO_POLISHING:
-      # TODO turn polishing into a subroutine.
-      # TODO make it a combination b/n smalt and samToFasta
-      if(@{ $$fastaqualfiles{illumina} }){
-        logmsg "Polishing the 454 assembly with Nesoni";
-        my $polishing_basename=File::Spec->rel2abs("$$settings{tempdir}/DENOVO/polishing");
-        my $outPolishing=File::Spec->abs2rel("$polishing_basename/consensus_masked.fa");
-        #push(@assembly,$out454); goto DENOVO_ILLUMINA;
-        system("mkdir $polishing_basename") if(!-d $polishing_basename);
-        system("nesoni samshrimp: $polishing_basename $out454 reads: ".join(" ",@{ $$fastaqualfiles{illumina} })." --sam-unaligned no") unless($$settings{debug});
-        die "Problem with Nesoni and/or SHRiMP" if $?;
-        system("nesoni samconsensus: $polishing_basename --majority 0.9 --cutoff 0.9") unless($$settings{debug});
-        die "Problem with Nesoni and/or Samtools" if $?;
-        $out454=$outPolishing;
-      }
+      # polish the 454 assembly with Illumina reads
+      $out454=polish454($$fastaqualfiles{illumina},$out454,$settings) if(@{ $$fastaqualfiles{illumina}});
       push(@assembly, $out454);
     }
 
@@ -269,6 +247,50 @@ sub baseCall($$){
     }
   }
   return {sff=>$sff,454=>$long,illumina=>$short};
+}
+
+# Polish a slightly inaccurate assembly by mapping Illumina reads to it.
+# Usually you'd want to do it with a 454 assembly and Illumina reads.
+sub polish454{
+  my($illuminaArr,$assembly,$settings)=@_;
+  my $polishing_basename=File::Spec->rel2abs("$$settings{tempdir}/DENOVO/polishing");
+  my $outPolishing="$polishing_basename/polished.assembly.fasta";
+  my $polishingBam="$polishing_basename/polished.assembly.bam";
+  system("mkdir $polishing_basename") if(!-d $polishing_basename);
+  my $smalt=AKUtils::fullPathToExec("smalt");
+  system("$smalt index $assembly $assembly"); die if $?;
+  my @tmpBam;
+  # map each fastq against the reference
+  for my $fastq (@$illuminaArr){
+    my $fastqBasename=basename($fastq);
+    my $outSam="$polishing_basename/$fastqBasename.sam";
+    my $outBam="$polishing_basename/$fastqBasename.bam";
+    my $outSorted="$polishing_basename/$fastqBasename.sorted"; #.bam is appended
+    my $isPe=AKUtils::is_fastqPE($fastq);
+    logmsg "Mapping $fastq to assembly";
+    my $smaltxopts="-o $outSam -n $$settings{numcpus} -f samsoft";
+    if($isPe){
+      my $mate1="$polishing_basename/$fastqBasename.1.fastq";
+      my $mate2="$polishing_basename/$fastqBasename.2.fastq";
+      system("run_assembly_shuffleReads.pl -d $fastq > $mate1 2> $mate2");
+      die "Error with deshuffling $fastq" if $?;
+      system("$smalt map $smaltxopts $assembly $mate1 $mate2"); die "Error with smalt mapping" if $?;
+    }else{
+      system("$smalt map $smaltxopts $assembly $fastq"); die "Error with smalt mapping" if $?;
+    }
+    system("samtools view -bSh $outSam > $outBam"); die if $?;
+    system("samtools sort $outBam $outSorted"); die if $?;
+    push(@tmpBam,"$outSorted.bam");
+  }
+  # merge all the pileups or if just one, make a soft link
+  if(@tmpBam>1){
+    system("samtools merge -f $polishingBam ".join(" ".@tmpBam)); die if $?;
+  } else {
+    system("ln -sv $tmpBam[0] $polishingBam"); die if $?;
+  }
+  # convert the pileups to fasta
+  system("run_assembly_samToFasta.pl -b $polishingBam -a $assembly -t $polishing_basename -o $outPolishing -q"); die if $?;
+  return $outPolishing;
 }
 
 # quality control the fastq reads.
