@@ -336,8 +336,7 @@ sub covDepth{
   my $allowedStdDeviations=3; # how many stdevs to go out for depth?
   logmsg "Finding the min/max depth within $allowedStdDeviations standard deviations";
 
-  my $samtools=`which samtools`;#AKUtils::fullPathToExec("samtools");
-    chomp($samtools);
+  my $samtools=AKUtils::fullPathToExec("samtools");
   my $command="$samtools depth '$bam'";
   logmsg "COMMAND\n  $command";
   my $depth=`$command`; die if $?;
