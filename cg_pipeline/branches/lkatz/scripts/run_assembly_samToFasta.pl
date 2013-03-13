@@ -35,8 +35,8 @@ sub main{
   my $settings=AKUtils::loadConfig($settings);
   die usage() if(@ARGV<1);
 
-  GetOptions($settings,qw(assembly=s sam=s bam=s force tempdir=s keep outfile=s qual mask));
-  $$settings{min_mapping_qual}||=1; # samtools mpileup -q parameter
+  GetOptions($settings,qw(assembly=s sam=s bam=s force tempdir=s keep outfile=s qual mask min_mapping_qual=i));
+  $$settings{min_mapping_qual}||=0; # samtools mpileup -q parameter
 
   # check for required parameters
   for my $param (qw(assembly)){
@@ -423,12 +423,14 @@ Usage: perl $0 -a reference.fasta -s assembly.sam -o assembly.fasta -q
     default: $0.merged.fasta
   -t (optional) This is where temporary files will be stored. 
     Default: /tmp/xxxxxx/ where xxxxxx is a random directory
+  --min_maping_quality 0 for the acceptable mapping quality.
+    Default: 0
 
   No arguments should be given for the following options
   -f (optional) Force.
   -k (optional) keep temporary files around (about 2GB of files in my test run)
-  -q to output quality files too. (assembly.fasta.qual)
-  -m to mask any bases that have a lower mapping quality or where the depth is not in 2 standard deviations of the mean
+  -q to output quality assembly file too. (assembly.fasta.qual)
+  --mask to mask any bases that have a lower mapping quality or where the depth is not in 2 standard deviations of the mean
   ";
 }
 
