@@ -423,7 +423,7 @@ Usage: perl $0 -a reference.fasta -s assembly.sam -o assembly.fasta -q
     default: $0.merged.fasta
   -t (optional) This is where temporary files will be stored. 
     Default: /tmp/xxxxxx/ where xxxxxx is a random directory
-  --min_maping_quality 0 for the acceptable mapping quality.
+  --min_mapping_qual 0 for the acceptable mapping quality.
     Default: 0
 
   No arguments should be given for the following options
