@@ -49,7 +49,7 @@ sub main() {
 	$$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
 	open(FH, '>', $$settings{outfile}) or die("Error writing to output file $$settings{outfile}");
 	close FH;
-	logmsg "Output file is " . $$settings{outfile} . "\n";
+	logmsg "Output file is " . $$settings{outfile};
 
 	my @ref_files = @{$$settings{Reference}} if defined $$settings{Reference};
 	logmsg "No reference files supplied. Reverting to assembly mode" unless @ref_files;
@@ -274,76 +274,29 @@ sub baseCall($$){
 # quality control the fastq reads.
 sub qualityControlFastq{
   my($file,$settings)=@_;
+  
+  # Trim 5' and 3' based on the stability of ATCG percentages.
+  # This should remove any weird adapters/linkers/etc that are not really in the genome
+  my $trimmedFile=trimUpAndDown($file,$settings);
 
-  # TODO integrate FastQC here, to trim bad 5' and 3' ends
-
-  # First, downsample if it helps.
-  # Pretend like this is the ony read set.
+  # Downsample if it helps.
+  # Pretend like this is the ony read set in terms of coverage.
   # TODO downsample later in the pipeline again or remove singletons if downsampling is needed
   if(my $e=$$settings{expectedGenomeSize}){
     my $downsampled="$$settings{tempdir}/".fileparse($file).".downsampled.fastq.gz";
     my $targetCoverage=100;
     logmsg "Expected genome size was given as $e. Downsampling to target coverage of $targetCoverage";
 
-    my $numBasesInReads=`run_assembly_readMetrics.pl '$file' | tail -n +2 | cut -f 3`+0;
-    die "Could not determine the number of bases in $file" if(!$numBasesInReads);
+    my $numBasesInReads=`run_assembly_readMetrics.pl '$trimmedFile' | tail -n +2 | cut -f 3`+0;
+    die "Could not determine the number of bases in $trimmedFile" if(!$numBasesInReads);
     my $neededBases=$e*$targetCoverage;
     my $keepPercentage=$neededBases/$numBasesInReads;
     $keepPercentage=.9999 if($keepPercentage>1);
     logmsg "Total bases in reads were $numBasesInReads. Needed bases are only $neededBases. Therefore I am downsampling by $keepPercentage of the total reads";
-    system("run_assembly_removeDuplicateReads.pl '$file' --downsample $keepPercentage | gzip -c > '$downsampled'");
+    system("run_assembly_removeDuplicateReads.pl '$trimmedFile' --downsample $keepPercentage | gzip -c > '$downsampled'");
     die if $?;
     $file=$downsampled;
   }
-
-  # TODO
-  # 5' and 3' trimming step
-  # fastqqc -c 99999 -tsv vc-25.shuffled.fastq 2>/dev/null |perl -e 'while(<>){if(/^pos/){while(<>){my($pos,$a,$c,$g,$t,$n,$q)=split /\t/; push(@a,$a); push(@c,$c); push(@g,$g); push(@t,$t);}}} for($i=0;$i<@a-1;$i++){$g=abs($g[$i+1]-$g[$i]); $t=abs($t[$i+1]-$t[$i]); $a=abs($a[$i+1]-$a[$i]); $c=abs($c[$i+1]-$c[$i]); $slope=($a+$c+$t+$g)/4; if($slope>0.2){ $num=0}else{$num++} print "$i\t$num\t$slope\n";}'|head -30|column -t
-#  my(@a,@t,@c,@g);
-#  my $fastqqc=AKUtils::fullPathToExec("fastqqc");
-#  open(STREAM,"$fastqqc -tsv '$file' |") or die "Could not run fastqqc: $!";
-#  while(<STREAM>){
-#    if(/^pos/){
-#      while(<>){
-#        my($pos,$a,$c,$g,$t,$n,$q)=split /\t/; 
-#        push(@a,$a); push(@c,$c); push(@g,$g); push(@t,$t);
-#      }
-#    }
-#  } 
-#  my ($upstreamTrim,$downstreamTrim);
-#  # 5' upstream
-#  for(my $i=0;$i<@a-1;$i++){
-#    my $g=abs($g[$i+1]-$g[$i]); 
-#    my $t=abs($t[$i+1]-$t[$i]); 
-#    my $a=abs($a[$i+1]-$a[$i]); 
-#    my $c=abs($c[$i+1]-$c[$i]); 
-#    my $slope=($a+$c+$t+$g)/4; 
-#    if($slope>0.2){ 
-#      $upstreamTrim=0;
-#    }else{
-#      $upstreamTrim++;
-#    } 
-#    last if($upstreamTrim>1); # 2 good slopes in a row
-#  }
-#  close STREAM;
-#
-#  @a=reverse(@a);@c=reverse(@c);@t=reverse(@t);@g=reverse(@g);
-#  for(my $i=0;$i<@a-1;$i++){
-#    my $g=abs($g[$i+1]-$g[$i]); 
-#    my $t=abs($t[$i+1]-$t[$i]); 
-#    my $a=abs($a[$i+1]-$a[$i]); 
-#    my $c=abs($c[$i+1]-$c[$i]); 
-#    my $slope=($a+$c+$t+$g)/4; 
-#    if($slope>0.2){ 
-#      $downstreamTrim=0;
-#    }else{
-#      $downstreamTrim++;
-#    } 
-#    last if($downstreamTrim>1); # 2 good slopes in a row
-#  }
-#  close STREAM;
-#
-#  logmsg "TODO trim these reads at i=$upstreamTrim and $downstreamTrim from the end";
 
   # trimClean step
   my $outfile="$$settings{tempdir}/".fileparse($file).".trimmed.fastq";
@@ -354,6 +307,109 @@ sub qualityControlFastq{
   system("run_assembly_trimClean.pl --min_length=30 --numcpus=$$settings{numcpus} -i '$file' -o '$outfile' 2>&1");
   die if $?;
   return ($outfile,$singletons);
+}
+
+# Trim upstream and downstream based on the stability of ATCG percentages.
+# Uses fastqqc internally
+sub trimUpAndDown{
+  my($file,$settings)=@_;
+
+  my $outfile="$$settings{tempdir}/".fileparse($file).".trimmed.fastq";
+  my $numSlopesToBeGood=2;
+  my $badSlope=0.7; # this is kind of empirical for a cutoff
+
+  my $fastqqc=AKUtils::fullPathToExec("fastqqc");
+  my $fastqqcXopts="-c 9999 -r 999 -tsv";
+  logmsg "Running $fastqqc on $file and looking for balanced base percentages along $numSlopesToBeGood bases of the reads";
+  # 5' and 3' trimming step
+  my(@a,@t,@c,@g,@q);
+  if(is_fastqGz($file)){
+    open(STREAM,"gunzip -c '$file' | $fastqqc $fastqqcXopts /dev/stdin |") or die "Could not run fastqqc: $!";
+  } else {
+    open(STREAM,"$fastqqc $fastqqcXopts '$file' |") or die "Could not run fastqqc: $!";
+  }
+  while(<STREAM>){
+    if(/^pos/){
+      while(<STREAM>){
+        chomp;
+        my($pos,$a,$c,$g,$t,$n,$q)=split /\t/; 
+        push(@a,$a); push(@c,$c); push(@g,$g); push(@t,$t);
+        push(@q,$q);
+      }
+    }
+  } 
+  close STREAM;
+
+  # find where to make the cut
+  my ($upstreamTrim,$downstreamTrim);
+  # 5' upstream
+  my $numGoodInARow=0;
+  for(my $i=0;$i<@a-1;$i++){
+    my $g=sprintf("%.02f",abs($g[$i+1]-$g[$i])); 
+    my $t=sprintf("%.02f",abs($t[$i+1]-$t[$i])); 
+    my $a=sprintf("%.02f",abs($a[$i+1]-$a[$i])); 
+    my $c=sprintf("%.02f",abs($c[$i+1]-$c[$i])); 
+    my $slope=sprintf("%.02f",($a+$c+$t+$g)/4); 
+    #print join("\t",$i,"$a[$i] $a","$c[$i] $c","$g[$i] $g","$t[$i] $t",$q[$i],$slope,"<=")."\n";
+    # If the difference b/n this % and the next bp's % is large or if this bp has low qual, 
+    # then it is not good.
+    if($slope>$badSlope || $q[$i]==-64){ 
+      $numGoodInARow=0;
+    }else{
+      $numGoodInARow++;
+    } 
+    if($numGoodInARow>=$numSlopesToBeGood){
+      $upstreamTrim=$i-$numSlopesToBeGood;
+      last;
+    }
+  }
+
+  # 3' downstream
+  $numGoodInARow=0;
+  @a=reverse(@a);@c=reverse(@c);@t=reverse(@t);@g=reverse(@g);@q=reverse(@q);
+  for(my $i=0;$i<@a-1;$i++){
+    my $g=sprintf("%.02f",abs($g[$i+1]-$g[$i])); 
+    my $t=sprintf("%.02f",abs($t[$i+1]-$t[$i])); 
+    my $a=sprintf("%.02f",abs($a[$i+1]-$a[$i])); 
+    my $c=sprintf("%.02f",abs($c[$i+1]-$c[$i])); 
+    my $slope=sprintf("%.02f",($a+$c+$t+$g)/4); 
+
+    if($slope>$badSlope || $q[$i]==-64){ # or a zero quality
+      $numGoodInARow=0;
+    }else{
+      $numGoodInARow++;
+    } 
+    if($numGoodInARow>=$numSlopesToBeGood){
+      $downstreamTrim=$i-$numSlopesToBeGood;
+      last;
+    }
+  }
+  close STREAM;
+
+  my $start=$upstreamTrim; $start=0 if($start<0);
+  # length to keep is the orig length minus the trimming lengths
+  my $length=scalar(@a)-($downstreamTrim+$start);
+  logmsg "Slopes were good starting at $upstreamTrim from 5' and $downstreamTrim from 3'. Therefore I will trim at $start and retain $length length reads. Outfile will be $outfile";
+  open(OUT,">",$outfile) or die "Could not open $outfile for writing:$!";
+  if(is_fastqGz($file)){
+    open(IN,"gunzip -c '$file' |") or die "Could not open $file for gunzipping/reading:$!";
+  } else {
+    open(IN,"<",$file) or die "Could not open $file for reading:$!";
+  }
+  my $i=0;
+  while(<IN>){
+    my $mod=$i%4;
+    if($mod==1 || $mod==3){
+      chomp;
+      print OUT substr($_,$start,$length)."\n";
+    } else {
+      print OUT $_;
+    }
+    $i++;
+  }
+  close IN;
+  close OUT;
+  return $outfile;
 }
 
 # given a file containing one read accession per line and a pattern for all SFFs, extracts the reads and creates a new SFF
