@@ -9,7 +9,7 @@ TEST_SETDIR = test-data
 TEST_SETFILE = amdx.fasta
 
 init_databases:
-	(cd "${DESTDIR}/data"; PATH="${DESTDIR}/scripts:$${PATH}" update_cg_databases)
+	(cd "${DESTDIR}/data"; PATH="${DESTDIR}/scripts:$${PATH}"; update_cg_databases)
 
 install:
 	-echo "Installing ${PROJECT} to ${DESTDIR}..."
@@ -22,24 +22,26 @@ install-app:
 	cp -R ${MANIFEST} "${DESTDIR}"
 	make revise
 
-up:
-	scp -r ${MANIFEST} ${AUTHOR}@${HOST}:~/${PROJECT}/
+#up:
+#	scp -r ${MANIFEST} ${AUTHOR}@${HOST}:~/${PROJECT}/
 
-roll-dist:
-	make clean
-	mkdir -p roll-dist-tmp/${PROJECT}
-	-cp -R ${DIST_MANIFEST} roll-dist-tmp/${PROJECT}
-	(cd roll-dist-tmp && tar -h -c --gzip ${PROJECT} > ../`date +%Y%m%d`-${PROJECT}.tar.gz)
-	rm -rf roll-dist-tmp
+#roll-dist:
+#	make clean
+#	mkdir -p roll-dist-tmp/${PROJECT}
+#	-cp -R ${DIST_MANIFEST} roll-dist-tmp/${PROJECT}
+#	(cd roll-dist-tmp && tar -h -c --gzip ${PROJECT} > ../`date +%Y%m%d`-${PROJECT}.tar.gz)
+#	rm -rf roll-dist-tmp
 
 test:
 	echo "Running test suite..."
-	./scripts/test_cg_deps
+	./scripts/run_pipeline_checkPrereqs.pl
+	#./scripts/test_cg_deps
+
 
 config:
 	echo "Running configuration..."
 	./scripts/reconfigure.pl
 
-revise:
-	echo "revising Makefile..."
-	(./scripts/revise_make.pl ${DESTDIR}/Makefile ${DESTDIR})
+#revise:
+#	echo "revising Makefile..."
+#	(./scripts/revise_make.pl ${DESTDIR}/Makefile ${DESTDIR})
