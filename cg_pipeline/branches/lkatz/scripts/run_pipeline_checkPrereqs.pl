@@ -20,7 +20,7 @@ use AKUtils qw/logmsg/;
 my $settings={
   appname=>'cgpipeline',
   perllibs=>[qw(AKUtils BerkeleyDB Bio::Assembly::IO Bio::Assembly::Scaffold Bio::Perl Bio::Seq Bio::SeqIO Bio::Seq::Quality Bio::Seq::RichSeq Bio::SeqUtils Bio::Tools::GFF Bio::Tools::Run::StandAloneBlast CGPBase CGPipeline::SQLiteDB CGPipelineUtils Data::Dumper Date::Format File::Basename File::Copy File::Path File::Spec File::Temp FindBin Getopt::Long GTTmhmm List::Util LWP::Simple Math::Round strict Thread::Queue threads threads::shared warnings XML::LibXML::Reader)],
-  executables=>[qw(addRun amos2ace AMOScmp cat cp gunzip ln minimus2 mkdir nesoni newAssembly newMapping rm runProject setRef sfffile toAmos toAmos_new touch tmhmm signalp bam2fastq vcfutils.pl bcftools)],
+  executables=>[qw(addRun amos2ace AMOScmp cat cp gzip gunzip ln minimus2 mkdir nesoni newAssembly newMapping rm runProject setRef sfffile toAmos toAmos_new touch tmhmm signalp bam2fastq vcfutils.pl bcftools fastqqc)],
   environmentalVariables=>[qw(TMHMMDIR)],
 
   # presence/absence codes
@@ -33,7 +33,7 @@ exit(main());
 
 sub main{
   $settings=AKUtils::loadConfig($settings);
-  GetOptions($settings,qw(help errorsOnly));
+  GetOptions($settings,qw(help verbose));
   die usage() if($$settings{help});
 
   my $envProblems=checkEnvVars($settings);
@@ -88,7 +88,7 @@ sub reportPresenceStatus{
     logmsg "$name present, but not readable";
     $problems++;
   } elsif ($presence_code == $$settings{code_usable}){
-    logmsg "$name is good!" if(!$$settings{errorsOnly});
+    logmsg "$name is good!" if($$settings{verbose});
   }
   return $problems;
 }
@@ -132,7 +132,7 @@ sub is_perlLib_present{
 sub is_envVar_present{
   my($env,$settings)=@_;
   my $code=$$settings{code_missing};
-  if($ENV{$env}){
+  if(defined $ENV{$env}){
     $code=$$settings{code_usable};
   }
   return $code;
@@ -144,6 +144,6 @@ sub usage{
   This script's error code will be 1 for general errors.
   Usage: $0
     -h for help
-    -e for print only errors
+    -v for verbose
   "
 }
