@@ -89,8 +89,18 @@ sub main() {
         die "Could not run Newbler" if $?;
 
         MAPPING_POLISHING:
-        # polish the 454 assembly with Illumina reads
-        $out454=polish454($$fastaqualfiles{illumina},$out454,$settings) if(@{ $$fastaqualfiles{illumina}});
+        if(@{ $$fastaqualfiles{illumina} }){
+          logmsg "Polishing the 454 assembly with Nesoni";
+          my $polishing_basename=File::Spec->rel2abs("$$settings{tempdir}/$ref_name/polishing");
+          my $outPolishing=File::Spec->abs2rel("$polishing_basename/consensus_masked.fa");
+          #push(@assembly,$out454); goto MAPPING_ILLUMINA;
+          system("mkdir $polishing_basename") if(!-d $polishing_basename);
+          system("nesoni samshrimp: $polishing_basename $out454 reads: ".join(" ",@{ $$fastaqualfiles{illumina} })." --sam-unaligned no") unless($$settings{debug} || -e "$polishing_basename/alignments.bam");
+          die "Problem with Nesoni and/or SHRiMP" if $?;
+          system("nesoni samconsensus: $polishing_basename --majority 0.9 --cutoff 0.9") unless($$settings{debug} || -e "$polishing_basename/consensus.fa");
+          die "Problem with Nesoni and/or Samtools" if $?;
+          $out454=$outPolishing;
+        }
         push(@ref_assembly, $out454);
       }
 
@@ -133,8 +143,20 @@ sub main() {
       die "Could not run Newbler" if $?;
 
       DENOVO_POLISHING:
-      # polish the 454 assembly with Illumina reads
-      $out454=polish454($$fastaqualfiles{illumina},$out454,$settings) if(@{ $$fastaqualfiles{illumina}});
+      # TODO turn polishing into a subroutine.
+      # TODO make it a combination b/n smalt and samToFasta
+      if(@{ $$fastaqualfiles{illumina} }){
+        logmsg "Polishing the 454 assembly with Nesoni";
+        my $polishing_basename=File::Spec->rel2abs("$$settings{tempdir}/DENOVO/polishing");
+        my $outPolishing=File::Spec->abs2rel("$polishing_basename/consensus_masked.fa");
+        #push(@assembly,$out454); goto DENOVO_ILLUMINA;
+        system("mkdir $polishing_basename") if(!-d $polishing_basename);
+        system("nesoni samshrimp: $polishing_basename $out454 reads: ".join(" ",@{ $$fastaqualfiles{illumina} })." --sam-unaligned no") unless($$settings{debug});
+        die "Problem with Nesoni and/or SHRiMP" if $?;
+        system("nesoni samconsensus: $polishing_basename --majority 0.9 --cutoff 0.9") unless($$settings{debug});
+        die "Problem with Nesoni and/or Samtools" if $?;
+        $out454=$outPolishing;
+      }
       push(@assembly, $out454);
     }
 
@@ -249,87 +271,87 @@ sub baseCall($$){
   return {sff=>$sff,454=>$long,illumina=>$short};
 }
 
-# Polish a slightly inaccurate assembly by mapping Illumina reads to it.
-# Usually you'd want to do it with a 454 assembly and Illumina reads.
-sub polish454{
-  my($illuminaArr,$assembly,$settings)=@_;
-  my $polishing_basename=File::Spec->rel2abs("$$settings{tempdir}/DENOVO/polishing");
-  my $outPolishing="$polishing_basename/polished.assembly.fasta";
-  my $polishingBam="$polishing_basename/polished.assembly.bam";
-  system("mkdir $polishing_basename") if(!-d $polishing_basename);
-  my $smalt=AKUtils::fullPathToExec("smalt");
-  system("$smalt index $assembly $assembly"); die if $?;
-  my @tmpBam;
-  # map each fastq against the reference
-  for my $fastq (@$illuminaArr){
-    my $fastqBasename=basename($fastq);
-    my $outSam="$polishing_basename/$fastqBasename.sam";
-    my $outBam="$polishing_basename/$fastqBasename.bam";
-    my $outSorted="$polishing_basename/$fastqBasename.sorted"; #.bam is appended
-    my $isPe=AKUtils::is_fastqPE($fastq);
-    logmsg "Mapping $fastq to assembly";
-    my $smaltxopts="-o $outSam -n $$settings{numcpus} -f samsoft";
-    if($isPe){
-      my $mate1="$polishing_basename/$fastqBasename.1.fastq";
-      my $mate2="$polishing_basename/$fastqBasename.2.fastq";
-      system("run_assembly_shuffleReads.pl -d $fastq > $mate1 2> $mate2");
-      die "Error with deshuffling $fastq" if $?;
-      system("$smalt map $smaltxopts $assembly $mate1 $mate2"); die "Error with smalt mapping" if $?;
-    }else{
-      system("$smalt map $smaltxopts $assembly $fastq"); die "Error with smalt mapping" if $?;
-    }
-    system("samtools view -bSh $outSam > $outBam"); die if $?;
-    system("samtools sort $outBam $outSorted"); die if $?;
-    push(@tmpBam,"$outSorted.bam");
-  }
-  # merge all the pileups or if just one, make a soft link
-  if(@tmpBam>1){
-    system("samtools merge -f $polishingBam ".join(" ".@tmpBam)); die if $?;
-  } else {
-    system("ln -sv $tmpBam[0] $polishingBam"); die if $?;
-  }
-  # convert the pileups to fasta
-  system("run_assembly_samToFasta.pl -b $polishingBam -a $assembly -t $polishing_basename -o $outPolishing -q --min_mapping_qual 0"); die if $?;
-  return $outPolishing;
-}
-
 # quality control the fastq reads.
 sub qualityControlFastq{
   my($file,$settings)=@_;
-  my $basename="$$settings{tempdir}/".fileparse($file);
-  my $downsampled="$basename.downsampled.fastq.gz";
-  my $outfile="$basename.trimmed.fastq";
-  my $singletons="$basename.trimmed.singletons.fastq";# vc-25.filtered.fastq.trimmed.singletons.fastq
-
-  return ($outfile,$singletons) if(-s $outfile > 100); # skip this sub if the file already has some content
 
   # TODO integrate FastQC here, to trim bad 5' and 3' ends
-  # This would help especially when there are obvious adapters still present
 
   # First, downsample if it helps.
   # Pretend like this is the ony read set.
   # TODO downsample later in the pipeline again or remove singletons if downsampling is needed
-  my $downsampled="$$settings{tempdir}/".fileparse($file).".downsampled.fastq.gz";
-  my $keepPercentage=1; # assume no downsampling yet
   if(my $e=$$settings{expectedGenomeSize}){
+    my $downsampled="$$settings{tempdir}/".fileparse($file).".downsampled.fastq.gz";
     my $targetCoverage=100;
+    logmsg "Expected genome size was given as $e. Downsampling to target coverage of $targetCoverage";
+
     my $numBasesInReads=`run_assembly_readMetrics.pl '$file' | tail -n +2 | cut -f 3`+0;
     die "Could not determine the number of bases in $file" if(!$numBasesInReads);
-    my $sourceCoverage=sprintf("%.02f",$numBasesInReads/$e);
     my $neededBases=$e*$targetCoverage;
-    $keepPercentage=$neededBases/$numBasesInReads;
-    $keepPercentage=1 if($keepPercentage>1);
-    my $keepPercentageStr=sprintf("%.02f\%",100*$keepPercentage);
-    logmsg "Total bases in reads were $numBasesInReads (${sourceCoverage}x). Needed bases are only $neededBases. Therefore I am downsampling by $keepPercentageStr of the total reads (${targetCoverage}x)";
+    my $keepPercentage=$neededBases/$numBasesInReads;
+    $keepPercentage=.9999 if($keepPercentage>1);
+    logmsg "Total bases in reads were $numBasesInReads. Needed bases are only $neededBases. Therefore I am downsampling by $keepPercentage of the total reads";
+    system("run_assembly_removeDuplicateReads.pl '$file' --downsample $keepPercentage | gzip -c > '$downsampled'");
+    die if $?;
+    $file=$downsampled;
   }
-  # downsampling and removing duplicates in one step
-  logmsg "Removing duplicate reads. Also downsampling, if a genome size was given";
-  system("run_assembly_removeDuplicateReads.pl '$file' --downsample $keepPercentage | gzip -c > '$downsampled'");
-  die if $?;
+
+  # TODO
+  # 5' and 3' trimming step
+  # fastqqc -c 99999 -tsv vc-25.shuffled.fastq 2>/dev/null |perl -e 'while(<>){if(/^pos/){while(<>){my($pos,$a,$c,$g,$t,$n,$q)=split /\t/; push(@a,$a); push(@c,$c); push(@g,$g); push(@t,$t);}}} for($i=0;$i<@a-1;$i++){$g=abs($g[$i+1]-$g[$i]); $t=abs($t[$i+1]-$t[$i]); $a=abs($a[$i+1]-$a[$i]); $c=abs($c[$i+1]-$c[$i]); $slope=($a+$c+$t+$g)/4; if($slope>0.2){ $num=0}else{$num++} print "$i\t$num\t$slope\n";}'|head -30|column -t
+  my(@a,@t,@c,@g);
+  my $fastqqc=AKUtils::fullPathToExec("fastqqc");
+  open(STREAM,"$fastqqc -tsv '$file' |") or die "Could not run fastqqc: $!";
+  while(<STREAM>){
+    if(/^pos/){
+      while(<>){
+        my($pos,$a,$c,$g,$t,$n,$q)=split /\t/; 
+        push(@a,$a); push(@c,$c); push(@g,$g); push(@t,$t);
+      }
+    }
+  } 
+  my ($upstreamTrim,$downstreamTrim);
+  # 5' upstream
+  for(my $i=0;$i<@a-1;$i++){
+    my $g=abs($g[$i+1]-$g[$i]); 
+    my $t=abs($t[$i+1]-$t[$i]); 
+    my $a=abs($a[$i+1]-$a[$i]); 
+    my $c=abs($c[$i+1]-$c[$i]); 
+    my $slope=($a+$c+$t+$g)/4; 
+    if($slope>0.2){ 
+      $upstreamTrim=0;
+    }else{
+      $upstreamTrim++;
+    } 
+    last if($upstreamTrim>1); # 2 good slopes in a row
+  }
+  close STREAM;
+
+  @a=reverse(@a);@c=reverse(@c);@t=reverse(@t);@g=reverse(@g);
+  for(my $i=0;$i<@a-1;$i++){
+    my $g=abs($g[$i+1]-$g[$i]); 
+    my $t=abs($t[$i+1]-$t[$i]); 
+    my $a=abs($a[$i+1]-$a[$i]); 
+    my $c=abs($c[$i+1]-$c[$i]); 
+    my $slope=($a+$c+$t+$g)/4; 
+    if($slope>0.2){ 
+      $downstreamTrim=0;
+    }else{
+      $downstreamTrim++;
+    } 
+    last if($downstreamTrim>1); # 2 good slopes in a row
+  }
+  close STREAM;
+
+  logmsg "TODO trim these reads at i=$upstreamTrim and $downstreamTrim from the end";
 
   # trimClean step
-  logmsg "Performing a quality filter on the reads in $downsampled ==> $outfile with CG-Pipeline's in-house method.";
-  system("run_assembly_trimClean.pl --min_length=30 --numcpus=$$settings{numcpus} -i '$downsampled' -o '$outfile' 2>&1");
+  my $outfile="$$settings{tempdir}/".fileparse($file).".trimmed.fastq";
+  # vc-25.filtered.fastq.trimmed.singletons.fastq
+  my $singletons="$$settings{tempdir}/".fileparse($file).".trimmed.singletons.fastq";
+  return ($outfile,$singletons) if(-s $outfile > 100); # skip this sub if the file already has some content
+  logmsg "Performing a quality filter on the reads in $file ==> $outfile with CG-Pipeline's in-house method.";
+  system("run_assembly_trimClean.pl --min_length=30 --numcpus=$$settings{numcpus} -i '$file' -o '$outfile' 2>&1");
   die if $?;
   return ($outfile,$singletons);
 }
