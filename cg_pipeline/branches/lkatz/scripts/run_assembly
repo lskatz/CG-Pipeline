@@ -299,51 +299,51 @@ sub qualityControlFastq{
   # TODO
   # 5' and 3' trimming step
   # fastqqc -c 99999 -tsv vc-25.shuffled.fastq 2>/dev/null |perl -e 'while(<>){if(/^pos/){while(<>){my($pos,$a,$c,$g,$t,$n,$q)=split /\t/; push(@a,$a); push(@c,$c); push(@g,$g); push(@t,$t);}}} for($i=0;$i<@a-1;$i++){$g=abs($g[$i+1]-$g[$i]); $t=abs($t[$i+1]-$t[$i]); $a=abs($a[$i+1]-$a[$i]); $c=abs($c[$i+1]-$c[$i]); $slope=($a+$c+$t+$g)/4; if($slope>0.2){ $num=0}else{$num++} print "$i\t$num\t$slope\n";}'|head -30|column -t
-  my(@a,@t,@c,@g);
-  my $fastqqc=AKUtils::fullPathToExec("fastqqc");
-  open(STREAM,"$fastqqc -tsv '$file' |") or die "Could not run fastqqc: $!";
-  while(<STREAM>){
-    if(/^pos/){
-      while(<>){
-        my($pos,$a,$c,$g,$t,$n,$q)=split /\t/; 
-        push(@a,$a); push(@c,$c); push(@g,$g); push(@t,$t);
-      }
-    }
-  } 
-  my ($upstreamTrim,$downstreamTrim);
-  # 5' upstream
-  for(my $i=0;$i<@a-1;$i++){
-    my $g=abs($g[$i+1]-$g[$i]); 
-    my $t=abs($t[$i+1]-$t[$i]); 
-    my $a=abs($a[$i+1]-$a[$i]); 
-    my $c=abs($c[$i+1]-$c[$i]); 
-    my $slope=($a+$c+$t+$g)/4; 
-    if($slope>0.2){ 
-      $upstreamTrim=0;
-    }else{
-      $upstreamTrim++;
-    } 
-    last if($upstreamTrim>1); # 2 good slopes in a row
-  }
-  close STREAM;
-
-  @a=reverse(@a);@c=reverse(@c);@t=reverse(@t);@g=reverse(@g);
-  for(my $i=0;$i<@a-1;$i++){
-    my $g=abs($g[$i+1]-$g[$i]); 
-    my $t=abs($t[$i+1]-$t[$i]); 
-    my $a=abs($a[$i+1]-$a[$i]); 
-    my $c=abs($c[$i+1]-$c[$i]); 
-    my $slope=($a+$c+$t+$g)/4; 
-    if($slope>0.2){ 
-      $downstreamTrim=0;
-    }else{
-      $downstreamTrim++;
-    } 
-    last if($downstreamTrim>1); # 2 good slopes in a row
-  }
-  close STREAM;
-
-  logmsg "TODO trim these reads at i=$upstreamTrim and $downstreamTrim from the end";
+#  my(@a,@t,@c,@g);
+#  my $fastqqc=AKUtils::fullPathToExec("fastqqc");
+#  open(STREAM,"$fastqqc -tsv '$file' |") or die "Could not run fastqqc: $!";
+#  while(<STREAM>){
+#    if(/^pos/){
+#      while(<>){
+#        my($pos,$a,$c,$g,$t,$n,$q)=split /\t/; 
+#        push(@a,$a); push(@c,$c); push(@g,$g); push(@t,$t);
+#      }
+#    }
+#  } 
+#  my ($upstreamTrim,$downstreamTrim);
+#  # 5' upstream
+#  for(my $i=0;$i<@a-1;$i++){
+#    my $g=abs($g[$i+1]-$g[$i]); 
+#    my $t=abs($t[$i+1]-$t[$i]); 
+#    my $a=abs($a[$i+1]-$a[$i]); 
+#    my $c=abs($c[$i+1]-$c[$i]); 
+#    my $slope=($a+$c+$t+$g)/4; 
+#    if($slope>0.2){ 
+#      $upstreamTrim=0;
+#    }else{
+#      $upstreamTrim++;
+#    } 
+#    last if($upstreamTrim>1); # 2 good slopes in a row
+#  }
+#  close STREAM;
+#
+#  @a=reverse(@a);@c=reverse(@c);@t=reverse(@t);@g=reverse(@g);
+#  for(my $i=0;$i<@a-1;$i++){
+#    my $g=abs($g[$i+1]-$g[$i]); 
+#    my $t=abs($t[$i+1]-$t[$i]); 
+#    my $a=abs($a[$i+1]-$a[$i]); 
+#    my $c=abs($c[$i+1]-$c[$i]); 
+#    my $slope=($a+$c+$t+$g)/4; 
+#    if($slope>0.2){ 
+#      $downstreamTrim=0;
+#    }else{
+#      $downstreamTrim++;
+#    } 
+#    last if($downstreamTrim>1); # 2 good slopes in a row
+#  }
+#  close STREAM;
+#
+#  logmsg "TODO trim these reads at i=$upstreamTrim and $downstreamTrim from the end";
 
   # trimClean step
   my $outfile="$$settings{tempdir}/".fileparse($file).".trimmed.fastq";
