@@ -88,6 +88,8 @@ sub main() {
     $goto=uc($goto); # case insensitive
     if($goto eq 'TMHMM'){
       logmsg "Going straight to TMHMM";goto TMHMM;
+    } elsif($goto eq 'ABX'){
+      logmsg "Going straight to ABX";goto ABX;
     } elsif($goto eq 'PDB'){
       logmsg "Going straight to PDB";goto PDB;
     } elsif($goto eq 'VFDB'){
@@ -117,6 +119,13 @@ sub main() {
   
   #########################################
   ## Begin annotation with all modules here
+
+  ABX:
+  # Antibiotic resistance genes
+  my $abx_command="run_annotation_blast.pl $aa_file -d $$settings{card_blast_db} -o $aa_file.card_hits.sql -p '-F F' 2>&1";
+  logmsg "Finding antimicrobial resistance genes with command\n  $abx_command";
+  system($abx_command); die "Problem with antimicrobial resistance gene blasting" if $?;
+  flushSql($settings);
 
   # IS elements
   # Credit to some parameters goes to ISsaga http://genomebiology.com/2011/12/3/R30
