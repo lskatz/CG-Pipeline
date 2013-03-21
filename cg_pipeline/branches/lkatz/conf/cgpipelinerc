@@ -1,11 +1,11 @@
-pipeline_version = "0.3.2.3"
+pipeline_version = "0.4.0.0"
 pipeline_reference = "Andrey O. Kislyuk, Lee S. Katz, Sonia Agrawal, Matthew S. Hagen, Andrew B. Conley, Pushkala Jayaraman, Viswateja Nelakuditi, Jay C. Humphrey, Scott A. Sammons, Dhwani Govil, Raydel D. Mair, Kathleen M. Tatti, Maria L. Tondella, Brian H. Harcourt, Leonard W. Mayer, and I. King Jordan.|A computational genomics pipeline for prokaryotic sequencing projects.|Bioinformatics Advance Access published on June 2, 2010, DOI 10.1093/bioinformatics/btq284.|20519285"
 
 classification = "Vibrio cholerae Vibrio Vibrionaceae Vibrionales Gammaproteobacteria Proteobacteria Bacteria"
 
 assembly_min_contig_length=500
 
-prediction_blast_db = "/home/lkatz/bin/cg_pipeline/data/uniprot_sprot"
+prediction_blast_db = "/media/data/.trash/home/lkatz/bin/cg_pipeline/data/uniprot_sprot"
 prediction_transl_table = 11
 prediction_use_genemark = 1
 prediction_crt_jar="/opt/CRT1.2/CRT1.2-CLI.jar"
@@ -18,7 +18,9 @@ gms_datadir = "/home/lkatz/bin/genemark_suite_linux_64/"
 cogs_blast_db = "/home/lkatz/bin/cg_pipeline/data/cogs"
 prot2cogid = "/home/lkatz/bin/cg_pipeline/data/prot2cogid.tsv"
 vfdb_blast_db = "/home/lkatz/bin/cg_pipeline/data/vfdb_VFs_aa"
+pdb_blast_db = "/media/data/genomicDatabases/pdbaa"
 is_blast_db = "/home/lkatz/bin/cg_pipeline/data/is.faa"
+card_blast_db="/home/lkatz/bin/cg_pipeline/data/CARD.faa"
 
 reporting_email = "lskatz+cgpipeline@gmail.com"
 
