@@ -53,15 +53,17 @@ sub combinePredictionAndAnnotation{
   my ($outfile,$predfeatures,$metaData,$annotation,$settings)=@_;
   my %annotationDirMap=annotationFieldMap();
   my @annotationKeys=keys(%annotationDirMap);
-  
+
   # use uniprot and cogs information
   my %uniprotEvidence=uniprotEvidence($$settings{inputdir},\%annotationDirMap,$settings);
   my %uniprot=uniprotSql($$settings{inputdir},\%annotationDirMap,$settings);
   my %prot2cogs=prot2cogMapping($settings);
-  my $extraAnnotationInfo={uniprotEvidence=>\%uniprotEvidence,uniprot=>\%uniprot,prot2cogs=>\%prot2cogs};
+  my %whog=readWhog($$settings{cogs_whog},$settings);
+  my $extraAnnotationInfo={whog=>\%whog,uniprotEvidence=>\%uniprotEvidence,uniprot=>\%uniprot,prot2cogs=>\%prot2cogs};
   
   logmsg "One contig/chromosome per dot: ";
   my $out=Bio::SeqIO->new(-file=>">$outfile",-format=>"genbank");
+  my @richSeq; #store all sequences here to concat them later
   while(my ($seqid,$meta)=each(%$metaData)){
     $|++;print ".";$|--; # print out a dot per contig and flush the buffer
     my $sourceFeat=$$meta{source};
@@ -70,7 +72,7 @@ sub combinePredictionAndAnnotation{
     $seq->add_SeqFeature($sourceFeat);
     $seq->annotation->add_Annotation('reference',$$metaData{$seqid}{'reference'});
     my @sortedLocus=sort{
-      return $$predfeatures{$seqid}{'gene'}{$a} <=> $$predfeatures{$seqid}{'gene'}{$b};
+      return $$predfeatures{$seqid}{'gene'}{$a}->start <=> $$predfeatures{$seqid}{'gene'}{$b}->start;
     } keys(%{$$predfeatures{$seqid}{'gene'}});
     
     # add annotations from the annotations directory
@@ -98,9 +100,15 @@ sub combinePredictionAndAnnotation{
     }
     
     $out->write_seq($seq);
+    push(@richSeq,$seq);
   }
   $out->close;
   print "\n"; # newline after all the "update dots"
+
+  #my $targetSeq=shift(@richSeq);
+  #Bio::SeqUtils->cat($targetSeq,@richSeq);
+  #my $outConcat=Bio::SeqIO->new(-file=>">$outfile.concat.gb",-format=>"genbank");
+  #$outConcat->write_seq($targetSeq);
   
   return 1;
 }
@@ -115,29 +123,27 @@ sub interpretCdsFeat{
   
   # other whole-gene annotators: IS elements, VFs, ...
   my $isFeat=interpretIs($cdsFeat,$locusAnnotation,$settings);
-  push(@miscFeat,$isFeat) if($isFeat);
   my $vfFeat=interpretVf($cdsFeat,$locusAnnotation,$settings);
-  push(@miscFeat,$vfFeat) if($vfFeat);
   my $cogsFeat=interpretCogs($cdsFeat,$locusAnnotation,$extraAnnotationInfo,$settings);
-  push(@miscFeat,$cogsFeat) if($cogsFeat);
   my $pdbFeat=interpretPdb($cdsFeat,$locusAnnotation,$settings);
-  push(@miscFeat,$pdbFeat) if($pdbFeat);
+  interpretCard($cdsFeat,$locusAnnotation,$settings);
+  #push(@miscFeat,$isFeat) if($isFeat);
+  #push(@miscFeat,$vfFeat) if($vfFeat);
+  #push(@miscFeat,$cogsFeat) if($cogsFeat);
+  #push(@miscFeat,$pdbFeat) if($pdbFeat);
   
   ## annotations on portions of the gene
-  
-  # signal peptide
   my $signalpFeat=interpretSignalP($cdsFeat,$locusAnnotation,$settings);
-  push(@miscFeat,$signalpFeat) if($signalpFeat); # $signalpFeat is 0 if not present
-      
-  # transmembrane helix
   my $tmFeat=interpretTmhmm($cdsFeat,$locusAnnotation,$settings);
   push(@miscFeat,$tmFeat) if($tmFeat);
       
   # domain hits
+  # TODO add domains instead to the CDS feature
   my @iprFeat=interpretIpr($cdsFeat,$$locusAnnotation{ipr_matches},$settings);
   push(@otherFeat,@iprFeat);
   @otherFeat=sort {$a->start<=>$b->start} @otherFeat;
   
+  push(@feat,$signalpFeat) if($signalpFeat); # $signalpFeat is 0 if not present
   push(@feat,$geneFeat,$cdsFeat,@miscFeat,@otherFeat);
   return @feat;
 }
@@ -165,10 +171,15 @@ sub gbkToFeatures{
   } else {
     logmsg "WARNING: could not find the parameter pipeline_reference in your config file. The genbank reference line will not be filled in."
   }
-    
+
   my $in=Bio::SeqIO->new(-file=>$gbk);
   while(my $seq=$in->next_seq){
     my @feats = $seq->all_SeqFeatures();
+
+    #print $seq->id."\n";
+    #for my $feat(@feats){
+    #  print $feat->start." ".$feat->end."\n";
+    #}print"\n";
     
     # looking at gene features only
     for my $feat(@feats){
@@ -191,7 +202,7 @@ sub gbkToFeatures{
     }
   }
   $in->close;
-  
+
   return [\%feat,\%metaData];
 }
 
@@ -275,6 +286,7 @@ sub interpretUniprot{
   }
   #my ($geneName,$proteinProduct,$uniprotDescription)=interpretUniprot($locusAnnotation,$settings);
   $geneFeat->add_tag_value('gene',$gene) if($gene);
+  $cdsFeat->add_tag_value('gene',$gene) if($gene);
   $cdsFeat->add_tag_value('product',$proteinProduct) if($proteinProduct);
   
   # add the uniprot evidence
@@ -360,6 +372,7 @@ sub interpretSignalP{
               score=>$score,
             }
   );
+  $signalpFeat->add_tag_value('gene',($cdsFeat->get_tag_values('gene'))[0]) if($cdsFeat->has_tag('gene'));
   return $signalpFeat;
 }
 
@@ -406,12 +419,27 @@ sub interpretTmhmm{
   return $tmFeat;
 }
 
+sub interpretCard{
+  my($cdsFeat,$annotation,$settings)=@_;
+  my $card=$$annotation{card_hits};
+  return 0 if(!@$card);
+  
+  my $feat=blastSqlToFeat($cdsFeat,$card,"CARD database",{});
+  if($feat->has_tag('product')){
+    $cdsFeat->add_tag_value('product',"CARD:".($feat->get_tag_values('product'))[0]);
+    $cdsFeat->add_tag_value('note',"CARD:".($feat->get_tag_values('description'))[0]);
+  }
+  return $feat;
+}
 sub interpretIs{
   my($cdsFeat,$annotation,$settings)=@_;
   my $is=$$annotation{is_hits};
   return 0 if(!@$is);
   
   my $feat=blastSqlToFeat($cdsFeat,$is,"IS Finder database",{});
+  if($feat->has_tag('product')){
+    $cdsFeat->add_tag_value('product',"ISFinder:".($feat->get_tag_values('product'))[0]);
+  }
   return $feat;
 }
 
@@ -421,6 +449,10 @@ sub interpretVf{
   return 0 if(!@$vf);
   
   my $feat=blastSqlToFeat($cdsFeat,$vf,"VF database",{});
+  if($feat->has_tag('product')){
+    $cdsFeat->add_tag_value('product',"VFDB:".($feat->get_tag_values('product'))[0]);
+    $cdsFeat->add_tag_value('note',"VFDB:".($feat->get_tag_values('description'))[0]);
+  }
   return $feat;
 }
 
@@ -431,9 +463,15 @@ sub interpretCogs{
   
   my $feat=blastSqlToFeat($cdsFeat,$cogs,"COGs database",{});
   my $cogsProt=($feat->get_tag_values('product'))[0];
-  $feat->remove_tag('description');
-  $feat->remove_tag('product');
-  $feat->add_tag_value('description',$$extraAnnotationInfo{prot2cogs}{$cogsProt});
+  #$feat->remove_tag('description');
+  #$feat->remove_tag('product');
+  #$feat->add_tag_value('description',$$extraAnnotationInfo{prot2cogs}{$cogsProt});
+  if($cogsProt){
+    my $cogsid=$$extraAnnotationInfo{prot2cogs}{$cogsProt};
+    my $cogsDesc=$$extraAnnotationInfo{whog}{$cogsid};
+    $cdsFeat->add_tag_value('product',"COGs:$cogsid ($cogsProt)");
+    $cdsFeat->add_tag_value('note',"COGs:$cogsDesc");
+  }
   return $feat;
 }
 sub interpretPdb{
@@ -442,6 +480,10 @@ sub interpretPdb{
   return 0 if(!@$pdb);
   
   my $feat=blastSqlToFeat($cdsFeat,$pdb,"PDB database",{});
+  if($feat->has_tag('product')){
+    $cdsFeat->add_tag_value('product',"PDB:".($feat->get_tag_values('product'))[0]);
+    $cdsFeat->add_tag_value('note',"PDB:".($feat->get_tag_values('description'))[0]);
+  }
   return $feat;
 }
 
@@ -453,6 +495,7 @@ sub interpretPdb{
 sub blastSqlToFeat{
   my($cdsFeat,$annotation,$evidence,$settings)=@_;
   my $a=$$annotation[0];
+  $$a{description}=~s/\x01/ /g; # a header character ^A appears here sometimes
   my $feat=Bio::SeqFeature::Generic->new(
     -primary=>"misc_structure",
     -start=>$cdsFeat->start,
@@ -468,6 +511,27 @@ sub blastSqlToFeat{
     }
   );
   return $feat;
+}
+
+# read the cogs whog file
+sub readWhog{
+  my($file,$settings)=@_;
+  my %whog;
+  if(!$file){
+    logmsg "Warning: could not locate the whog file for descriptions on COGs results. Set cogs_whog in the conf file as the whog file from COGs.";
+    return %whog;
+  }
+  open(WHOG,$file) or die "Could not read file $file: $!";
+  while(<WHOG>){
+    next if /^\s/; # lines starting w/ whitespace
+    next if /___/;
+    chomp;
+    my($cogsCode,$cogid,@desc)=split /\s+/;
+    my $desc=join(" ",@desc);
+    $whog{$cogid}=$desc;
+  }
+  close WHOG;
+  return %whog;
 }
 
 # read a pipe-delimited sql line
@@ -541,6 +605,7 @@ sub annotationFieldMap{
     cogs_hits => [@blastFields],
     is_hits => [@blastFields],
     pdb_hits => [@blastFields],
+    card_hits=> [@blastFields],
     ipr_matches => [qw/locus_tag accession_num product database_name start end evalue status evidence/],
     signalp_hmm  => [ qw/locus_tag prediction signal_peptide_probability max_cleavage_site_probability start end/],
     signalp_nn => [ qw/locus_tag measure_type start end value cutoff is_signal_peptide/],
