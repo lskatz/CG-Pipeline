@@ -49,7 +49,7 @@ sub main() {
   $$settings{blast_db} = $$settings{annotation_blast_db};
 
   my @cmd_options = qw(ChangeDir=s keep blast_db=s outdir=s tempdir=s uniprot_db3=s uniprot_evidence_db3=s reporting_email=s goto=s help no-db-check);
-  push(@cmd_options,"$_!") for(@annotationSteps);
+  push(@cmd_options,"skip-$_") for(@annotationSteps);
   GetOptions($settings, @cmd_options) or die;
   die usage($settings) if $$settings{help};
   die("Option blast_db is required") unless $$settings{blast_db}; # TODO: more error checks
@@ -116,74 +116,92 @@ sub main() {
 
   # Antibiotic resistance genes
   ABX:
-  my $abx_command="run_annotation_blast.pl $aa_file -d $$settings{card_blast_db} -o $aa_file.card_hits.sql -p '-F F' 2>&1";
-  logmsg "Finding antimicrobial resistance genes with command\n  $abx_command";
-  system($abx_command); die "Problem with antimicrobial resistance gene blasting" if $?;
-  flushSql($settings);
+  if(!$$settings{'skip-ABX'}){
+    my $abx_command="run_annotation_blast.pl $aa_file -d $$settings{card_blast_db} -o $aa_file.card_hits.sql -p '-F F' 2>&1";
+    logmsg "Finding antimicrobial resistance genes with command\n  $abx_command";
+    system($abx_command); die "Problem with antimicrobial resistance gene blasting" if $?;
+    flushSql($settings);
+  }
 
   # IS elements
   # Credit to some parameters goes to ISsaga http://genomebiology.com/2011/12/3/R30
   IS:
-  my $is_command="run_annotation_blast.pl $aa_file -d $$settings{is_blast_db} -o $aa_file.is_hits.sql --min_aa_coverage 30 --min_aa_identity 20 --min_aa_similarity 30 -p '-W 2 -F F -e 1E-5 -b 1 -v 1' 2>&1";
-  logmsg "Finding IS elements with command\n  $is_command";
-  system($is_command); die "Problem with IS element blasting" if $?;
-  flushSql($settings);
+  if(!$$settings{'skip-IS'}){
+    my $is_command="run_annotation_blast.pl $aa_file -d $$settings{is_blast_db} -o $aa_file.is_hits.sql --min_aa_coverage 30 --min_aa_identity 20 --min_aa_similarity 30 -p '-W 2 -F F -e 1E-5 -b 1 -v 1' 2>&1";
+    logmsg "Finding IS elements with command\n  $is_command";
+    system($is_command); die "Problem with IS element blasting" if $?;
+    flushSql($settings);
+  }
 
   SIGNALP:
-  # Run SignalP on all proteins
-  system("run_annotation_signalp.pl $aa_file"); die if $?;
-  flushSql($settings);
+  if(!$$settings{'skip-SIGNALP'}){
+    # Run SignalP on all proteins
+    system("run_annotation_signalp.pl $aa_file"); die if $?;
+    flushSql($settings);
+  }
 
   # Run TMHMM on all proteins
   TMHMM:
-  system("run_annotation_tmhmm.pl $aa_file"); die if $?;
-  flushSql($settings);
+  if(!$$settings{'skip-TMHMM'}){
+    system("run_annotation_tmhmm.pl $aa_file"); die if $?;
+    flushSql($settings);
+  }
 
   # run against PDB
   PDB:
-  logmsg "Checking for proteins with structural similarities in the Protein Databank";
-  system("run_annotation_blast.pl $aa_file -d $$settings{pdb_blast_db} -o $aa_file.pdb_hits.sql --min_aa_coverage 40 --min_aa_identity 40 --min_aa_similarity 40 -p '-b 10 -v 10' 2>&1"); die "Problem with Protein Databank blasting" if $?;
-  flushSql($settings);
+  if(!$$settings{'skip-PDB'}){
+    logmsg "Checking for proteins with structural similarities in the Protein Databank";
+    system("run_annotation_blast.pl $aa_file -d $$settings{pdb_blast_db} -o $aa_file.pdb_hits.sql --min_aa_coverage 40 --min_aa_identity 40 --min_aa_similarity 40 -p '-b 10 -v 10' 2>&1"); die "Problem with Protein Databank blasting" if $?;
+    flushSql($settings);
+  }
 
   # Check all proteins against VFDB
   VFDB:
-  logmsg "Finding virulence factors";
-  system("run_annotation_blast.pl $aa_file -d $$settings{vfdb_blast_db} -o $aa_file.vfdb_hits.sql --min_aa_coverage 40 --min_aa_identity 40 --min_aa_similarity 40 -p '-b 1 -v 1' 2>&1"); die "Problem with vfdb" if $?;
-  flushSql($settings);
+  if(!$$settings{'skip-VFDB'}){
+    logmsg "Finding virulence factors";
+    system("run_annotation_blast.pl $aa_file -d $$settings{vfdb_blast_db} -o $aa_file.vfdb_hits.sql --min_aa_coverage 40 --min_aa_identity 40 --min_aa_similarity 40 -p '-b 1 -v 1' 2>&1"); die "Problem with vfdb" if $?;
+    flushSql($settings);
+  }
 
   # Check all proteins against COGs 
   COGS:
-  logmsg "Finding COGs";
-  system("run_annotation_blast.pl $aa_file -d $$settings{cogs_blast_db} -o $aa_file.cogs_hits.sql --min_aa_coverage 80 --min_aa_identity 40 --min_aa_similarity 70 -p '-b 10 -v 10'"); die "Problem with blast against COGs" if $?;
-  flushSql($settings);
+  if(!$$settings{'skip-COGS'}){
+    logmsg "Finding COGs";
+    system("run_annotation_blast.pl $aa_file -d $$settings{cogs_blast_db} -o $aa_file.cogs_hits.sql --min_aa_coverage 80 --min_aa_identity 40 --min_aa_similarity 70 -p '-b 10 -v 10'"); die "Problem with blast against COGs" if $?;
+    flushSql($settings);
+  }
 
   # Run BLAST on all proteins vs. Uniprot
   UNIPROT:
-  logmsg "BLASTp vs Uniprot (this might take a while)";
-  my $invoke_string = "run_annotation_blast.pl $aa_file -db=$$settings{blast_db}";
-  $invoke_string .= " -outfile='$$settings{tempdir}/blast.sql'";
-  $invoke_string .= " -keep" if $$settings{keep};
-  $invoke_string .= " -tempdir='$$settings{tempdir}'";
-  $invoke_string .= " --min_aa_coverage 70 --min_aa_identity 50 -p '-b 15 -v 15'";
-  logmsg "COMMAND\n  $invoke_string";
-  system($invoke_string) if(!-e "$$settings{outdir}/blast.sql"); die "Problem with BLAST vs Uniprot" if $?;
-  flushSql($settings);
+  if(!$$settings{'skip-UNIPROT'}){
+    logmsg "BLASTp vs Uniprot (this might take a while)";
+    my $invoke_string = "run_annotation_blast.pl $aa_file -db=$$settings{blast_db}";
+    $invoke_string .= " -outfile='$$settings{tempdir}/blast.sql'";
+    $invoke_string .= " -keep" if $$settings{keep};
+    $invoke_string .= " -tempdir='$$settings{tempdir}'";
+    $invoke_string .= " --min_aa_coverage 70 --min_aa_identity 50 -p '-b 15 -v 15'";
+    logmsg "COMMAND\n  $invoke_string";
+    system($invoke_string) if(!-e "$$settings{outdir}/blast.sql"); die "Problem with BLAST vs Uniprot" if $?;
+    flushSql($settings);
 
-  # Fetch Uniprot metadata for BLAST hits
-  $invoke_string = "run_annotation_uniprot2sql.pl '$$settings{outdir}/blast.sql'";
-  $invoke_string .= " -uniprot_db3='$$settings{uniprot_db3}'";
-  $invoke_string .= " -uniprot_evidence_db3='$$settings{uniprot_evidence_db3}'";
-  $invoke_string .= " -uniprot_sql_outfile='$$settings{tempdir}/uniprot.sql'";
-  $invoke_string .= " -uniprot_evidence_sql_outfile='$$settings{tempdir}/uniprot_evidence.sql'";
-  logmsg "Parsing the uniprot result with\n    $invoke_string";
-  system($invoke_string); die if $?;
-  flushSql($settings);
+    # Fetch Uniprot metadata for BLAST hits
+    $invoke_string = "run_annotation_uniprot2sql.pl '$$settings{outdir}/blast.sql'";
+    $invoke_string .= " -uniprot_db3='$$settings{uniprot_db3}'";
+    $invoke_string .= " -uniprot_evidence_db3='$$settings{uniprot_evidence_db3}'";
+    $invoke_string .= " -uniprot_sql_outfile='$$settings{tempdir}/uniprot.sql'";
+    $invoke_string .= " -uniprot_evidence_sql_outfile='$$settings{tempdir}/uniprot_evidence.sql'";
+    logmsg "Parsing the uniprot result with\n    $invoke_string";
+    system($invoke_string); die if $?;
+    flushSql($settings);
+  }
 
   INTERPRO:
-  # Run InterProScan on all proteins
-  $invoke_string = "run_annotation_interpro.pl $aa_file";
-  system($invoke_string); die if $?;
-  flushSql($settings);
+  if(!$$settings{'skip-INTERPRO'}){
+    # Run InterProScan on all proteins
+    my $invoke_string = "run_annotation_interpro.pl $aa_file";
+    system($invoke_string); die if $?;
+    flushSql($settings);
+  }
 
   logmsg "Annotation complete! SQL results are in $$settings{outdir}";
 
@@ -208,7 +226,7 @@ sub usage{
   $usage.="
   The steps of annotation are ABX IS SIGNALP TMHMM PDB VFDB COGS UNIPROT INTERPRO
   --nodb-check do not check for blast databases before annotation.
-  For each annotation step, there is a similar option to jump to it, to exclude it, or to include it.  By default, all steps are performed.
+  For each annotation step, there is a similar option to jump to or exclude it. By default, all steps are performed.
   --goto=ABX
     Skips steps until this annotation step is reached.
     Useful if annotation was interrupted. 
