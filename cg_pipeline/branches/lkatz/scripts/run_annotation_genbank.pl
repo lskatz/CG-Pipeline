@@ -463,11 +463,11 @@ sub interpretCogs{
   
   my $feat=blastSqlToFeat($cdsFeat,$cogs,"COGs database",{});
   my $cogsProt=($feat->get_tag_values('product'))[0];
+  my $cogsid=$$extraAnnotationInfo{prot2cogs}{$cogsProt};
   #$feat->remove_tag('description');
   #$feat->remove_tag('product');
   #$feat->add_tag_value('description',$$extraAnnotationInfo{prot2cogs}{$cogsProt});
-  if($cogsProt){
-    my $cogsid=$$extraAnnotationInfo{prot2cogs}{$cogsProt};
+  if($cogsProt && $cogsid){
     my $cogsDesc=$$extraAnnotationInfo{whog}{$cogsid};
     $cdsFeat->add_tag_value('product',"COGs:$cogsid ($cogsProt)");
     $cdsFeat->add_tag_value('note',"COGs:$cogsDesc");
