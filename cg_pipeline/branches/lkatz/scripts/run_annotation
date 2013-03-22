@@ -32,6 +32,8 @@ use Bio::Annotation::SimpleValue;
 use AKUtils;
 use Data::Dumper;
 
+# keep track of which steps are performed
+my @annotationSteps=qw(ABX IS SIGNALP TMHMM PDB VFDB COGS UNIPROT INTERPRO);
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
 sub logmsg {my $FH = $PipelineRunner::LOG || *STDOUT; print $FH "$0: ".(caller(1))[3].": @_\n";}
@@ -40,14 +42,16 @@ exit(main());
 
 sub main() {
   $settings = AKUtils::loadConfig($settings);
-  die("Usage: $0 input.gb -o annotationDir \nOptional switches\n --goto=[PDB|TMHMM|COGS|VFDB|BLAST|INTERPRO] : skips steps until this annotation step is reached") if @ARGV < 1;
+  die usage($settings) if @ARGV < 1;
 
   $$settings{uniprot_db3} = $$settings{annotation_uniprot_db3};
   $$settings{uniprot_evidence_db3} = $$settings{annotation_uniprot_evidence_db3};
   $$settings{blast_db} = $$settings{annotation_blast_db};
 
-  my @cmd_options = ('ChangeDir=s', 'keep', 'blast_db=s', 'outdir=s', 'tempdir=s', 'uniprot_db3=s', 'uniprot_evidence_db3=s', 'reporting_email=s', 'goto=s');
+  my @cmd_options = qw(ChangeDir=s keep blast_db=s outdir=s tempdir=s uniprot_db3=s uniprot_evidence_db3=s reporting_email=s goto=s help);
+  push(@cmd_options,"$_!") for(@annotationSteps);
   GetOptions($settings, @cmd_options) or die;
+  die usage($settings) if $$settings{help};
   die("Option blast_db is required") unless $$settings{blast_db}; # TODO: more error checks
   die("Option uniprot_db3 is required") unless $$settings{uniprot_db3}; # TODO: more error checks
   die("Option uniprot_evidence_db3 is required") unless $$settings{uniprot_evidence_db3}; # TODO: more error checks
@@ -85,23 +89,11 @@ sub main() {
 
   # skip to any particular part of annotation
   if(my $goto=$$settings{goto}){
-    $goto=uc($goto); # case insensitive
-    if($goto eq 'TMHMM'){
-      logmsg "Going straight to TMHMM";goto TMHMM;
-    } elsif($goto eq 'ABX'){
-      logmsg "Going straight to ABX";goto ABX;
-    } elsif($goto eq 'PDB'){
-      logmsg "Going straight to PDB";goto PDB;
-    } elsif($goto eq 'VFDB'){
-      logmsg "Going straight to VFDB";goto VFDB;
-    } elsif($goto eq 'COGS'){
-      logmsg "Going straight to COGS";goto COGS;
-    } elsif($goto=~/BLAST|BLAST_VS_UNIPROT|UNIPROT/){
-      logmsg "Going straight to BLAST_VS_UNIPROT";goto BLAST_VS_UNIPROT;
-    } elsif($goto eq 'INTERPRO'){
-      logmsg "Going straight to INTERPRO";goto INTERPRO;
+    if(my $step=(grep(/$goto/i,@annotationSteps))[0]){
+      logmsg "Going straight to $step";
+      goto $step;
     } else{
-      warn "Warning: Argument goto was given as $$settings{goto} but it is not one of the accepted arguments. $0 --help for more info. Not skipping any annotation steps";
+      warn "Warning: Argument goto was given as $goto but it is not one of the accepted arguments. $0 --help for more info. Not skipping any annotation steps";
       sleep 2; # in case ctrl-c needs to be hurried
     }
   }
@@ -120,8 +112,8 @@ sub main() {
   #########################################
   ## Begin annotation with all modules here
 
-  ABX:
   # Antibiotic resistance genes
+  ABX:
   my $abx_command="run_annotation_blast.pl $aa_file -d $$settings{card_blast_db} -o $aa_file.card_hits.sql -p '-F F' 2>&1";
   logmsg "Finding antimicrobial resistance genes with command\n  $abx_command";
   system($abx_command); die "Problem with antimicrobial resistance gene blasting" if $?;
@@ -129,11 +121,13 @@ sub main() {
 
   # IS elements
   # Credit to some parameters goes to ISsaga http://genomebiology.com/2011/12/3/R30
+  IS:
   my $is_command="run_annotation_blast.pl $aa_file -d $$settings{is_blast_db} -o $aa_file.is_hits.sql --min_aa_coverage 30 --min_aa_identity 20 --min_aa_similarity 30 -p '-W 2 -F F -e 1E-5 -b 1 -v 1' 2>&1";
   logmsg "Finding IS elements with command\n  $is_command";
   system($is_command); die "Problem with IS element blasting" if $?;
   flushSql($settings);
 
+  SIGNALP:
   # Run SignalP on all proteins
   system("run_annotation_signalp.pl $aa_file"); die if $?;
   flushSql($settings);
@@ -159,11 +153,10 @@ sub main() {
   COGS:
   logmsg "Finding COGs";
   system("run_annotation_blast.pl $aa_file -d $$settings{cogs_blast_db} -o $aa_file.cogs_hits.sql --min_aa_coverage 80 --min_aa_identity 40 --min_aa_similarity 70 -p '-b 10 -v 10'"); die "Problem with blast against COGs" if $?;
-  #system("run_annotation_cogs.pl -tempdir=$$settings{tempdir} $aa_file"); die if $?;
   flushSql($settings);
 
   # Run BLAST on all proteins vs. Uniprot
-  BLAST_VS_UNIPROT:
+  UNIPROT:
   logmsg "BLASTp vs Uniprot (this might take a while)";
   my $invoke_string = "run_annotation_blast.pl $aa_file -db=$$settings{blast_db}";
   $invoke_string .= " -outfile='$$settings{tempdir}/blast.sql'";
@@ -173,8 +166,6 @@ sub main() {
   logmsg "COMMAND\n  $invoke_string";
   system($invoke_string) if(!-e "$$settings{outdir}/blast.sql"); die "Problem with BLAST vs Uniprot" if $?;
   flushSql($settings);
-
-  # TODO: auto-build uniprot database (and VFDB database)
 
   # Fetch Uniprot metadata for BLAST hits
   $invoke_string = "run_annotation_uniprot2sql.pl '$$settings{outdir}/blast.sql'";
@@ -206,4 +197,24 @@ sub flushSql{
   return 1;
 }
 
+sub usage{
+  my($settings)=@_;
+  my $usage="Usage: $0 input.gb -o annotationDir
+  annotationDir can be converted to a genbank file with run_annotation_genbank.pl
+    -h for more help";
+  return $usage if(!$$settings{help});
+  $usage.="
+  The steps of annotation are ABX IS SIGNALP TMHMM PDB VFDB COGS UNIPROT INTERPRO
+  --nodb-check do not check for blast databases before annotation.
+  For each annotation step, there is a similar option to jump to it, to exclude it, or to include it.  By default, all steps are performed.
+  --goto=ABX
+    Skips steps until this annotation step is reached.
+    Useful if annotation was interrupted. 
+    if --goto is used, --nodb-check is implied
+  --ABX or --NOABX to annotate or not annotate antibiotic resistance
+  --IS or --NOIS to annotate or not annotate IS elements
+  -- etc for each annotation step
+  ";
+  return $usage;
+}
 
