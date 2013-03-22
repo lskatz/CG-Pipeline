@@ -91,6 +91,8 @@ sub combinePredictionAndAnnotation{
         @geneFeat=interpretRRnaFeat($geneFeat,$$predfeatures{$seqid}{'rRNA'}{$locus_tag},$settings);
       } elsif($$predfeatures{$seqid}{'tRNA'}{$locus_tag}){
         @geneFeat=interpretTRnaFeat($geneFeat,$$predfeatures{$seqid}{'tRNA'}{$locus_tag},$settings);
+      } elsif($$predfeatures{$seqid}{repeat_region}{$locus_tag}){
+        @geneFeat=interpretCrisprFeat($geneFeat,$$predfeatures{$seqid}{repeat_region}{$locus_tag},$settings);
       } else {
         logmsg "WARNING: I could not understand what kind of gene $locus_tag is. Skipping annotation.";
         @geneFeat=($geneFeat);
@@ -157,6 +159,11 @@ sub interpretRRnaFeat{
 sub interpretTRnaFeat{
   my($geneFeat,$rnaFeatOrig,$locusAnnotation,$settings)=@_;
   return($geneFeat,$rnaFeatOrig);
+}
+# I think that CRISPRs are already annotated well
+sub interpretCrisprFeat{
+  my($geneFeat,$crisprFeatOrig,$locusAnnotation,$settings)=@_;
+  return($geneFeat,$crisprFeatOrig);
 }
 
 sub gbkToFeatures{
