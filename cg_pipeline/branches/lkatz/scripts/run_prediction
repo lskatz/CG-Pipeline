@@ -403,6 +403,8 @@ sub generateGenBankFile($$$) {
 				$pred_feature->add_tag_value('locus_tag', $locus_tag);
 				$pred_feature->add_tag_value('evidence', 'predicted');
 				$pred_feature->add_tag_value('note', 'Predictors: '.join(', ', @{$$pred{predictor}}));
+        # CRISPRs are direct repeats
+        $pred_feature->add_tag_value('rpt_type','direct');
       }else { die "Internal error: cannot understand feature type $$pred{type}" }
 
 			$gbseq->add_SeqFeature($pred_gene_feature);
