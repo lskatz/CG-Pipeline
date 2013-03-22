@@ -48,7 +48,7 @@ sub main() {
   $$settings{uniprot_evidence_db3} = $$settings{annotation_uniprot_evidence_db3};
   $$settings{blast_db} = $$settings{annotation_blast_db};
 
-  my @cmd_options = qw(ChangeDir=s keep blast_db=s outdir=s tempdir=s uniprot_db3=s uniprot_evidence_db3=s reporting_email=s goto=s help);
+  my @cmd_options = qw(ChangeDir=s keep blast_db=s outdir=s tempdir=s uniprot_db3=s uniprot_evidence_db3=s reporting_email=s goto=s help no-db-check);
   push(@cmd_options,"$_!") for(@annotationSteps);
   GetOptions($settings, @cmd_options) or die;
   die usage($settings) if $$settings{help};
@@ -101,12 +101,14 @@ sub main() {
   ## check pipeline requirements, but not if skipping ahead with goto
   # TODO Verify presence of pipeline requirements (SignalP, TMHMM, Uniprot, Uniprot DB3, ...)
   # Error checking with blast databases
-  my $blastErrMsgF ="ERROR: Need \%s in conf file set to a database. Current value is \%s.";
-  my $blastErrMsgF2="ERROR: Could not detect a protein blast database at \%s.";
-  for my $db(qw(is_blast_db pdb_blast_db vfdb_blast_db cogs_blast_db blast_db)){
-    my $dbPath=$$settings{$db};
-    die sprintf($blastErrMsgF,$db,$dbPath) if(!$dbPath);
-    die sprintf($blastErrMsgF2,$dbPath) if(!-e "$dbPath.pin" && !-e "$dbPath.pal");
+  if(!$$settings{'no-db-check'}){
+    my $blastErrMsgF ="ERROR: Need \%s in conf file set to a database. Current value is \%s.";
+    my $blastErrMsgF2="ERROR: Could not detect a protein blast database at \%s.";
+    for my $db(qw(is_blast_db pdb_blast_db vfdb_blast_db cogs_blast_db blast_db)){
+      my $dbPath=$$settings{$db};
+      die sprintf($blastErrMsgF,$db,$dbPath) if(!$dbPath);
+      die sprintf($blastErrMsgF2,$dbPath) if(!-e "$dbPath.pin" && !-e "$dbPath.pal");
+    }
   }
   
   #########################################
@@ -211,8 +213,8 @@ sub usage{
     Skips steps until this annotation step is reached.
     Useful if annotation was interrupted. 
     if --goto is used, --nodb-check is implied
-  --ABX or --NOABX to annotate or not annotate antibiotic resistance
-  --IS or --NOIS to annotate or not annotate IS elements
+  --skip-ABX do not annotate antibiotic resistance
+  --skip-IS do not annotate IS elements
   -- etc for each annotation step
   ";
   return $usage;
