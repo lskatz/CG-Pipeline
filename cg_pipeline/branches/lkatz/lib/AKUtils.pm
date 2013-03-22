@@ -375,7 +375,7 @@ sub flatten($) {
 
 # If argument is an executable in the current path, returns the full path to it, otherwise returns undef
 # arguments: warn_on_error
-sub fullPathToExec($) {
+sub fullPathToExec($;$) {
 	my ($executable,$settings) = @_;
 	my $fullpath;
 	for ("", split(/:/, $ENV{PATH})) {
