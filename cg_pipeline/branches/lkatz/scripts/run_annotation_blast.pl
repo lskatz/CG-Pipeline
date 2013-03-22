@@ -45,13 +45,14 @@ sub main() {
   $settings = AKUtils::loadConfig($settings);
 
   die usage() if(@ARGV<1);
-  my @cmd_options = qw(outfile=s blastfile=s db=s parametersForBlast=s min_aa_coverage=i min_aa_identity=i min_aa_similarity=i tempdir=s keep help);
+  my @cmd_options = qw(outfile=s blastfile=s db=s parametersForBlast=s min_aa_coverage=i min_aa_identity=i min_aa_similarity=i tempdir=s keep help checkEvery=i);
   GetOptions($settings, @cmd_options) or die;
   die usage() if($$settings{help});
 
   $$settings{blast_db}=$$settings{db} if($$settings{db});
   $$settings{blast_db}||=File::Spec->rel2abs($$settings{db});
   die("ERROR: cannot find a blast database at $$settings{blast_db}. Set it using blast_db in the config file (cgpipelinerc) or by using the -d setting for this script. If being run from run_annotation, it is possible that the database has not been set for this specific task.\n".usage()) if(!-e "$$settings{blast_db}.pin" && !-e "$$settings{blast_db}.pal" && !-e "$$settings{blast_db}.pal");
+  $$settings{checkEvery}=60 if(!$$settings{checkEvery} || $$settings{checkEvery}<1);
 
   die("ERROR: ARGV!=1: ".join(" ",@ARGV)."\n".usage()) if @ARGV != 1;
   $$settings{min_aa_coverage}||=1;
@@ -247,15 +248,16 @@ sub blastProgressUpdater{
   my $outfile="$$settings{tempdir}/$0.$$.blast_out";
   # wait until a file is there before updating
   sleep 5 while(!-e $outfile);
-  sleep 5;
+  #sleep 5;
+  logmsg "Checking the progress of BLAST every $$settings{checkEvery} seconds";
   while($Q->pending==0){ # the queue will have one item in it to signal for it to be done
     my $numFinished=`grep -c "Query=" '$outfile'`+0;
     logmsg "Finished with $numFinished queries";
     # give it a chance to break out of this subroutine if it has been given the term signal
     # Hold for 1 minute before updating
-    for(1..30){
+    for(1..$$settings{checkEvery}){
       last if($Q->pending>0);
-      sleep 2;
+      sleep 1;
     }
   }
   logmsg "Finished with BLAST";
@@ -279,5 +281,6 @@ sub usage{
   --min_aa_identity integer 1 to 100
   --min_aa_similarity integer 1 to 100
   -t tempdir (default is a subdir in /tmp)
+  --checkEvery 60 to check the progress of blast every 60 seconds
   "
 }
