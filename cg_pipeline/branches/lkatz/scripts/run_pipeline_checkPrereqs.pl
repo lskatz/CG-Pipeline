@@ -14,12 +14,13 @@ use warnings;
 use Getopt::Long;
 use FindBin;
 use lib "$FindBin::RealBin/../lib";
-$ENV{PATH} = "$FindBin::RealBin:".$ENV{PATH};
+#$ENV{PATH} = "$FindBin::RealBin:".$ENV{PATH};
 use AKUtils qw/logmsg/;
+use File::Basename;
 
 my $settings={
   appname=>'cgpipeline',
-  perllibs=>[qw(AKUtils BerkeleyDB Bio::Assembly::IO Bio::Assembly::Scaffold Bio::Perl Bio::Seq Bio::SeqIO Bio::Seq::Quality Bio::Seq::RichSeq Bio::SeqUtils Bio::Tools::GFF Bio::Tools::Run::StandAloneBlast CGPBase CGPipeline::SQLiteDB CGPipelineUtils Data::Dumper Date::Format File::Basename File::Copy File::Path File::Spec File::Temp FindBin Getopt::Long GTTmhmm List::Util LWP::Simple Math::Round strict Thread::Queue threads threads::shared warnings XML::LibXML::Reader)],
+  perllibs=>[qw(AKUtils BerkeleyDB Bio::Assembly::IO Bio::Assembly::Scaffold Bio::Perl Bio::Seq Bio::SeqIO Bio::Seq::Quality Bio::Seq::RichSeq Bio::SeqUtils Bio::Tools::GFF Bio::Tools::Run::StandAloneBlast CGPBase CGPipeline::SQLiteDB CGPipelineUtils Data::Dumper Date::Format File::Basename File::Copy File::Path File::Spec File::Temp FindBin Getopt::Long GTTmhmm List::Util LWP::Simple Math::Round strict Thread::Queue threads threads::shared warnings XML::LibXML::Reader XML::Quote)],
   executables=>[qw(addRun amos2ace AMOScmp cat cp gzip gunzip ln minimus2 mkdir nesoni newAssembly newMapping rm runProject setRef sfffile toAmos toAmos_new touch tmhmm signalp bam2fastq vcfutils.pl bcftools fastqqc)],
   environmentalVariables=>[qw(TMHMMDIR)],
 
@@ -40,6 +41,7 @@ sub main{
   my $exeProblems=checkExecutables($settings);
   my $libProblems=checkPerlLib($settings);
 
+  logmsg "$envProblems problems found with environmental variables";
   logmsg "$libProblems problems found with libraries";
   logmsg "$exeProblems problems found with executables";
 
@@ -54,6 +56,15 @@ sub checkEnvVars{
   for my $var(@{$$settings{environmentalVariables}}){
     my $presence_code=is_envVar_present($var,$settings);
     $problems+=reportPresenceStatus($var,$presence_code,$settings);
+  }
+  # check the CGPipeline path by seeing if this script is in the path
+  local $0=basename $0;
+  my $isInPath=AKUtils::fullPathToExec($0,{warn_on_error=>1});
+  #die "=>$0:$isInPath<=";
+  if(!$isInPath){
+    $problems++;
+    logmsg "CGP path not found. Need to add ".$FindBin::RealBin." to your PATH like so:";
+    logmsg "  export PATH=".$FindBin::RealBin.":\$PATH";
   }
   return $problems;
 }
