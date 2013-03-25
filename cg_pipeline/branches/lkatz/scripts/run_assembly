@@ -39,7 +39,7 @@ sub main() {
 
 	die usage() if @ARGV < 1;
 
-	my @cmd_options = ('Reference=s@', 'keep', 'tempdir=s', 'output=s', 'debug','numcpus=i', 'expectedGenomeSize=i');
+	my @cmd_options = ('Reference=s@', 'keep', 'tempdir=s', 'output=s', 'debug','numcpus=i', 'expectedGenomeSize=i', 'illumina=s@', '454=s@');
 	GetOptions($settings, @cmd_options) or die;
 	$$settings{numcpus}||=AKUtils::getNumCPUs();
 
@@ -60,10 +60,18 @@ sub main() {
   mkdir $$settings{tempdir} if(!-d $$settings{tempdir});
 	logmsg "Temporary directory is $$settings{tempdir}";
 
-	foreach my $file (@input_files, @ref_files) {
+  # TODO add other chemistry type as needed (PacBio, Ion Torrent)
+	foreach my $file (@input_files, @ref_files, @{$$settings{illumina}}, @{$$settings{454}}) {
 		$file = File::Spec->rel2abs($file);
 		die("Input or reference file $file not found") unless -f $file;
 	}
+  # make sure each specified platform raw read set is marked as such
+  for my $platform(qw(illumina 454 pacbio iontorrent)){
+    foreach my $file (@{$$settings{$platform}}) {
+      $$settings{"is_".$platform}{$file}=1;
+      push(@input_files,$file);
+    }
+  }
 
   my $fastaqualfiles=baseCall(\@input_files,$settings); #array of [0=>fna,1=>qual file] (array of arrays)
 
@@ -207,32 +215,34 @@ sub main() {
 # determine file types
 sub ext($){ # return the extension of a filename
   my($file)=@_;
-  my($name,$path,$ext)=fileparse($file,qw(.fastq.gz .sff .fasta .fna .fa .fas .fastq .ffn .mfa));
+  my($name,$path,$ext)=fileparse($file,qw(.fastq.gz .sff .fasta .fna .fa .fas .fastq .ffn .mfa .fq));
   if(!$ext){
-    die "Extension of $file could not be determined.";
+    $ext=$file;
+    $ext=~s/.+(\..*$)/\1/;
+    #warn "Extension of $file is not standard. Using $ext as the extension";
   }
   $ext=~s/^.//; # remove that dot
   #my $ext=$file;
   #$ext=~s/^.+\.//;
   return lc($ext);
 }
-sub is_sff($){
-  my($file)=@_;
-  return 1 if(ext($file) eq 'sff');
+sub is_sff($;$){
+  my($file,$settings)=@_;
+  return 1 if($$settings{is_454}{$file} || $$settings{is_iontorrent}{$file} || ext($file) eq 'sff');
   return 0;
 }
-sub is_fasta($){
-  my($file)=@_;
+sub is_fasta($;$){
+  my($file,$settings)=@_;
   return 1 if(ext($file)=~/^(fna|fasta|ffn|fa|fas|mfa)$/i);
   return 0;
 }
-sub is_fastq($){
-  my($file)=@_;
-  return 1 if(ext($file)=~/^(fastq)$/i);
+sub is_fastq($;$){
+  my($file,$settings)=@_;
+  return 1 if($$settings{is_illumina}{$file} || ext($file)=~/^(fastq|fq)$/i);
   return 0;
 }
-sub is_fastqGz($){
-  my($file)=@_;
+sub is_fastqGz($;$){
+  my($file,$settings)=@_;
   return 1 if(ext($file)=~/^(fastq\.gz)$/i);
   return 0;
 }
@@ -245,19 +255,19 @@ sub baseCall($$){
   my $long=[]; my $short=[]; my $sff=[];
   foreach my $file (@$input_files){
     my $seqQualPair; # [0=>seq,1=>qual]
-    if(is_sff($file)){
+    if($$settings{is_454}{$file} || $$settings{is_iontorrent}{$file} || is_sff($file,$settings)){
       $seqQualPair=sff2fastaqual([$file], $settings);
       $seqQualPair=$$seqQualPair[0];
       push(@$long,$seqQualPair);
       push(@$sff,$file);
     }
-    elsif(is_fasta($file)){
+    elsif(is_fasta($file,$settings)){
       my $qualfile="";
       $qualfile="$file.qual" if(-e "$file.qual");
       $seqQualPair=[$file,$qualfile];
       push(@$long,$seqQualPair);
     }
-    elsif(is_fastq($file) || is_fastqGz($file)){
+    elsif($$settings{is_illumina}{$file} || is_fastq($file,$settings) || is_fastqGz($file,$settings)){
       my $singletons;
       # quality trim fastq files
       ($file,$singletons)=qualityControlFastq($file,$settings);
@@ -265,7 +275,8 @@ sub baseCall($$){
       push(@$short,$singletons) if(-s $singletons>0);
     }
     else{
-      die "The format of $file is incompatible because its extension ".ext($file)." is not recognized";
+      die "The format of $file is incompatible because its extension ".ext($file)." is not recognized.
+      Try using --illumina or similar options to force a file type.";
     }
   }
   return {sff=>$sff,454=>$long,illumina=>$short};
@@ -323,7 +334,7 @@ sub trimUpAndDown{
   logmsg "Running $fastqqc on $file and looking for balanced base percentages along $numSlopesToBeGood bases of the reads";
   # 5' and 3' trimming step
   my(@a,@t,@c,@g,@q);
-  if(is_fastqGz($file)){
+  if(is_fastqGz($file,$settings)){
     open(STREAM,"gunzip -c '$file' | $fastqqc $fastqqcXopts /dev/stdin |") or die "Could not run fastqqc: $!";
   } else {
     open(STREAM,"$fastqqc $fastqqcXopts '$file' |") or die "Could not run fastqqc: $!";
@@ -391,7 +402,7 @@ sub trimUpAndDown{
   my $length=scalar(@a)-($downstreamTrim+$start);
   logmsg "Slopes were good starting at $upstreamTrim from 5' and $downstreamTrim from 3'. Therefore I will trim at $start and retain $length length reads. Outfile will be $outfile";
   open(OUT,">",$outfile) or die "Could not open $outfile for writing:$!";
-  if(is_fastqGz($file)){
+  if(is_fastqGz($file,$settings)){
     open(IN,"gunzip -c '$file' |") or die "Could not open $file for gunzipping/reading:$!";
   } else {
     open(IN,"<",$file) or die "Could not open $file for reading:$!";
@@ -493,6 +504,8 @@ sub usage{
     -n numcpus to specify a number of threads, instead of all possible threads
     -e for an expected genome size, in bp (for 4MB genome, use -e 4000000)
       This is used for downsampling and could be used for displaying more accurate assembly metrics
+    Use these flags to specify exact chemistry types
+      --illumina file.fastq, --454 file.sff
   "
 }
 
