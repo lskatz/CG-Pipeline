@@ -1,0 +1,38 @@
+<tool id="cgp_run_assembly_shuffleReads" name="CG-Pipeline">
+  <description>Interleve fastq reads</description>
+  <!-- <command interpreter="bash">run_assembly -1 $pair1 -2 $pair2 -o $out -R $reference -e $expectedSize</command> -->
+  <command interpreter="bash">run_assembly_shuffleReads.sh $pair1 $pair2 $out</command>
+  <inputs>
+    <param name="pair1" type="data" format="fastq" label="Pair 1">
+      <validator type="empty_field" message="You must specify a file"/>
+    </param>
+    <param name="pair2" type="data" format="fastq" label="Pair 2">
+      <validator type="empty_field" message="You must specify a file"/>
+    </param>
+    <param name="outfile" type="text" width="20" label="Output file name" help=".fastq will be appended to the filename" />
+  </inputs>
+  <outputs>
+    <data format="fastq" name="out" label="${outfile}.fastq" />
+  </outputs>
+  <help>
+.. class:: infomark
+
+**What it does:**
+
+This tool allows users to add data in their histories whitout having to upload them through the network.
+
+------
+
+**Input:**
+
+You must provide a filename whitout the extension (which is provide by file type) and the path to the data on the server. If you don't find the extension of your file, don't panic, just upload it with the text extension, and then search for the good format by clicking on the pencil on the dataset created. 
+
+**Output:**
+
+Create the galaxy dataset corresponding to your file on servers.
+
+.. class:: infomark
+
+**Feedback**: alban.lermine@curie.fr
+  </help>
+</tool>
