@@ -1,0 +1,37 @@
+<tool id="cgp_run_assembly" name="CG-Pipeline">
+  <description>Run de novo assembly on raw reads</description>
+  <command interpreter="bash">run_assembly.sh $reads $expectedGenomeSize $out</command>
+  <inputs>
+    <param name="reads" type="data" format="fastq" label="Raw reads file" help="Interleved fastq, 454 sff, or ion torrent sff">
+      <validator type="empty_field" message="You must specify a file"/>
+    </param>
+    <param name="expectedGenomeSize" type="integer" value="5000000" size="9" label="Genome size" help="E.g. estimate 5 megabases as 5000000">
+      <validator type="empty_field" message="You must specify a size"/>
+    </param>
+    <param name="outfile" type="text" size="20" label="Output file name" help=".fasta will be appended to the filename" />
+  </inputs>
+  <outputs>
+    <data format="fasta" name="out" label="${outfile}.fasta" />
+  </outputs>
+  <help>
+.. class:: infomark
+
+**What it does:**
+
+This tool allows users to add data in their histories whitout having to upload them through the network.
+
+------
+
+**Input:**
+
+You must provide a filename whitout the extension (which is provide by file type) and the path to the data on the server. If you don't find the extension of your file, don't panic, just upload it with the text extension, and then search for the good format by clicking on the pencil on the dataset created. 
+
+**Output:**
+
+Create the galaxy dataset corresponding to your file on servers.
+
+.. class:: infomark
+
+**Feedback**: alban.lermine@curie.fr
+  </help>
+</tool>

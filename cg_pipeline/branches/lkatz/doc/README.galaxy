@@ -1,0 +1,17 @@
+CG-Pipeline tools for Galaxy
+
+To install, one must first create the galaxy: http://wiki.galaxyproject.org/Admin/Get%20Galaxy
+I am assuming that the galaxy directory is galaxy-dist.  Be sure to configure Galaxy correctly before continuing, per their instructions.
+
+Next steps
+1. copy the galaxy folder to galaxy-dist/tools/
+2. edit tool_conf.xml and add the following section
+  <section name="CG-Pipeline" id="CGP">
+    <label text="Computational Genomics Pipeline" id="cg_pipeline" />
+      <tool file="cg_pipeline/galaxy/run_assembly_shuffleReads.xml" />
+      <tool file="cg_pipeline/galaxy/run_assembly.xml" />
+  </section>
+3.  source cgpipelineGalaxyrc # puts cg-pipeline into your path
+  - you might want to put this into a login script such as $HOME/.bashrc
+4.  Start Galaxy 
+  galaxy-dist/run.sh --daemon
