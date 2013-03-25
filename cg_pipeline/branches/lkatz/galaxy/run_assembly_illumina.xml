@@ -1,9 +1,9 @@
 <tool id="cgp_run_assembly" name="CG-Pipeline">
-  <description>Run de novo assembly on raw reads</description>
-  <command interpreter="bash">run_assembly.sh $reads $expectedGenomeSize $out</command>
+  <description>Run de novo assembly on raw Illumina reads</description>
+  <command interpreter="bash">run_assembly_illumina.sh $reads $expectedGenomeSize $out</command>
   <inputs>
-    <param name="reads" type="data" format="fastq" label="Raw reads file" help="Interleved fastq, 454 sff, or ion torrent sff">
-      <validator type="empty_field" message="You must specify a file"/>
+    <param name="reads" type="data" format="fastq" label="Raw reads file" help="Interleved fastq">
+      <validator type="empty_field" message="You must specify a fastq file"/>
     </param>
     <param name="expectedGenomeSize" type="integer" value="5000000" size="9" label="Genome size" help="E.g. estimate 5 megabases as 5000000">
       <validator type="empty_field" message="You must specify a size"/>
