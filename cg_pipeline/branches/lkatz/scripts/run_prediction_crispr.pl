@@ -64,7 +64,7 @@ sub main{
 sub runCrt{
   my($assembly,$settings)=@_;
   my $crtJar=$$settings{crtJar}||"";
-  die "ERROR Cannot find CRT jar file at $crtJar" if(!-f $crtJar);
+  die "ERROR Cannot find CRT jar file at $crtJar. If not set, then add a value for prediction_crt_jar to your config file" if(!-f $crtJar);
   my $basename=fileparse $assembly;
   my $crtOut="$$settings{tempdir}/$basename.crt.out";
   my $java=AKUtils::fullPathToExec("java");
