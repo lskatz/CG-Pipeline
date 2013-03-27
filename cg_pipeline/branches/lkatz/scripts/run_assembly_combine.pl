@@ -143,7 +143,14 @@ sub combine2Assemblies{
   die "Problem with toAmos with command\n  toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'" if $?;
   my $command="minimus2 -D REFCOUNT=$numContigs -D OVERLAP=200 -D MAXTRIM=40 '$$settings{tempdir}/minimus.combined' 2>&1";
   system($command);
-  die "Problem with Minimus2: $!. Used this command:\n  $command" if $?;
+  if($? || 1){ # sometimes minimus2 is not installed correctly. Give a helpful error message.
+    warn "ERROR: there was a problem with Minimus2 with the following command\n  $command.\n";
+    warn "A possible problem is that Minimus2 does not know the correct locations of the ".
+         "following files or directory. Edit the minimus2 executable to correct the paths ".
+         "(e.g. sudo vim `which minimus2`)\n";
+    warn "  delta-filter show-coords /opt/AMOS/bin/ nucmer\n";
+    die;
+  }
 
   # recover singletons that pass the filter
   my %allseqs=(); my $i=0;
