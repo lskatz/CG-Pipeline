@@ -141,7 +141,7 @@ sub combine2Assemblies{
   logmsg "Running Minimus2 with reference genome $refGenome and query genome $queryGenome";
   system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
   die "Problem with toAmos with command\n  toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'" if $?;
-  my $command="minimus2 -D REFCOUNT=$numContigs -D OVERLAP=200 -D MAXTRIM=40 '$$settings{tempdir}/minimus.combined' 2>&1";
+  my $command="minimus2 -D REFCOUNT=$numContigs '$$settings{tempdir}/minimus.combined' 2>&1";
   system($command);
   if($? || 1){ # sometimes minimus2 is not installed correctly. Give a helpful error message.
     warn "ERROR: there was a problem with Minimus2 with the following command\n  $command.\n";
