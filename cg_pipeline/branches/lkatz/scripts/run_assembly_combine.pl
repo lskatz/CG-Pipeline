@@ -143,7 +143,7 @@ sub combine2Assemblies{
   die "Problem with toAmos with command\n  toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'" if $?;
   my $command="minimus2 -D REFCOUNT=$numContigs '$$settings{tempdir}/minimus.combined' 2>&1";
   system($command);
-  if($? || 1){ # sometimes minimus2 is not installed correctly. Give a helpful error message.
+  if($?){ # sometimes minimus2 is not installed correctly. Give a helpful error message.
     warn "ERROR: there was a problem with Minimus2 with the following command\n  $command.\n";
     warn "A possible problem is that Minimus2 does not know the correct locations of the ".
          "following files or directory. Edit the minimus2 executable to correct the paths ".
