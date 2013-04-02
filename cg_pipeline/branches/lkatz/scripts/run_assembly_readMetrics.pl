@@ -57,7 +57,12 @@ sub main() {
   print join("\t",qw(File avgReadLength totalBases maxReadLength minReadLength avgQuality numReads readScore))."\n";
   for my $input_file(@ARGV){
     my($filename,$dirname,$ext)=fileparse($input_file,(@fastaExt,@fastqExt));
-    if(grep(/$ext/,@fastqExt)){
+    
+    # fast settings: do a word count and multiply by the first few read lengths' average
+    if($$settings{fast} && grep(/$ext/,@fastqExt)){
+      $$settings{is_fastqGz}=1 if($ext=~/\.gz/);
+      fastqFastStats($input_file,$settings);
+    } elsif(grep(/$ext/,@fastqExt)){
       $$settings{is_fastqGz}=1 if($ext=~/\.gz/);
       my $entryQueue=Thread::Queue->new();    # for storing fastq 4-line entries
       my $metricsQueue=Thread::Queue->new(); # for receiving read lengths and metrics
@@ -78,6 +83,48 @@ sub main() {
   }
 
   return 0;
+}
+
+sub fastqFastStats{
+  my($infile,$settings)=@_;
+  my $qual_offset=$$settings{qual_offset};
+  my $numReadsToAverage||=5000;
+  my $numLinesToAverage=$numReadsToAverage*4; # calc it once here to save on cpu time
+  my $firstReadlengthsTotalSize=0;
+  my $firstReadlengthsTotalQual=0;
+  my $numLines=0;
+  if($$settings{is_fastqGz}){
+    open(FASTQ,"gunzip -c $infile|") or die "Could not open the fastq $infile because $!";
+  } else {
+    open(FASTQ,"<",$infile) or die "Could not open the fastq $infile because $!";
+  }
+
+  # count all lines and pull metrics from the first XXXX reads
+  while(<FASTQ>){
+    chomp;
+    $numLines++;
+    next if($numLinesToAverage < $numLines);
+
+    # 1=> readid, 2=>sequence,...
+    my $mod=$numLines % 4;
+    if($mod==2){
+      $firstReadlengthsTotalSize+=length($_);
+    }elsif($mod==0){
+      my $qual=$_;
+      my @qual=map(ord($_)-$qual_offset, split(//,$qual));
+      $firstReadlengthsTotalQual+=sum(@qual);
+    }
+  }
+  close FASTQ;
+
+  my $avgReadLength=$firstReadlengthsTotalSize/$numReadsToAverage;
+  my $avgQuality=$firstReadlengthsTotalQual/$firstReadlengthsTotalSize;
+  my $numReads=$numLines/4;
+  my $totalBases=$avgReadLength*$numReads;
+  my $readScore=round(log($totalBases*$avgQuality*$avgReadLength));
+
+  print join("\t",$infile,round($avgReadLength),int($totalBases),'.','.',round($avgQuality),$numReads,$readScore)."\n";
+  return 1;
 }
 
 sub fastaStats{
