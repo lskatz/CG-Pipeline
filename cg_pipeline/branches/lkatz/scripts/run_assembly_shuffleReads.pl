@@ -22,9 +22,10 @@ sub main{
     my($seqFile)=@ARGV;
     $numReads=deshuffleSeqs($seqFile,$settings);
   } else {
-    die "ERROR: need two files to shuffle\n". usage() if(@ARGV<2);
-    my($seqFile1,$seqFile2)=@ARGV;
-    $numReads=shuffleSeqs($seqFile1,$seqFile2,$settings);
+    die "ERROR: need >two files to shuffle\n". usage() if(@ARGV<2);
+    die "ERROR: need an even number of files to shuffle\n".usage() if(@ARGV % 2==1);
+    my @seqFile=@ARGV;
+    $numReads=shuffleSeqs(\@seqFile,$settings);
   }
   return 0;
 }
@@ -46,17 +47,20 @@ sub deshuffleSeqs{
 }
 
 sub shuffleSeqs{
-  my($seqFile1,$seqFile2,$settings)=@_;
-  open(MATE1,"<",$seqFile1) or die "Could not open $seqFile1:$!";
-  open(MATE2,"<",$seqFile2) or die "Could not open $seqFile2:$!";
+  my($seqFile,$settings)=@_;
   my $i=0;
-  while(my $out=<MATE1>){
-    $out.=<MATE1> for(1..3);
-    $out.=<MATE2> for(1..4);
-    print STDOUT $out;
-    $i++;
+  for(my $j=0;$j<@$seqFile;$j+=2){
+    my($file1,$file2)=($$seqFile[$j],$$seqFile[$j+1]);
+    open(MATE1,"<",$file1) or die "Could not open $file1: $!";
+    open(MATE2,"<",$file2) or die "Could not open $file2: $!";
+    while(my $out=<MATE1>){
+      $out.=<MATE1> for(1..3);
+      $out.=<MATE2> for(1..4);
+      print STDOUT $out;
+      $i++;
+    }
+    close MATE1; close MATE2;
   }
-  close MATE1; close MATE2;
   my $numReads=$i/4;
   return $numReads;
 }
