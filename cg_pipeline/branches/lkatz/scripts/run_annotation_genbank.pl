@@ -97,6 +97,9 @@ sub combinePredictionAndAnnotation{
         logmsg "WARNING: I could not understand what kind of gene $locus_tag is. Skipping annotation.";
         @geneFeat=($geneFeat);
       }
+
+      # TODO why doesn't this work entirely yet?
+      $_=consolidateFeatureTags([qw(product note)],$_,$settings) for(@geneFeat);
       
       $seq->add_SeqFeature(@geneFeat);
     }
@@ -582,6 +585,22 @@ sub uniprotEvidence{
   }
   close UNIPROTEVIDENCE;
   return %evidence;
+}
+
+# change multiple tags of the same kind, e.g. /product="..."
+# into one tag name with multiple values, e.g. /product="...;..."
+# $tag is an array reference of tags
+sub consolidateFeatureTags{
+  my($tag,$geneFeat,$settings)=@_;
+  for my $tag(@$tag){
+    next if(!$geneFeat->has_tag($tag));
+
+    # concat all tag values, remove the tag, add the concat tag
+    my $v=join(";",$geneFeat->get_tag_values($tag));
+    $geneFeat->remove_tag($tag) while($geneFeat->has_tag($tag));
+    $geneFeat->add_tag_value($tag,$v);
+  }
+  return $geneFeat;
 }
 
 # set up cogs mapping
