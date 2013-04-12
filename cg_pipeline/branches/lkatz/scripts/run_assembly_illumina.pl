@@ -299,38 +299,6 @@ sub runVelvetAssembly($$){
 
   return $run_name;
 }
-sub nesoni{
-  my($concatenatedReferences,$concatenatedReads,$settings)=@_;
-  logmsg "Running nesoni samshrimp";
-  my $nesoni_run="$$settings{tempdir}/nesoni";
-  return "$nesoni_run/contigs.fasta" if(-s "$nesoni_run/contigs.fasta" > 100);
-  mkdir($nesoni_run) if(!-d $nesoni_run);
-
-  system("nesoni samshrimp: $nesoni_run $concatenatedReferences reads: $concatenatedReads --sam-unaligned no") unless (-e "$nesoni_run/alignments.bam");
-  if($?){
-    logmsg "Problem with Nesoni and/or SHRiMP. Exiting nesoni.";
-    system("touch $nesoni_run/contigs.fasta");
-    return "$nesoni_run/contigs.fasta";
-  }
-  logmsg "Running nesoni samconsensus";
-  system("nesoni samconsensus: $nesoni_run --majority 0.7 --cutoff 0.7") unless(-e "$nesoni_run/consensus.fa");
-  die "Problem with Nesoni and/or Samtools" if $?;
-  
-  # read the consensus sequence into contigs
-  my $unmaskedContigs="$nesoni_run/consensus.fa";
-  my $contigs={};
-  my $c=0;
-  my $mappings=AKUtils::readMfa($unmaskedContigs,$settings);
-  for my $contig(values(%$mappings)){
-    my @contigs=split(/N+/,$contig);
-    @contigs=grep(!/^\s*$/,@contigs);
-    $$contigs{++$c}=$_ for(@contigs);
-  }
-
-  AKUtils::printSeqsToFile($contigs,"$nesoni_run/contigs.fasta");
-
-  return "$nesoni_run/contigs.fasta";
-}
 
 sub bowtie2{
   my($concatenatedReferences,$concatenatedReads,$settings)=@_;
