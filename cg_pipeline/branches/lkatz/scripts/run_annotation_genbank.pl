@@ -23,7 +23,7 @@ sub main(){
   my $settings={appname=>'cgpipeline'};
   $settings=AKUtils::loadConfig($settings);
   die usage() if(@ARGV < 1);
-  GetOptions($settings,qw(organism=s prediction=s inputdir=s gb=s gff=s)) or die;
+  GetOptions($settings,qw(organism=s prediction=s inputdir=s gb=s gff=s subdomains)) or die;
   $$settings{numcpus}||=AKUtils::getNumCPUs();
   my $annotationDir=$$settings{inputdir};
   die "ERROR: cannot read annotation directory at $annotationDir" if(!-d $annotationDir || !-x $annotationDir);
@@ -98,7 +98,7 @@ sub combinePredictionAndAnnotation{
         @geneFeat=($geneFeat);
       }
 
-      # TODO why doesn't this work entirely yet?
+      # combine multiple instances of a tag into a combined one
       $_=consolidateFeatureTags([qw(product note)],$_,$settings) for(@geneFeat);
       
       $seq->add_SeqFeature(@geneFeat);
@@ -132,15 +132,12 @@ sub interpretCdsFeat{
   my $cogsFeat=interpretCogs($cdsFeat,$locusAnnotation,$extraAnnotationInfo,$settings);
   my $pdbFeat=interpretPdb($cdsFeat,$locusAnnotation,$settings);
   interpretCard($cdsFeat,$locusAnnotation,$settings);
-  #push(@miscFeat,$isFeat) if($isFeat);
-  #push(@miscFeat,$vfFeat) if($vfFeat);
-  #push(@miscFeat,$cogsFeat) if($cogsFeat);
-  #push(@miscFeat,$pdbFeat) if($pdbFeat);
   
   ## annotations on portions of the gene
   my $signalpFeat=interpretSignalP($cdsFeat,$locusAnnotation,$settings);
   my $tmFeat=interpretTmhmm($cdsFeat,$locusAnnotation,$settings);
   push(@miscFeat,$tmFeat) if($tmFeat);
+  push(@miscFeat,$signalpFeat) if($signalpFeat); # $signalpFeat is 0 if not present
       
   # domain hits
   # TODO add domains instead to the CDS feature
@@ -148,8 +145,8 @@ sub interpretCdsFeat{
   push(@otherFeat,@iprFeat);
   @otherFeat=sort {$a->start<=>$b->start} @otherFeat;
   
-  push(@feat,$signalpFeat) if($signalpFeat); # $signalpFeat is 0 if not present
-  push(@feat,$geneFeat,$cdsFeat,@miscFeat,@otherFeat);
+  push(@feat,$geneFeat,$cdsFeat);
+  push(@feat,@miscFeat,@otherFeat) if($$settings{subdomains});
   return @feat;
 }
 
@@ -646,5 +643,6 @@ sub annotationFieldMap{
 sub usage{
   "Transforms a CG-Pipeline annotation directory into a standard genbank file
   Usage: ". basename($0) . " --prediction=prediction.gb --inputdir=annotation-sql-folder --gb=genbank-output-file --gff=gff-output-file [--organism=organism_id]
+  -s to include subdomains (might throw off genome viewers)
   "
 }
