@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <tool id="cgp_run_assembly" name="CGP Run Assembly" version="1.0">
   <description>Run assembler programs Velvet, Newbler, AMOS. Input files can be sff, fastq, and fasta.  *.fasta.qual files are considered as the relevant quality files</description>
-  <command interpreter="perl">g/test $input $refarg --output=$output -t $tempdir</command>
+  <command interpreter="perl">scripts/run_assembly $input $refarg --output=$output -t $tempdir</command>
   <inputs>   
     <param name="project" type="text" label="Project Name" optional="false" size="30"/>
     <param name="infile" type="data" label="input data" optional="false" multiple="true"/>
