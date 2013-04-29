@@ -28,6 +28,7 @@ use Data::Dumper;
 use Archive::Tar;
 use File::Slurp;
 
+$0=fileparse $0;
 sub logmsg {my $FH = *STDERR; print $FH "$0: ".(caller(1))[3].": @_\n";}
 exit(main());
 
@@ -39,7 +40,10 @@ sub main{
   my @project=@ARGV;
 
   for my $p(@project){
-    die "ERROR: $p is not a CGP project" if(!is_cgp_project($p,$settings));
+    if(!is_cgp_project($p,$settings)){
+      logmsg "$p is not a CGP project. I will skip it.";
+      next;
+    } else { logmsg "CGP project $p"; }
     exportProject($p,$settings) if($$settings{export});
     cleanProject($p,$settings) if($$settings{clean});
   }
@@ -84,9 +88,9 @@ sub locateFile{
 }
 
 sub usage{
-  "Manages a genome annotation project (created by 'run_pipeline create')
+  "Manages a CG-Pipeline project. With no options, simply reports whether a directory is a CGP project.
   Usage: $0 project [project2 ...] -e > outfile
-  project: a cg_pipeline project directory
+  project: a cg_pipeline project directory (created by 'run_pipeline create')
   -e export the project directory
   -c clean the project directory
   ";
