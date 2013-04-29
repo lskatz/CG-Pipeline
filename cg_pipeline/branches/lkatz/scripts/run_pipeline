@@ -265,7 +265,7 @@ sub usage($){
   
   $script=fileparse $0;
 
-  my $basicUsage="$script [build|create|assemble|predict|annotate|genbank|makedb] [-p project] -i target.sff [-r reference.fasta] [-t tag_prefix]";
+  my $basicUsage="$script [build|create|assemble|predict|annotate|genbank|makedb] [-p project] -i target.sff [-r reference.fasta] [-t tag_prefix] [-e expectedGenomeSize]";
 
   if($option eq 'v'){
     $str="\n\tusage: $basicUsage\n
