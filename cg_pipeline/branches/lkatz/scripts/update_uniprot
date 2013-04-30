@@ -1,7 +1,5 @@
 #!/bin/sh
 
-# TODO: timestamp checking
-
 wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz
 gunzip --stdout uniprot_sprot.fasta.gz > uniprot_sprot.fasta
 
