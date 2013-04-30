@@ -1,4 +1,4 @@
-MANIFEST = Makefile README INSTALL conf doc lib scripts data
+MANIFEST = Makefile README conf doc lib scripts
 DIST_MANIFEST = ${MANIFEST}
 PROJECT = cg_pipeline
 HOST = topaz
@@ -7,9 +7,6 @@ DESTDIR = "/opt/${PROJECT}"
 
 TEST_SETDIR = test-data
 TEST_SETFILE = amdx.fasta
-
-init_databases:
-	(cd "${DESTDIR}/data"; PATH="${DESTDIR}/scripts:$${PATH}"; update_cg_databases)
 
 install:
 	-echo "Installing ${PROJECT} to ${DESTDIR}..."
@@ -20,7 +17,10 @@ install:
 install-app:
 	mkdir -p ${DESTDIR}
 	cp -R ${MANIFEST} "${DESTDIR}"
-	make revise
+	#make revise
+
+init_databases:
+	(mkdir -p "${DESTDIR}/data"; cd "${DESTDIR}/data"; PATH="${DESTDIR}/scripts:$${PATH}"; update_cg_databases)
 
 #up:
 #	scp -r ${MANIFEST} ${AUTHOR}@${HOST}:~/${PROJECT}/
