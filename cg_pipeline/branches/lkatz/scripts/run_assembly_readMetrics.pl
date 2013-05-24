@@ -37,6 +37,7 @@ use Thread::Queue;
 
 my @fastaExt=qw(.fasta .fa .mfa .fas .fna);
 my @fastqExt=qw(.fastq .fq .fastq.gz .fq.gz);
+my @sffExt=qw(.sff);
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
 sub logmsg {my $FH = $FSFind::LOG || *STDOUT; print $FH "$0: ".(caller(1))[3].": @_\n";}
@@ -51,12 +52,13 @@ sub main() {
   GetOptions($settings, @cmd_options) or die;
   $$settings{qual_offset}||=33;
   $$settings{numcpus}||=AKUtils::getNumCPUs();
+  $$settings{tempdir}||=AKUtils::mktempdir();
 
   # TODO read all files in however into a queue of reads.  Then streamline the analysis of those reads.
   my %final_metrics;
   print join("\t",qw(File avgReadLength totalBases maxReadLength minReadLength avgQuality numReads readScore))."\n";
   for my $input_file(@ARGV){
-    my($filename,$dirname,$ext)=fileparse($input_file,(@fastaExt,@fastqExt));
+    my($filename,$dirname,$ext)=fileparse($input_file,(@fastaExt,@fastqExt, @sffExt));
     
     # fast settings: do a word count and multiply by the first few read lengths' average
     if($$settings{fast} && grep(/$ext/,@fastqExt)){
@@ -77,6 +79,8 @@ sub main() {
       fastqStats($input_file,$metricsQueue,$settings);
     } elsif(grep(/$ext/,@fastaExt)){
       fastaStats($input_file,$settings);
+    } elsif(grep(/$ext/,@sffExt)){
+      sffStats($input_file,$settings);
     } else {
       logmsg "WARNING: I do not understand the extension $ext in the filename $filename.  SKIPPING.";
     }
@@ -163,6 +167,13 @@ sub fastaStats{
 
   print join("\t",$infile,$avgReadLength,$totalBases,$maxReadLength,$minReadLength,$avgQuality,$numReads,$readScore)."\n";
   return 1;
+}
+
+sub sffStats{
+  my($infile,$settings)=@_;
+  system("sffinfo -s $infile > '$$settings{tempdir}/$infile.fna'");
+  system("sffinfo -q $infile > '$$settings{tempdir}/$infile.fna.qual'");
+  return fastaStats("$$settings{tempdir}/$infile.fna",$settings);
 }
 
 sub fastqStats{
