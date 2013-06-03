@@ -35,7 +35,7 @@ use Data::Dumper;
 use threads;
 use Thread::Queue;
 
-my @fastaExt=qw(.fasta .fa .mfa .fas .fna);
+my @fastaExt=qw(.fasta .fa .mfa .fas .fna .sff.fna .sff.fasta);
 my @fastqExt=qw(.fastq .fq .fastq.gz .fq.gz);
 my @sffExt=qw(.sff);
 $0 = fileparse($0);
