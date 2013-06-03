@@ -40,7 +40,7 @@ my @fastqExt=qw(.fastq .fq .fastq.gz .fq.gz);
 my @sffExt=qw(.sff);
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
-sub logmsg {my $FH = $FSFind::LOG || *STDOUT; print $FH "$0: ".(caller(1))[3].": @_\n";}
+sub logmsg {my $FH = $FSFind::LOG || *STDERR; print $FH "$0: ".(caller(1))[3].": @_\n";}
 
 exit(main());
 
@@ -58,7 +58,7 @@ sub main() {
   my %final_metrics;
   print join("\t",qw(File avgReadLength totalBases maxReadLength minReadLength avgQuality numReads readScore))."\n";
   for my $input_file(@ARGV){
-    my($filename,$dirname,$ext)=fileparse($input_file,(@fastaExt,@fastqExt, @sffExt));
+    my($filename,$dirname,$ext)=fileparse($input_file,(@sffExt, @fastaExt,@fastqExt));
     
     # fast settings: do a word count and multiply by the first few read lengths' average
     if($$settings{fast} && grep(/$ext/,@fastqExt)){
@@ -77,7 +77,7 @@ sub main() {
       $_->join for(@thr);
       $metricsQueue->enqueue(undef); # this kills the crab
       fastqStats($input_file,$metricsQueue,$settings);
-    } elsif(grep(/$ext/,@fastaExt)){
+    } elsif(grep(/$ext$/,@fastaExt)){
       fastaStats($input_file,$settings);
     } elsif(grep(/$ext/,@sffExt)){
       sffStats($input_file,$settings);
