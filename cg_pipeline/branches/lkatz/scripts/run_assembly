@@ -98,18 +98,13 @@ sub main() {
 
         # TODO
         #MAPPING_POLISHING:
-        #if(@{ $$fastaqualfiles{illumina} }){
-        #  logmsg "Polishing the 454 assembly with Nesoni";
-        #  my $polishing_basename=File::Spec->rel2abs("$$settings{tempdir}/$ref_name/polishing");
-        #  my $outPolishing=File::Spec->abs2rel("$polishing_basename/consensus_masked.fa");
-        #  #push(@assembly,$out454); goto MAPPING_ILLUMINA;
-        #  system("mkdir $polishing_basename") if(!-d $polishing_basename);
-        #  system("nesoni samshrimp: $polishing_basename $out454 reads: ".join(" ",@{ $$fastaqualfiles{illumina} })." --sam-unaligned no") unless($$settings{debug} || -e "$polishing_basename/alignments.bam");
-        #  die "Problem with Nesoni and/or SHRiMP" if $?;
-        #  system("nesoni samconsensus: $polishing_basename --majority 0.9 --cutoff 0.9") unless($$settings{debug} || -e "$polishing_basename/consensus.fa");
-        #  die "Problem with Nesoni and/or Samtools" if $?;
+        if(@{ $$fastaqualfiles{illumina} }){
+          logmsg "TODO polish the reference assembly with Illumina reads, if they exist";
+          my $polishing_basename=File::Spec->rel2abs("$$settings{tempdir}/$ref_name/polishing");
+          #TODO: map reads to the 454 assembly
+          #TODO: samToFasta: keep original base calls when mapping quality isn't good
         #  $out454=$outPolishing;
-        #}
+        }
         push(@ref_assembly, $out454);
       }
 
