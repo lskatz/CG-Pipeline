@@ -476,8 +476,8 @@ sub interpretCogs{
   #$feat->add_tag_value('description',$$extraAnnotationInfo{prot2cogs}{$cogsProt});
   if($cogsProt && $cogsid){
     my $cogsDesc=$$extraAnnotationInfo{whog}{$cogsid};
-    $cdsFeat->add_tag_value('product',"COGs:$cogsid ($cogsProt)");
-    $cdsFeat->add_tag_value('note',"COGs:$cogsDesc");
+    $cdsFeat->add_tag_value('product',"COGs:$cogsDesc");
+    $cdsFeat->add_tag_value('note',"COGs:$cogsid ($cogsProt)");
   }
   return $feat;
 }
@@ -644,5 +644,7 @@ sub usage{
   "Transforms a CG-Pipeline annotation directory into a standard genbank file
   Usage: ". basename($0) . " --prediction=prediction.gb --inputdir=annotation-sql-folder --gb=genbank-output-file --gff=gff-output-file [--organism=organism_id]
   -s to include subdomains (might throw off genome viewers)
+  --gff not working right now
+  --table=file.table an NCBI-compliant table file that can be converted to asn with tbl2asn
   "
 }
