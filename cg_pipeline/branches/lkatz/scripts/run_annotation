@@ -214,9 +214,15 @@ sub main() {
     goto DONE if($$settings{just});
   }
 
+  # This is the step where we wrap everything up.
+  # Put all available annotations into a genbank file, 
+  # and then put simple annotations into another genbank file.
   DONE:
+  my $organismid="unknown"; # this is used unless there is an organismid already in prediction.gb
   logmsg "Annotation complete! SQL results are in $$settings{outdir}";
-  system("run_annotation_genbank.pl --inputdir=$$settings{outdir} --prediction=$input_gbk --gb=$$settings{outdir}/annotation.gb --gff=$$settings{outdir}/annotation.gff --organism=organismid");
+  system("run_annotation_genbank.pl --inputdir=$$settings{outdir} --prediction=$input_gbk --gb=$$settings{outdir}/annotation_withdomains.gb --gff=$$settings{outdir}/annotation_withdomains.gff --organism=$organismid --subdomains");
+  die if $?;
+  system("run_annotation_genbank.pl --inputdir=$$settings{outdir} --prediction=$input_gbk --gb=$$settings{outdir}/annotation.gb --gff=$$settings{outdir}/annotation.gff --organism=$organismid");
   die if $?;
   logmsg "Conversion complete! Genbank file is in $$settings{outdir}/annotation.gb and related files are in the same directory";
   
