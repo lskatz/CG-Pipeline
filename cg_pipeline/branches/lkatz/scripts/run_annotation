@@ -48,7 +48,7 @@ sub main() {
   $$settings{uniprot_evidence_db3} = $$settings{annotation_uniprot_evidence_db3};
   $$settings{blast_db} = $$settings{annotation_blast_db};
 
-  my @cmd_options = qw(ChangeDir=s keep blast_db=s outdir=s tempdir=s uniprot_db3=s uniprot_evidence_db3=s reporting_email=s goto=s help no-db-check);
+  my @cmd_options = qw(ChangeDir=s keep blast_db=s outdir=s tempdir=s uniprot_db3=s uniprot_evidence_db3=s reporting_email=s goto=s just=s help no-db-check);
   push(@cmd_options,"skip-$_") for(@annotationSteps);
   GetOptions($settings, @cmd_options) or die;
   die usage($settings) if $$settings{help};
@@ -88,7 +88,8 @@ sub main() {
   }
 
   # skip to any particular part of annotation
-  if(my $goto=$$settings{goto}){
+  my $goto=$$settings{goto} || $$settings{just};
+  if($goto){
     if(my $step=(grep(/$goto/i,@annotationSteps))[0]){
       logmsg "Going straight to $step";
       goto $step;
@@ -121,6 +122,7 @@ sub main() {
     logmsg "Finding antimicrobial resistance genes with command\n  $abx_command";
     system($abx_command); die "Problem with antimicrobial resistance gene blasting" if $?;
     flushSql($settings);
+    goto DONE if($$settings{just});
   }
 
   # IS elements
@@ -131,6 +133,7 @@ sub main() {
     logmsg "Finding IS elements with command\n  $is_command";
     system($is_command); die "Problem with IS element blasting" if $?;
     flushSql($settings);
+    goto DONE if($$settings{just});
   }
 
   SIGNALP:
@@ -138,6 +141,7 @@ sub main() {
     # Run SignalP on all proteins
     system("run_annotation_signalp.pl $aa_file"); die if $?;
     flushSql($settings);
+    goto DONE if($$settings{just});
   }
 
   # Run TMHMM on all proteins
@@ -145,6 +149,7 @@ sub main() {
   if(!$$settings{'skip-TMHMM'}){
     system("run_annotation_tmhmm.pl $aa_file"); die if $?;
     flushSql($settings);
+    goto DONE if($$settings{just});
   }
 
   # run against PDB
@@ -153,6 +158,7 @@ sub main() {
     logmsg "Checking for proteins with structural similarities in the Protein Databank";
     system("run_annotation_blast.pl $aa_file -d $$settings{pdb_blast_db} -o $aa_file.pdb_hits.sql --min_aa_coverage 40 --min_aa_identity 40 --min_aa_similarity 40 -p '-b 10 -v 10' 2>&1"); die "Problem with Protein Databank blasting" if $?;
     flushSql($settings);
+    goto DONE if($$settings{just});
   }
 
   # Check all proteins against VFDB
@@ -161,6 +167,7 @@ sub main() {
     logmsg "Finding virulence factors";
     system("run_annotation_blast.pl $aa_file -d $$settings{vfdb_blast_db} -o $aa_file.vfdb_hits.sql --min_aa_coverage 40 --min_aa_identity 40 --min_aa_similarity 40 -p '-b 1 -v 1' 2>&1"); die "Problem with vfdb" if $?;
     flushSql($settings);
+    goto DONE if($$settings{just});
   }
 
   # Check all proteins against COGs 
@@ -169,6 +176,7 @@ sub main() {
     logmsg "Finding COGs";
     system("run_annotation_blast.pl $aa_file -d $$settings{cogs_blast_db} -o $aa_file.cogs_hits.sql --min_aa_coverage 80 --min_aa_identity 40 --min_aa_similarity 70 -p '-b 10 -v 10'"); die "Problem with blast against COGs" if $?;
     flushSql($settings);
+    goto DONE if($$settings{just});
   }
 
   # Run BLAST on all proteins vs. Uniprot
@@ -194,6 +202,7 @@ sub main() {
     logmsg "Parsing the uniprot result with\n    $invoke_string";
     system($invoke_string); die if $?;
     flushSql($settings);
+    goto DONE if($$settings{just});
   }
 
   INTERPRO:
@@ -202,10 +211,15 @@ sub main() {
     my $invoke_string = "run_annotation_interpro.pl $aa_file";
     system($invoke_string); die if $?;
     flushSql($settings);
+    goto DONE if($$settings{just});
   }
 
+  DONE:
   logmsg "Annotation complete! SQL results are in $$settings{outdir}";
-
+  system("run_annotation_genbank.pl --inputdir=$$settings{outdir} --prediction=$input_gbk --gb=$$settings{outdir}/annotation.gb --gff=$$settings{outdir}/annotation.gff --organism=organismid");
+  die if $?;
+  logmsg "Conversion complete! Genbank file is in $$settings{outdir}/annotation.gb and related files are in the same directory";
+  
   return 0;
 }
 
@@ -225,16 +239,14 @@ sub usage{
     -h for more help";
   return $usage if(!$$settings{help});
   $usage.="
-  The steps of annotation are ABX IS SIGNALP TMHMM PDB VFDB COGS UNIPROT INTERPRO
   --nodb-check do not check for blast databases before annotation.
-  For each annotation step, there is a similar option to jump to or exclude it. By default, all steps are performed.
-  --goto=ABX
+    this is implied with --goto and --just
+  The steps of annotation are, in order: ABX IS SIGNALP TMHMM PDB VFDB COGS UNIPROT INTERPRO
+  --goto=STEP (STEP can be ABX, IS, SIGNALP, etc)
     Skips steps until this annotation step is reached.
     Useful if annotation was interrupted. 
-    if --goto is used, --nodb-check is implied
-  --skip-ABX do not annotate antibiotic resistance
-  --skip-IS do not annotate IS elements
-  -- etc for each annotation step
+  --skip-STEP do not annotate antibiotic resistance
+  --just=STEP only run this step
   ";
   return $usage;
 }

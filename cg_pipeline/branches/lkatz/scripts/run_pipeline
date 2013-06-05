@@ -43,7 +43,7 @@ sub main(){
     chomp($home);
   
   # get options
-  my @cmd_options = ('help','deNovo=s','force','project=s','input=s@','tag_prefix=s','Reference=s','command=s','verbose=i','goto=s','expectedGenomeSize=i');
+  my @cmd_options = ('help','deNovo=s','force','project=s','input=s@','tag_prefix=s','Reference=s','command=s','verbose=i','goto=s','just=s','expectedGenomeSize=i');
   GetOptions($settings,@cmd_options) or die;
   $verbose =(defined($$settings{verbose}))?$$settings{verbose}:2;
   
@@ -162,6 +162,7 @@ sub main(){
       }
       $gbArg=$gbArg||"$home/$project/prediction.gb";
       my $gotoArg=($$settings{goto})?"--goto=$$settings{goto}":"";
+         $gotoArg=($$settings{just})?"--just=$$settings{just}":"";
       $invoke_string="run_annotation $gbArg -tempdir=$home/$project/build/annotation --keep --outdir=$home/$project/annotation $gotoArg  2>&1 ";
       if($verbose>1){
         $invoke_string.="|tee --append $logfile";
@@ -172,25 +173,11 @@ sub main(){
       CGLog($logfile,"COMMAND\n  $invoke_string",'append');
       system($invoke_string);
       #last if($? || $@ || $!);
+      system("cp -v $home/$project/annotation/annotation.gb $home/$project/annotation.gb 2>&1 | tee --append $logfile"); 
       CGLog($logfile,"ANNOTATION END on $project ".date(),'append');
       last if($command !~ /^build$|^annotate$/);
     }
-    case (/^build$|^annotate$|^genbank$/){
-      my $logfile="$project/log/genbank.txt";
-      CGLog($logfile,"ANNOTATION GENBANK FILE CREATION START on $project ".date());
-			$invoke_string="run_annotation_genbank.pl --organism=$tag_prefix --prediction=$home/$project/prediction.gb --inputdir=$home/$project/annotation --gb=$home/$project/annotation.gb 2>&1 ";
-      if($verbose>1){
-        $invoke_string.="|tee --append $logfile";
-      }
-      else{
-        $invoke_string.=">>$logfile";
-      }
-      CGLog($logfile,"COMMAND\n  $invoke_string",'append');
-      system($invoke_string);
-      CGLog($logfile,"ANNOTATION GENBANK END on $project ".date(),'append');
-      #last if($command !~ /^build$/);
-    }
-    case (/^build$|^annotate$|^genbank$|^makedb$/){
+    case (/^build$|^annotate$|^makedb$/){
       my $logfile="$project/log/database.txt";
       CGLog($logfile,"ANNOTIATION DATABASE START on $project ".date());
       $invoke_string="cg_pipeline_genbank2gff3.pl $project/annotation.gb > $project/database/$project.gff 2>$logfile";
@@ -265,12 +252,12 @@ sub usage($){
   
   $script=fileparse $0;
 
-  my $basicUsage="$script [build|create|assemble|predict|annotate|genbank|makedb] [-p project] -i target.sff [-r reference.fasta] [-t tag_prefix] [-e expectedGenomeSize]";
+  my $basicUsage="$script [build|create|assemble|predict|annotate|makedb] [-p project] -i target.sff [-r reference.fasta] [-t tag_prefix] [-e expectedGenomeSize]";
 
   if($option eq 'v'){
     $str="\n\tusage: $basicUsage\n
 Commands:
-  build create assemble predict annotate genbank makedb (see above)
+  build create assemble predict annotate makedb (see above)
 
 Parameters:
   -h This help menu
@@ -282,8 +269,6 @@ Parameters:
   -f Force create a project when the command create fails
   -v Set the level of verbosity. 0 for no stdout, 1 for some stdout, 2 for all stdout
     default: 2
-  -g Go to a particular stage in a particular phase. You should usually omit this.
-    current options: [TMHMM|COGS|VFDB|BLAST|INTERPRO]
   -e expected genome size in bp (4MB genome: -e 4000000)
 
 examples:
@@ -305,10 +290,8 @@ $script predict -p MyStrain [-i assembly-file]
   Runs prediction in project MyStrain against MyStrain/assembly.fasta, or an alternative file if specified. All messages are stored in MyStrain/log/prediction.txt. Output file is MyStrain/prediction.gb
 
 $script annotate -p MyStrain [-i prediction-file]
-  Runs annotation in project MyStrain against MyStrain/prediction.gb, or an alternative file if specified. All messages are stored in MyStrain/log/annotation.txt. Output files will appear in MyStrain/annotation/*.sql.  Subsequent stages in CG-Pipeline will be run: genbank and makedb.
-
-$script genbank -p MyStrain
-  Creates a GenBank file using information stored in MyStrain/annotation/*.sql.  Messages are storred in MyStrain/log/genbank.txt.  Output will appear in MyStrain/annotation.gb. Subsequent stages are run.  For now that only includes makedb.
+  Runs annotation in project MyStrain against MyStrain/prediction.gb, or an alternative file if specified. All messages are stored in MyStrain/log/annotation.txt. Output files will appear in MyStrain/annotation/*.sql and MyStrain/annotation.gb.  Subsequent stages in CG-Pipeline will be run: makedb.
+  --goto or --just arguments are accepted, as described in 'run_annotation -h'
 
 $script makedb -p MyStrain
   Creates a GFF file suitable for import into a genome database/browser such as GBrowse. The GFF file is a standard format and as such, it is portable to other applications.  Output will be stored in MyStrain.gff, and messages will be storred in MyStrain/log/database.txt
