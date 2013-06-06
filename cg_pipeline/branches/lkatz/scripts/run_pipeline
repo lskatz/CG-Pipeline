@@ -29,6 +29,7 @@ use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
 use Data::Dumper;
 use Switch 'fallthrough';
+use POSIX qw(strftime);
 
 my $verbose;
 
@@ -69,6 +70,9 @@ sub main(){
     }
   }
 
+  my($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time()); $year += 1900;
+  my $logSuffix=join("-",$year,$mon,$mday).".$$";
+
   # based on the command, do a variety of things (create, assemble, predict, annotate or do everything which is "build")
   my $invoke_string;
   switch($command){
@@ -77,13 +81,16 @@ sub main(){
       #print __LINE__."\n";
     }
     case (/^build$|^create$/){
+      my $logfile="$project/log/create.$logSuffix.txt";
       mkpath(["$project/annotation","$project/log","$project/build/assembly","$project/build/prediction","$project/build/annotation","$project/database"]);
-      CGLog("$project/log/create.txt","Project created ".date());
+      CGLog($logfile,"Project created ".date());
+      system("ln -sf ".fileparse($logfile)." $project/log/create.txt;");
       last if($command !~ /^build$/);
     }
     case (/^build$|^assemble$/){
-      my $logfile="$project/log/assembly.txt";
+      my $logfile="$project/log/assembly.$logSuffix.txt";
       CGLog($logfile,"ASSEMBLY START ".date());
+      system("ln -sf ".fileparse($logfile)." $project/log/assemble.txt;");
       foreach(@$target){
         if(! -e){
           die("Target file not found $_.\n".usage());
@@ -92,8 +99,9 @@ sub main(){
       my $refarg="";
       if($$settings{Reference}){
         my @reference=split(/\s+/,$$settings{Reference});
+        # TODO allow for multiple references
         if(@reference>1){
-          die "Sorry, but multiple references are not supported right now.\nTODO allow for multiple references."
+          die "Sorry, but multiple references are not supported right now."
         }
         foreach(@reference){
           $refarg.="-R $_ ";
@@ -123,11 +131,13 @@ sub main(){
       system($invoke_string);
       CGLog($logfile,'ASSEMBLY END '.date(),'append');
       $$settings{input}=""; # unset input for any possible future steps, because input was meant as an SFF in this case
+
       last if($command !~ /^build$/);
     }
     case (/^build$|^predict$/){
-      my $logfile="$project/log/prediction.txt";
+      my $logfile="$project/log/prediction.$logSuffix.txt";
       CGLog($logfile,"PREDICTION START on project $project ".date());
+      system("ln -sf ".fileparse($logfile)." $project/log/prediction.txt;");
       my $mfaArg="";
       foreach(@{ $$settings{input} }){
         if(! -e){
@@ -151,8 +161,9 @@ sub main(){
       last if($command !~ /^build$/);
     }
     case (/^build$|^annotate$/){
-      my $logfile="$project/log/annotation.txt";
+      my $logfile="$project/log/annotation.$logSuffix.txt";
       CGLog($logfile,"ANNOTATION START on $project ".date());
+      system("ln -sf ".fileparse($logfile)." $project/log/annotation.txt;");
       my $gbArg="";
       foreach(@{ $$settings{input} }){
         if(! -e){
@@ -178,8 +189,9 @@ sub main(){
       last if($command !~ /^build$|^annotate$/);
     }
     case (/^build$|^annotate$|^makedb$/){
-      my $logfile="$project/log/database.txt";
+      my $logfile="$project/log/database.$logSuffix.txt";
       CGLog($logfile,"ANNOTIATION DATABASE START on $project ".date());
+      system("ln -sf ".fileparse($logfile)." $project/log/database.txt;");
       $invoke_string="cg_pipeline_genbank2gff3.pl $project/annotation.gb > $project/database/$project.gff 2>$logfile";
       CGLog($logfile,"COMMAND\n  $invoke_string",'append');
       system($invoke_string);
@@ -190,7 +202,7 @@ sub main(){
       last if($command !~ /^build$/);
     }
     else{
-      die "Command $command not found.\n".usage();
+      die "ERROR: Command $command not found.\n".usage();
     }
   }
 
@@ -220,9 +232,10 @@ sub finalStats{
 sub verbosity($){
 
 }
+
+# returns a string like Tue Aug 14 16:18:56 (CG-Pipeline v0.3.2.3)
 sub date{
-  use Date::Format;
-  return time2str('%a %b %e %k:%M:%S',time())." (CG-Pipeline v$$settings{pipeline_version})";
+  return strftime('%a %b %e %k:%M:%S',localtime())." (CG-Pipeline v$$settings{pipeline_version})";
 }
 # logs a message to a file and prints it at the same time
 # parameter: filename
