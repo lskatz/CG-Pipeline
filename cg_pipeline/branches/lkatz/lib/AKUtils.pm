@@ -379,10 +379,11 @@ sub fullPathToExec($;$) {
 	my ($executable,$settings) = @_;
 	my $fullpath;
 	for ("", split(/:/, $ENV{PATH})) {
-		if (-x $_."/".$executable && -f $_."/".$executable) { $fullpath = File::Spec->rel2abs($_."/".$executable); last; }
+    my $path=$_."/".$executable;
+		if (-x $path && -f $path) { $fullpath = File::Spec->rel2abs($path); last; }
 	}
   if(! -x $fullpath){
-	  my $errStr="Error finding full path to file ($executable)";
+	  my $errStr="Error finding full path to executable ($executable)";
     warn $errStr if($$settings{warn_on_error});
     die $errStr if(!$$settings{warn_on_error});
   }
@@ -1496,6 +1497,7 @@ sub getGlimmer3Predictions($;$) {
 	system("glimmer3 $glimmer_opts '$glimmer_infile' '$$settings{tempdir}/glimmer3.icm'"
 		. " '$$settings{tempdir}/glimmer3' 2>>'$$settings{tempdir}/glimmer3.log'");
 	die("Error running glimmer3: $!") if $?;
+  logmsg __LINE__;
 
 	return loadGlimmer3Predictions("$$settings{tempdir}/glimmer3.predict", $seqs, \%seqname_working2orig);
 }
