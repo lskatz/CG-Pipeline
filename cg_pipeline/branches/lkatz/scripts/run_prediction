@@ -92,9 +92,13 @@ sub loadInputs($$) {
 	my $linker=$$settings{assembly_linker};
   foreach my $file (@$input_files) {
     my $contigSeqs=AKUtils::readMfa($file);
-    $_=~s/^($linker)?|($linker)?$/$linker/g for(values(%$contigSeqs));
-    #print Dumper $contigSeqs;die;
-    #$_=$$settings{assembly_linker}.$_.$$settings{assembly_linker} for(values(%$contigSeqs));
+    # add linker on either side of each sequence
+    #for(values(%$contigSeqs)){
+    while(my($seqid,$sequence)=each(%$contigSeqs)){
+      logmsg "WARNING: the linker sequence was found to be present already in $seqid at position $-[0]. The linker is\n  $linker" if($sequence=~/$linker/ig);
+      my $numRepl=($$contigSeqs{$seqid}=~s/^|$/$linker/g);
+      logmsg "$numRepl linkers added to $seqid";
+    }
 		$input_seqs = {%$input_seqs, %$contigSeqs};
 	}
 	foreach my $file (@$ref_files) {
@@ -410,10 +414,45 @@ sub generateGenBankFile($$$) {
 			$gbseq->add_SeqFeature($pred_gene_feature);
 			$gbseq->add_SeqFeature($pred_feature);
 		}
+
+    # remove linkers and reset gene coordinates
+    my $numLinkers=removeLinkers($gbseq,$settings);
+
+    # write the final sequence with gene predictions to the file
 		$gb_out_h->write_seq($gbseq);
 	}
 	
 	return $$settings{outfile};
+}
+
+# Removes any linkers that this script added and resets the gene coordinates accordingly.
+# Returns the number of linkers removed.
+sub removeLinkers{
+  my($gbseq,$settings)=@_;
+  my $linker=$$settings{assembly_linker};
+  my $linkerLength=length($linker);
+  return 0 if(! $linker);
+
+  # trim the linkers off
+  my $sequence=$gbseq->seq;
+  my $numFirstReplacements=($sequence=~s/(^($linker)+)//g); # linkers removed from the 3' side
+  my $numReplacements=$numFirstReplacements+($sequence=~s/(($linker)+$)//g); # total linkers removed
+  $gbseq->seq($sequence);
+  logmsg "Removed $numReplacements linkers from ".$gbseq->id;
+
+  # get the features
+  my @feat=$gbseq->get_SeqFeatures();
+  for my $f(@feat){
+    $f->location->start($f->location->start - $numFirstReplacements*$linkerLength);
+    $f->location->end($f->location->end - $numFirstReplacements*$linkerLength);
+
+    $f->location->start("<1") if($f->location->start<1);
+    $f->location->end($gbseq->length) if($f->location->end > $gbseq->length);
+  }
+  $gbseq->remove_SeqFeatures();
+  $gbseq->add_SeqFeature(@feat);
+
+  return $numReplacements;
 }
 
 
