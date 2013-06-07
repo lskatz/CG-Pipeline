@@ -1497,7 +1497,6 @@ sub getGlimmer3Predictions($;$) {
 	system("glimmer3 $glimmer_opts '$glimmer_infile' '$$settings{tempdir}/glimmer3.icm'"
 		. " '$$settings{tempdir}/glimmer3' 2>>'$$settings{tempdir}/glimmer3.log'");
 	die("Error running glimmer3: $!") if $?;
-  logmsg __LINE__;
 
 	return loadGlimmer3Predictions("$$settings{tempdir}/glimmer3.predict", $seqs, \%seqname_working2orig);
 }
