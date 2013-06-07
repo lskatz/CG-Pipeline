@@ -16,6 +16,7 @@ use Bio::Annotation::Reference;
 use File::Basename;
 use Data::Dumper;
 use Getopt::Long;
+use Bio::Species;
 
 exit(&main());
 
@@ -23,7 +24,7 @@ sub main(){
   my $settings={appname=>'cgpipeline'};
   $settings=AKUtils::loadConfig($settings);
   die usage() if(@ARGV < 1);
-  GetOptions($settings,qw(organism=s prediction=s inputdir=s gb=s gff=s subdomains)) or die;
+  GetOptions($settings,qw(organism=s prediction=s inputdir=s gb=s gff=s subdomains strain_name=s)) or die;
   $$settings{numcpus}||=AKUtils::getNumCPUs();
   my $annotationDir=$$settings{inputdir};
   die "ERROR: cannot read annotation directory at $annotationDir" if(!-d $annotationDir || !-x $annotationDir);
@@ -60,6 +61,18 @@ sub combinePredictionAndAnnotation{
   my %prot2cogs=prot2cogMapping($settings);
   my %whog=readWhog($$settings{cogs_whog},$settings);
   my $extraAnnotationInfo={whog=>\%whog,uniprotEvidence=>\%uniprotEvidence,uniprot=>\%uniprot,prot2cogs=>\%prot2cogs};
+
+  # annotations common to each RichSeq
+  $$settings{division} ||= 'BCT';
+  $$settings{keywords} ||= [qw(WGS)];
+  $$settings{strain_name}||="UnnamedStrain";
+  my @l = split(/\s+/, $$settings{classification});
+  $$settings{classification} = [@l[$#l-5..$#l]]; # last 6 words
+  unshift(@{$$settings{classification}}, join(" ", @l[0..$#l-6])); # all but last 6 words (species name - 1 or more words)
+  my $species_obj = Bio::Species->new(
+    -classification => $$settings{classification},
+    -sub_species=>$$settings{strain_name},
+  );
   
   logmsg "One contig/chromosome per dot: ";
   my $out=Bio::SeqIO->new(-file=>">$outfile",-format=>"genbank");
@@ -68,9 +81,19 @@ sub combinePredictionAndAnnotation{
     $|++;print ".";$|--; # print out a dot per contig and flush the buffer
     my $sourceFeat=$$meta{source};
     my $seq=$sourceFeat->seq;
-    $seq=Bio::Seq->new(-seq=>$seq->seq,-id=>$seq->id);
+    $seq=Bio::Seq::RichSeq->new(-seq=>$seq->seq,-id=>$seq->id,
+      -desc=>$seq->desc,
+      -division=>$$settings{division},
+      -species=>$species_obj,
+      -keywords=>$$settings{keywords},
+    );
+    # TODO figure out why species_obj isn't transferring subspecies name properly. 
+
     $seq->add_SeqFeature($sourceFeat);
     $seq->annotation->add_Annotation('reference',$$metaData{$seqid}{'reference'});
+
+    addTableFeature($sourceFeat);
+
     my @sortedLocus=sort{
       return $$predfeatures{$seqid}{'gene'}{$a}->start <=> $$predfeatures{$seqid}{'gene'}{$b}->start;
     } keys(%{$$predfeatures{$seqid}{'gene'}});
@@ -102,6 +125,7 @@ sub combinePredictionAndAnnotation{
       $_=consolidateFeatureTags([qw(product note)],$_,$settings) for(@geneFeat);
       
       $seq->add_SeqFeature(@geneFeat);
+      addTableFeature($_,$settings) for(@geneFeat);
     }
     
     $out->write_seq($seq);
@@ -494,6 +518,22 @@ sub interpretPdb{
   return $feat;
 }
 
+sub addTableFeature{
+  my($feat,$settings)=@_;
+  return; # we can get away with run_pipeline_NCBI.pl instead, probably
+  # TODO find what kind of feature it is
+  print join("\t",$feat->primary_tag)."\n";
+  my $primary_tag=$feat->primary_tag;
+  #if($primary_tag=~/source/i){
+  #  $$settings{tbl}.=join("\t",1,7000,"source""REFERENCE","\n",
+  #print join("\t",$feat->primary_tag,$feat->seq->id,$feat->seq->length)."\n";
+  #  CDS
+  #    extract important information about CDS
+  #    print to tbl file
+  #  tRNA
+  #  etc
+}
+
 ##################
 ## tools
 ##################
@@ -643,8 +683,9 @@ sub annotationFieldMap{
 sub usage{
   "Transforms a CG-Pipeline annotation directory into a standard genbank file
   Usage: ". basename($0) . " --prediction=prediction.gb --inputdir=annotation-sql-folder --gb=genbank-output-file --gff=gff-output-file [--organism=organism_id]
-  -s to include subdomains (might throw off genome viewers)
+  --subdomains to include subdomains (might throw off genome viewers)
   --gff not working right now
   --table=file.table an NCBI-compliant table file that can be converted to asn with tbl2asn
+  --strain_name=something to specify the serogroup or specific name or whatever of your isolate
   "
 }
