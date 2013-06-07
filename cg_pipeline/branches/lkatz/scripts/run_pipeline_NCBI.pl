@@ -45,10 +45,12 @@ sub main(){
   # check for required files
   my $genbank=$$settings{genbank} or die "Error: missing genbank parameter\n".usage();
   $genbank=File::Spec->rel2abs($genbank);
-  my $asnTemplate=$$settings{asnTemplate} or die "Error: missing asn template parameter\n".usage();
-  $asnTemplate="$$settings{tempdir}/genome.sbt";
-  copy($$settings{asnTemplate},$asnTemplate) or die "Could not copy from $$settings{asnTemplate} to $asnTemplate because $!";
-  $asnTemplate=File::Spec->rel2abs($asnTemplate);
+  my $asnTemplate=$$settings{asnTemplate} or warn "Warning: missing asn template parameter\n";
+  if($asnTemplate){
+    $asnTemplate="$$settings{tempdir}/genome.sbt";
+    copy($$settings{asnTemplate},$asnTemplate) or die "Could not copy from $$settings{asnTemplate} to $asnTemplate because $!";
+    $asnTemplate=File::Spec->rel2abs($asnTemplate);
+  }
 
   logmsg "Creating the temporary assembly file";
   my $assembly=defineAssembly($genbank,$settings);
@@ -62,9 +64,11 @@ sub main(){
   my $tbl=createTbl($genbank,$settings);
   logmsg "Tbl file has been printed to $tbl";
 
-  logmsg "Running tbl2asn";
-  my $asn=tbl2asn($assembly,$asnTemplate,$tbl,$settings);
-  logmsg "Asn file is $asn and discrepancy report is $$settings{tempdir}/genome.disc.rpt";
+  if($asnTemplate){
+    logmsg "Running tbl2asn";
+    my $asn=tbl2asn($assembly,$asnTemplate,$tbl,$settings);
+    logmsg "Asn file is $asn and discrepancy report is $$settings{tempdir}/genome.disc.rpt";
+  }
 
   return 0;
 }
