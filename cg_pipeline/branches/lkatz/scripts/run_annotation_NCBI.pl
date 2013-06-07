@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-# run_pipeline_NCBI: Turn your project into something submitable to NCBI
+# run_annotation_NCBI: Turn your project into something submitable to NCBI
 # Author: Lee Katz (lskatz@gatech.edu)
 
 package PipelineRunner;
