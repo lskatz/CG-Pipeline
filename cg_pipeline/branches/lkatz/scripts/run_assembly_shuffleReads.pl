@@ -16,6 +16,10 @@ sub main{
   GetOptions($settings,qw(deshuffle help));
   die usage() if($$settings{help});
 
+  for(@ARGV){
+    die "ERROR: Could not find file $_" if(! -f $_);
+  }
+
   my $numReads;
   if($$settings{deshuffle}){
     die "ERROR: need a file to deshuffle\n". usage() if(@ARGV<1);
@@ -30,9 +34,22 @@ sub main{
   return 0;
 }
 
+sub is_gzipped{
+  my($file,$settings)=@_;
+  my($name,$path,$suffix)=fileparse($file,qw(.gz));
+  if($suffix eq '.gz'){
+    return 1;
+  }
+  return 0;
+}
+
 sub deshuffleSeqs{
   my($seqFile,$settings)=@_;
-  open(SHUFFLED,"<",$seqFile) or die "Could not open shuffled fastq file $seqFile: $!";
+  if(is_gzipped($seqFile,$settings)){
+    open(SHUFFLED,"gunzip -c '$seqFile' |") or die "Could not open/gunzip shuffled fastq file $seqFile: $!";
+  } else {
+    open(SHUFFLED,"<",$seqFile) or die "Could not open shuffled fastq file $seqFile: $!";
+  }
   my $i=0;
   while(<SHUFFLED>){
     my $mod=$i%8;
@@ -51,8 +68,16 @@ sub shuffleSeqs{
   my $i=0;
   for(my $j=0;$j<@$seqFile;$j+=2){
     my($file1,$file2)=($$seqFile[$j],$$seqFile[$j+1]);
-    open(MATE1,"<",$file1) or die "Could not open $file1: $!";
-    open(MATE2,"<",$file2) or die "Could not open $file2: $!";
+    if(is_gzipped($file1,$settings)){
+      open(MATE1,"gunzip -c '$file1' |") or die "Could not open $file1: $!";
+    } else {
+      open(MATE1,"<",$file1) or die "Could not open $file1: $!";
+    }
+    if(is_gzipped($file2,$settings)){
+      open(MATE2,"gunzip -c '$file2' |") or die "Could not open $file2: $!";
+    } else {
+      open(MATE2,"<",$file2) or die "Could not open $file2: $!";
+    }
     while(my $out=<MATE1>){
       $out.=<MATE1> for(1..3);
       $out.=<MATE2> for(1..4);
