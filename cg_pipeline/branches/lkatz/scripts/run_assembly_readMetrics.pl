@@ -56,7 +56,7 @@ sub main() {
 
   # TODO read all files in however into a queue of reads.  Then streamline the analysis of those reads.
   my %final_metrics;
-  print join("\t",qw(File avgReadLength totalBases maxReadLength minReadLength avgQuality numReads readScore))."\n";
+  print join("\t",qw(File avgReadLength totalBases maxReadLength minReadLength avgQuality numReads PE? readScore))."\n";
   for my $input_file(@ARGV){
     my($filename,$dirname,$ext)=fileparse($input_file,(@fastaExt,@fastqExt, @sffExt));
     
@@ -126,8 +126,9 @@ sub fastqFastStats{
   my $numReads=$numLines/4;
   my $totalBases=$avgReadLength*$numReads;
   my $readScore=round(log($totalBases*$avgQuality*$avgReadLength));
+  my $isPE=AKUtils::is_fastqPE($infile,$settings) || 0;
 
-  print join("\t",$infile,round($avgReadLength),int($totalBases),'.','.',round($avgQuality),$numReads,$readScore)."\n";
+  print join("\t",$infile,round($avgReadLength),int($totalBases),'.','.',round($avgQuality),$numReads,$isPE,$readScore)."\n";
   return 1;
 }
 
@@ -164,8 +165,9 @@ sub fastaStats{
     $avgQuality=round($totalQuality/$totalBases);
     $readScore=round(log($totalBases*$avgQuality*$avgReadLength));
   }
+  my $isPE=0; # TODO
 
-  print join("\t",$infile,$avgReadLength,$totalBases,$maxReadLength,$minReadLength,$avgQuality,$numReads,$readScore)."\n";
+  print join("\t",$infile,$avgReadLength,$totalBases,$maxReadLength,$minReadLength,$avgQuality,$numReads,$isPE,$readScore)."\n";
   return 1;
 }
 
@@ -203,8 +205,9 @@ sub fastqStats{
     $readScore=round(log($totalBases*$avgQuality*$avgReadLength));
     #my $readsScore=log($$m{totalBases} * $avgQuality * $avgReadLength);
   }
+  my $isPE=AKUtils::is_fastqPE($infile,$settings) || 0;
 
-  print join("\t",$infile,$avgReadLength, $totalBases, $maxReadLength, $minReadLength, $avgQuality, $numReads, $readScore)."\n";
+  print join("\t",$infile,$avgReadLength, $totalBases, $maxReadLength, $minReadLength, $avgQuality, $numReads, $isPE, $readScore)."\n";
   
   return 1;
 }
