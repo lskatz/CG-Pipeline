@@ -129,7 +129,7 @@ sub main() {
     # choose the best combined assembly
     my $finalAsm="$$settings{tempdir}/final.fna";
     logmsg "Choosing the best assembly out of all the reference assemblies. Warning: This has not been tested yet.";
-    system("run_assembly_chooseBest.pl ".join(@all_ref_assembly)." -o $finalAsm"); die if $?;
+    system("run_assembly_chooseBest.pl ".join(" ",@all_ref_assembly)." -o $finalAsm"); die if $?;
     $final_seqs = AKUtils::readMfa($finalAsm);
 	} else {
     
