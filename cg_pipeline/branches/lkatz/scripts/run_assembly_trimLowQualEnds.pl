@@ -35,12 +35,15 @@ sub main() {
   GetOptions($settings, qw(tempdir=s cutoffReadNum=i readlength=i fastqqc-verbose));
   die usage() if(@ARGV<1);
   $$settings{readlength}||=999;
-  $$settings{cutoffReadNum}=9999 if(!defined $$settings{cutoffReadNum});
+  $$settings{cutoffReadNum}=0 if(!defined $$settings{cutoffReadNum});
+  logmsg "Read length was given as $$settings{readlength}bp. NOTE: Reads longer than $$settings{readlength} will be trimmed regardless of quality";
   my @file=@ARGV;
 
   for my $file (@file){
     my $trimmedFile=trimUpAndDown($file,$settings);
   }
+
+  return 0;
 }
 
 # Trim upstream and downstream based on the stability of ATCG percentages.
