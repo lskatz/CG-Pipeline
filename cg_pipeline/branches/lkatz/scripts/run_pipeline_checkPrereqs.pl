@@ -7,7 +7,7 @@
 #  grep -h '^use\s*' *.pl|sed 's/qw.*$//'|perl -lane 's/use|;|\s//g;print'|grep -v 'use lib'|sort|uniq
 # Note: for programs I used
 #  grep -oh -i 'system("[a-z0-9_]\+' *.pl|perl -lane 's/system\(["]//;print' | sort|uniq
-# TODO consider color output
+# TODO consider color text output
 
 use strict;
 use warnings;
@@ -21,7 +21,7 @@ use File::Basename;
 my $settings={
   appname=>'cgpipeline',
   perllibs=>[qw(AKUtils BerkeleyDB Bio::Assembly::IO Bio::Assembly::Scaffold Bio::Perl Bio::Seq Bio::SeqIO Bio::Seq::Quality Bio::Seq::RichSeq Bio::SeqUtils Bio::Tools::GFF Bio::Tools::Run::StandAloneBlast CGPBase CGPipeline::SQLiteDB CGPipelineUtils Data::Dumper Date::Format File::Basename File::Copy File::Path File::Spec File::Temp FindBin Getopt::Long GTTmhmm List::Util LWP::Simple Math::Round strict Thread::Queue threads threads::shared warnings XML::LibXML::Reader XML::Quote)],
-  executables=>[qw(addRun amos2ace AMOScmp cat cp gzip gunzip ln minimus2 mkdir newAssembly newMapping rm runProject setRef sfffile toAmos toAmos_new touch tmhmm signalp bam2fastq vcfutils.pl bcftools fastqqc velveth velvetg VelvetOptimiser.pl tRNAscan-SE)],
+  executables=>[qw(addRun amos2ace AMOScmp cat cp gzip gunzip ln minimus2 mkdir newAssembly newMapping rm runProject setRef sfffile toAmos toAmos_new touch tmhmm signalp bam2fastq vcfutils.pl bcftools fastqqc velveth velvetg VelvetOptimiser.pl tRNAscan-SE gmsn.pl long-orfs extract build-icm glimmer3 rnammer hmmsearch)],
   environmentalVariables=>[qw(TMHMMDIR)],
 
   # presence/absence codes
@@ -109,6 +109,7 @@ sub is_executable_present{
   my $code=$$settings{code_missing};
   for ("", split(/:/, $ENV{PATH})) {
     if(-e $_."/".$exe){
+      next if(-d $_."/".$exe); # a directory is not "present but unusable" because it's not the actual exec
       $code=$$settings{code_present};
       if(-x $_."/".$exe){
         $code=$$settings{code_usable};
