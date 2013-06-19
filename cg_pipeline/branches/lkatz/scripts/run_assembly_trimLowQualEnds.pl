@@ -32,10 +32,11 @@ sub logmsg {my $FH=*STDERR; print $FH "$0: ".(caller(1))[3].": @_\n";}
 exit(main());
 
 sub main() {
-  GetOptions($settings, qw(tempdir=s cutoffReadNum=i readlength=i fastqqc-verbose));
+  GetOptions($settings, qw(tempdir=s cutoffReadNum=i readlength=i fastqqc-verbose badSlope=s));
   die usage() if(@ARGV<1);
-  $$settings{readlength}||=999;
+  $$settings{badSlope}||=0.7; # this is kind of empirical for a cutoff
   $$settings{cutoffReadNum}=0 if(!defined $$settings{cutoffReadNum});
+  $$settings{readlength}||=999;
   logmsg "Read length was given as $$settings{readlength}bp. NOTE: Reads longer than $$settings{readlength} will be trimmed regardless of quality";
   my @file=@ARGV;
 
@@ -52,7 +53,7 @@ sub trimUpAndDown{
   my($file,$settings)=@_;
 
   my $numSlopesToBeGood=2;
-  my $badSlope=0.7; # this is kind of empirical for a cutoff
+  my $badSlope=$$settings{badSlope}; 
 
   my $fastqqc=AKUtils::fullPathToExec("fastqqc");
   my $fastqqcXopts="";
@@ -174,5 +175,6 @@ sub usage{
       0 for all (not recommended because it is very slow and the quality will not be too different)
     -r 999 the length of all reads. There is no effect of going over the read length, but it is bad if you go under
     --fastqqc-verbose print the fastqqc report and exit
+    -b 0.7 the percentage change in average ATCG content that is considered to be a bad skew (default: 0.7%)
   "
 }
