@@ -2,14 +2,31 @@
 
 echo `basename $0`": BEGIN Updating uniprot. This could take a while."
 
+# Get the fasta databases
 wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz
 gunzip --stdout uniprot_sprot.fasta.gz > uniprot_sprot.fasta
 
 wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_trembl.fasta.gz
 gunzip --stdout uniprot_trembl.fasta.gz > uniprot_trembl.fasta
 
+# We don't really need trembl by itself. Concat it with Swiss-prot
 cat uniprot_sprot.fasta uniprot_trembl.fasta > uniprot_sprot_trembl.fasta
 
+# Now that it has been downloaded, see if we can cut down the size of the database
+# to just bacterial genes. This will make Prediction and Annotation faster.
+# This script downloads dat files that explain which genes belong to bacteria.
+# Then, it filters the fasta files to include only bacterial genes.
+# Swiss-prot first
+update_uniprot_filter.pl -i uniprot_sprot.fasta -o uniprot_sprot.filtered.fasta -u ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/taxonomic_divisions/uniprot_sprot_bacteria.dat.gz
+# Uniprot-trembl-sprot next (a huge beast)
+update_uniprot_filter.pl -i uniprot_sprot_trembl.fasta -o uniprot_sprot_trembl.filtered.fasta
+if [ $? -gt 0 ]; then exit $?; fi
+
+# Discard the unfiltered databases
+mv -v uniprot_sprot_trembl.filtered.fasta uniprot_sprot_trembl.fasta
+mv -v uniprot_sprot.filtered.fasta uniprot_sprot.fasta
+
+# format the databases
 legacy_blast.pl formatdb -p T -t uniprot_sprot_trembl -n uniprot_sprot_trembl -i uniprot_sprot_trembl.fasta -o T
 legacy_blast.pl formatdb -p T -t uniprot_sprot -n uniprot_sprot -i uniprot_sprot.fasta -o T
 legacy_blast.pl formatdb -p T -t uniprot_trembl -n uniprot_trembl -i uniprot_trembl.fasta -o T
@@ -21,5 +38,5 @@ wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/know
 gunzip --stdout uniprot_trembl.xml.gz > uniprot_trembl.xml
 
 run_annotation_parse_uniprot_xml.pl uniprot_sprot.xml uniprot_trembl.xml
-
 echo `basename $0`": FINISHED Updating uniprot."
+
