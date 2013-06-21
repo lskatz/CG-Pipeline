@@ -1,9 +1,6 @@
 #!/usr/bin/env perl
 
-#TODO pay attention to why things are not getting filtered
-# The mechanism is there but the ID doesn't match up with locus name...?
-
-# Filter out genes from a fasta file that belong to Eukaryotes
+# Filter out genes from a fasta file that don't belong to bacteria
 # author: Lee Katz <lkatz@cdc.gov>
 
 package PipelineRunner;
@@ -11,6 +8,7 @@ use strict;
 use warnings;
 use Getopt::Long;
 use File::Basename;
+use File::Fetch;
 use Data::Dumper;
 use LWP::Simple;
 use FindBin;
@@ -18,6 +16,7 @@ use lib "$FindBin::RealBin/../lib";
 $ENV{PATH} = "$FindBin::RealBin:".$ENV{PATH};
 use AKUtils qw(logmsg);
 use Bio::Perl;
+use Data::Dumper;
 
 $0=fileparse($0);
 exit(main());
@@ -25,128 +24,93 @@ exit(main());
 sub main{
   my $settings={
     appname=>"cgpipeline",
-    url=>"ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/docs",
-    filterOut=>[qw(yeast human humchr rice arath calbican cdlist celegans dicty fly hoxlist mgdtosp pkinfam pombe scorpktx)],
   };
-  GetOptions($settings,qw(url=s infile=s@ outfile=s help tempdir=s));
+  GetOptions($settings,qw(url=s@ infile=s@ outfile=s help tempdir=s));
   $$settings{tempdir}||=AKUtils::mktempdir();
+  $$settings{url}=[qw(ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/taxonomic_divisions/uniprot_trembl_bacteria.dat.gz ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/taxonomic_divisions/uniprot_sprot_bacteria.dat.gz)] if(!$$settings{url});
 
   my $infile=$$settings{infile} or die "Error: no infile(s) given\n".usage($settings);
   my $outfile=$$settings{outfile} or die "Error: no outfile given\n".usage($settings);
-  my $url=$$settings{url} or die "Internal error with URL parameter";
-  my @filterOut=@{ $$settings{filterOut} };
+  my $url=$$settings{url};
 
-  # read which proteins to filter out
-  my @proteinList=getBlacklist($url,\@filterOut,$settings);
+  logmsg "Downloading and uncompressing dat files from ".join(", ".@{$$settings{url}});
+  my $file=downloadDats($url,$settings);
+  logmsg "Parsing for the correct IDs to keep";
+  my $bacterialIds=findBacterialIds($file,$settings);
+  logmsg "Printing to file";
+  my $numSeqs=printFilteredFile($bacterialIds,$infile,$outfile,$settings);
 
-  my %proteinList;
-  $proteinList{$_}=1 for (@proteinList);
-  logmsg "Done with filtering and indexing proteins to filter out";
+  logmsg "Done! $numSeqs sequences printed to $outfile";
 
-  # read the infile(s) and write the filtered entries to the outfile
-  logmsg "Writing the output file";
-  my $seqCount=0;
-  my $out=Bio::SeqIO->new(-file=>">$outfile");
-  for my $file(@$infile){
-    my $in=Bio::SeqIO->new(-file=>$file);
-    while(my $seq=$in->next_seq){
-      my $id=$seq->id;
-      # There are some unnecessary characters after a second pipe
-      $id=~s/^(\w{2}\|[A-Z\d]{6}).*/$1/;
-      if($proteinList{$id}){
-        print ".";
-        # TODO decide if proteinList can be whittled down to reduce search space
-        next;
-      }
-      $out->write_seq($seq);
-      logmsg "Finished with $seqCount sequences" if(++$seqCount%1000000==0);
-    }
-  }
-
-  logmsg "Outfile is in $outfile";
   return 0;
 }
 
-sub getBlacklist{
-  my($url,$filterOut,$settings)=@_;
-  my (@blacklist);
-  my $tmpfile="$$settings{tempdir}/blacklist.txt";
-  
-  # if the blacklist already exists, just read the file to save time
-  if(-e $tmpfile){
-    logmsg "Blacklist already exists at $tmpfile; reading instead of recreating it";
-    open(FILE,$tmpfile) or die "Could not open $tmpfile because $!";
-    while(<FILE>){
-      chomp;
-      push(@blacklist,$_);
+sub downloadDats{
+  my($url,$settings)=@_;
+  my @file=();
+  my $dir=".";
+  for (@$url){
+    my $path="$dir/".fileparse($_);
+    my $datpath="$dir/".fileparse($_,'.gz');
+    # download the dat file if it doesn't exist in gz or uncompressed form
+    if(! -f $path && ! -f $datpath){
+      logmsg "Downloading $_ => $path";
+      my $ff=File::Fetch->new(uri=>$_);
+      my $where=$ff->fetch(to=>\$path) or die $ff->error; # to cwd
     }
-    close FILE;
-    return @blacklist;
+    if(! -f $datpath){
+      logmsg "Uncompressing $path";
+      system("gunzip '$path'"); die if $?;
+    }
+    push(@file,$datpath);
   }
-
-  my $urlContent=get($url);
-  for my $fileInfo(split(/\n/,$urlContent)){
-    my $file=(split(/\s+/,$fileInfo))[-1];
-    my($search,$ext)=fileparse($file,qw(.txt));
-    $search=~s/\d+$//; # remove trailing numbers from the base search
-    my $is_blacklisted=scalar(grep(/$search/i,@$filterOut));
-    next if(!$is_blacklisted);
-
-    my @blacklistGenes=genesListedInUniptrotTxt($file,$url,$settings);
-    warn "Did not blacklist any genes from $file" if (!@blacklistGenes);
-    logmsg "$file yielded ".scalar(@blacklistGenes)." genes";
-    push(@blacklist,@blacklistGenes);
-  }
-  # post-process
-  for (@blacklist){
-    s/^\s+|\s+$//g;
-    $_="" if(/\s+/);
-    next if(!/\(|;/);
-    # ($locus)=>$locus
-    s/^\(|\)$//g;
-    # $locus; => $locus
-    s/;$//;
-  }
-  @blacklist=grep(!/^\s*$/,@blacklist);
-
-  # write the blacklist to file to cache it
-  # /(sp|tr)\|[\dA-Z]{6}/
-  open(FILE,">",$tmpfile) or die "Could not open $tmpfile for writing because $!";
-  print FILE "$_\nsp|$_\ntr|$_\n" for(@blacklist);
-  close FILE;
-  logmsg "Cached the blacklist at $tmpfile";
-  
-  return @blacklist;
+  return \@file;
 }
 
-# download and parse a text file on uniprot to find which genes are listed
-sub genesListedInUniptrotTxt{
-  my($file,$url,$settings)=@_;
-  
-  $file="$url/$file";
-  my @locus;
-  for my $line(split(/\n/,get($file))){
-    # test the first few fields
-    for my $locus(split(/\s{2,}/,$line)){
-      if(is_locus($locus)){
-        my @theseLoci=split(/\s*;\s*/,$locus);
-        for my $l(@theseLoci){
-          push(@locus,$l) if(is_locus($l));
-        }
+sub findBacterialIds{
+  my($dat,$settings)=@_;
+  my %id;
+  my $i=0;
+  for my $datfile (@$dat){
+    # using grep because it is probably faster than going line by line and checking with perl regex
+    open(DAT,"grep '^ID' '$datfile' |") or die "ERROR: could not open $datfile: $!";
+    while(<DAT>){
+      my $id=(split/\s+/,$_)[1];
+      $id{$id}=1;
+      $i++;
+      if($i % 1000000 == 0){
+        $|++;
+        logmsg "Finished reading $i IDs from $datfile";
+        $|--;
+      }
+    }
+    close DAT;
+  }
+  return \%id;
+}
+
+sub printFilteredFile{
+  my ($bacterialIds,$infile,$outfile,$settings)=@_;
+  my $seqout=Bio::SeqIO->new(-file=>">$outfile");
+  my $seqCount=0;
+  my $i=0;
+  for my $in(@$infile){
+    my $seqin=Bio::SeqIO->new(-file=>$in);
+    while(my $seq=$seqin->next_seq){
+      my $id=(split(/\|/,$seq->id))[2];
+      next if(!$$bacterialIds{$id});
+      $seqout->write_seq($seq);
+      $seqCount++;
+      $i++;
+      
+      if($i % 1000000 == 0){
+        logmsg "Searched through $i sequence records";
       }
     }
   }
-  return @locus;
-}
-
-# see if a locus matches some patterns
-# Every locus is a 6-digit thing
-#   grep ">" uniprot_sprot_trembl.fasta|perl -lane 'die "$_" if(!/(sp|tr)\|[\dA-Z]{6}/)'
-sub is_locus{
-  my($locus)=@_;
-  return 0 if(!defined($locus));
-  return 0 if($locus!~/[0-9A-Z]{6}/);
-  return 1;
+  my $numFiltered=$i-$seqCount;
+  logmsg "Done. Kept $seqCount sequences out of $i total; filtered $numFiltered sequences";
+  return $seqCount;
 }
 
 sub usage{
@@ -160,9 +124,7 @@ sub usage{
     The output fasta
   -u URL
     The basename URL for where genes are listed.
-    Defaut: $$settings{url}
-  -t directory
-    a temporary directory. Default: a newly created dir under /tmp/
+    Defaut: ".join("\t",@{ $$settings{url} })."
   -h
     This help menu
   ";
