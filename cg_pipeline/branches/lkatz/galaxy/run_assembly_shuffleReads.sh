@@ -4,9 +4,18 @@ PE1=$1
 PE2=$2
 out=$3
 TMP=/tmp
+RAND=$RANDOM;
+EXEDIR=`dirname $0`;
 
-tmp1=$TMP/`basename $PE1`.fastq;
-tmp2=$TMP/`basename $PE2`.fastq;
+. $EXEDIR/cgpipelineGalaxyrc
+
+tmp1=$TMP/`basename $PE1`.$RAND.fastq;
+tmp2=$TMP/`basename $PE2`.$RAND.fastq;
+
+if [ "$tmp1" = "$tmp2" ]; then
+  echo "ERROR: both input files are the same" 1>&2
+  exit 1
+fi
 
 # gunzip or soft link each fastq file
 if [ `echo $PE1|grep ".gz$"` ]; then 

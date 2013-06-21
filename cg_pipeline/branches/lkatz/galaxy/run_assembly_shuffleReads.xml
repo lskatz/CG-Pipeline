@@ -19,20 +19,20 @@
 
 **What it does:**
 
-This tool allows users to add data in their histories whitout having to upload them through the network.
+This tool interleves fastq files.
 
 ------
 
 **Input:**
 
-You must provide a filename whitout the extension (which is provide by file type) and the path to the data on the server. If you don't find the extension of your file, don't panic, just upload it with the text extension, and then search for the good format by clicking on the pencil on the dataset created. 
+Two non-interleved fastq files:  the forward reads and the reverse reads. The order matters.  Forward reads are "pair 1" and reverse reads are "pair 2"
 
 **Output:**
 
-Create the galaxy dataset corresponding to your file on servers.
+Interleved (shuffled) fastq reads
 
 .. class:: infomark
 
-**Feedback**: alban.lermine@curie.fr
+**Feedback**: //sourceforge.net/p/cg-pipeline
   </help>
 </tool>
