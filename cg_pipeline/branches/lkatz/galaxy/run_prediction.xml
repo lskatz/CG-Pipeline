@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<tool id="cgp_run_prediction" name="CG-Pipeline-Prediction">
+  <description>Run prediction</description>
+  <command interpreter="bash">run_prediction.sh $assembly $tag $strain $out</command>
+  <inputs>
+    <param name="assembly" type="data" format="fasta" label="Assembly fasta file" help="The contigs from an assembly, in fasta format">
+      <validator type="empty_field" message="You must specify a fasta file"/>
+    </param>
+    <param name="tag" type="text" size="40" label="Locus tag prefix, such as one from NCBI" help="A custom set of letters to identify uniquely each gene from any other gene in the world. No underscores allowed." value="NNN">
+      <validator type="regex" message="No underscores are allowed">^[^_]+$</validator>
+      <validator type="empty_field" message="You must specify a tag. If you do not care, use NNN" />
+    </param>
+    <param name="strain" type="text" size="40" label="Your custom strain name">
+      <validator type="regex" message="No spaces or underscores are allowed">^[^_ ]+$</validator>
+      <validator type="empty_field" message="You must specify a name." />
+    </param>
+    <param name="outfile" type="text" size="40" label="Name of your genbank output file">
+      <validator type="empty_field" message="You must specify a genbank file"/>
+      <validator type="regex" message="The output file must end with .gb or .gbk">.*(\.gb|\.gbk)$</validator>
+    </param>
+  </inputs>
+  <outputs>
+    <data format="fasta" name="out" label="${outfile}" />
+  </outputs>
+  <help>
+.. class:: infomark
+
+**CGP: run-prediction**
+
+This tool predicts genes in a genome assembly
+
+------
+
+**Input:**
+
+An assembly fasta file with contigs
+
+**Output:**
+
+A genbank file with predicted genes, a fasta file with nucleotide sequences of each gene, and a fasta file of translations for coding genes
+
+.. class:: infomark
+
+**Feedback**: http://sourceforge.net/p/cg-pipeline
+  </help>
+</tool>
