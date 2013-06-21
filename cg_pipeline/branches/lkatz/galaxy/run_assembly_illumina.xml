@@ -1,37 +1,42 @@
-<tool id="cgp_run_assembly" name="CG-Pipeline">
+<?xml version="1.0"?>
+<tool id="cgp_run_assembly_illumina_denovo" name="CG-Pipeline de novo Illumina assembly">
   <description>Run de novo assembly on raw Illumina reads</description>
   <command interpreter="bash">run_assembly_illumina.sh $reads $expectedGenomeSize $out</command>
   <inputs>
     <param name="reads" type="data" format="fastq" label="Raw reads file" help="Interleved fastq">
       <validator type="empty_field" message="You must specify a fastq file"/>
     </param>
-    <param name="expectedGenomeSize" type="integer" value="5000000" size="9" label="Genome size" help="E.g. estimate 5 megabases as 5000000">
+    <param name="expectedGenomeSize" value="5000000" type="integer" size="40" label="Genome size" help="E.g. estimate 5 megabases as 5000000">
       <validator type="empty_field" message="You must specify a size"/>
     </param>
-    <param name="outfile" type="text" size="20" label="Output file name" help=".fasta will be appended to the filename" />
+    <param name="outfile" type="text" size="40" label="Output file name" help=".fasta extension is required">
+      <validator type="regex" message="Please use .fasta as an extension">.*\.[Ff]asta$</validator>
+    </param>
   </inputs>
   <outputs>
-    <data format="fasta" name="out" label="${outfile}.fasta" />
+    <data format="fasta" name="out" label="${outfile}" />
   </outputs>
   <help>
 .. class:: infomark
 
-**What it does:**
+**CGP: run-assembly-illumina**
 
-This tool allows users to add data in their histories whitout having to upload them through the network.
+This tool assembles data from fastq raw read files.
 
 ------
 
 **Input:**
 
-You must provide a filename whitout the extension (which is provide by file type) and the path to the data on the server. If you don't find the extension of your file, don't panic, just upload it with the text extension, and then search for the good format by clicking on the pencil on the dataset created. 
+For paired-end runs, use interleved fastq files. For single-end runs, use non-interleved fastq files.
+
+To run a reference assembly, use the fasta file of a reference genome.
 
 **Output:**
 
-Create the galaxy dataset corresponding to your file on servers.
+The final assembly is in fasta format.
 
 .. class:: infomark
 
-**Feedback**: alban.lermine@curie.fr
+**Feedback**: http://sourceforge.net/p/cg-pipeline
   </help>
 </tool>

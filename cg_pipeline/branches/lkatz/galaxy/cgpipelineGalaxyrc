@@ -1,3 +1,8 @@
 export CG_PIPELINE_DIR=$HOME/bin/cg_pipeline
 export PATH=$PATH:$CG_PIPELINE_DIR/scripts
 
+# do some kind of test to make sure that bashrc hasn't already been loaded
+if [ "$BASHRC_LOADED" = "" ]; then
+	echo "bashrc not loaded yet. Loading."
+	. /home/galaxy/.bashrc
+fi
