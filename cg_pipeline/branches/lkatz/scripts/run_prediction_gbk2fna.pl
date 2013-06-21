@@ -21,7 +21,7 @@ sub main(){
   die usage() if(@ARGV<1);
   my $settings;
   $settings = AKUtils::loadConfig($settings);
-  GetOptions($settings,('gb=s','fasta=s')) or die;
+  GetOptions($settings,('gb=s','fasta=s','faa=s')) or die;
   if(!defined($$settings{'gb'}) or !defined($$settings{'fasta'})){die usage();}
   printf STDERR "reading %s... ",$$settings{'gb'};
   my $gbin = Bio::SeqIO->new(-file=>$$settings{'gb'},-format=>'genbank');
@@ -38,7 +38,10 @@ sub main(){
         my $seq2fasta = $ftr->seq;
         my $seqid = scalar $seq2fasta->display_name;
         my $locus_tag = ($ftr->get_tag_values('locus_tag'))[0];
-        my $defline = sprintf("lcl|%s|%d|%d",$locus_tag,$ftr->start,$ftr->end);
+        my $seqid_sanitized=$seq->id;
+        $seqid_sanitized=~s/_/-/g;
+        my $alt_locus_tag=join("_",$seqid_sanitized,$ftr->start,$ftr->end);
+        my $defline = sprintf("lcl|%s|%s",$locus_tag,$alt_locus_tag);
         $seq2fasta->display_name($defline); # >lcl|StrainName_Locus|start|end
         my @desc = ();
         if($ftr->has_tag('gene')){push(@desc,$ftr->get_tag_values('gene'));}
@@ -66,5 +69,5 @@ sub main(){
 }#end main
 
 sub usage{
-  "Usage: ". basename($0) . " --gb=genbank-input-file --fasta=fasta-output-file\n";
+  "Usage: ". basename($0) . " --gb=genbank-input-file --fasta=fasta-output-file [--faa=translatedCDS.faa]\n";
 }
