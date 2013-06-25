@@ -3,21 +3,35 @@
 echo `basename $0`": BEGIN Updating uniprot. This could take a while."
 
 # Get the fasta databases
-wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz
-gunzip --stdout uniprot_sprot.fasta.gz > uniprot_sprot.fasta
+if [ ! -f "uniprot_sprot.fasta" ]; then
+  wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz
+  gunzip -c uniprot_sprot.fasta.gz > uniprot_sprot.fasta
+  if [ $? -gt 0 ]; then exit $?; fi
+  #rm -v uniprot_sprot.fasta.gz
+fi;
 
-wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_trembl.fasta.gz
-gunzip --stdout uniprot_trembl.fasta.gz > uniprot_trembl.fasta
+if [ ! -f "uniprot_trembl.fasta" ]; then
+  wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_trembl.fasta.gz
+  gunzip -c uniprot_trembl.fasta.gz > uniprot_trembl.fasta
+  if [ $? -gt 0 ]; then exit $?; fi
+  #rm -v uniprot_trembl.fasta.gz
+fi;
 
 # We don't really need trembl by itself. Concat it with Swiss-prot
 cat uniprot_sprot.fasta uniprot_trembl.fasta > uniprot_sprot_trembl.fasta
+if [ $? -gt 0 ]; then 
+  rm -v uniprot_sprot_trembl.fasta; 
+  exit $?; 
+fi
 
-# Now that it has been downloaded, see if we can cut down the size of the database
+# Now that the fasta files have been downloaded, 
+# see if we can cut down the size of the database
 # to just bacterial genes. This will make Prediction and Annotation faster.
 # This script downloads dat files that explain which genes belong to bacteria.
 # Then, it filters the fasta files to include only bacterial genes.
 # Swiss-prot first
 update_uniprot_filter.pl -i uniprot_sprot.fasta -o uniprot_sprot.filtered.fasta -u ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/taxonomic_divisions/uniprot_sprot_bacteria.dat.gz
+if [ $? -gt 0 ]; then exit $?; fi
 # Uniprot-trembl-sprot next (a huge beast)
 update_uniprot_filter.pl -i uniprot_sprot_trembl.fasta -o uniprot_sprot_trembl.filtered.fasta
 if [ $? -gt 0 ]; then exit $?; fi
@@ -31,12 +45,14 @@ legacy_blast.pl formatdb -p T -t uniprot_sprot_trembl -n uniprot_sprot_trembl -i
 legacy_blast.pl formatdb -p T -t uniprot_sprot -n uniprot_sprot -i uniprot_sprot.fasta -o T
 legacy_blast.pl formatdb -p T -t uniprot_trembl -n uniprot_trembl -i uniprot_trembl.fasta -o T
 
+# get XML descriptions
 wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.xml.gz
-gunzip --stdout uniprot_sprot.xml.gz > uniprot_sprot.xml
+gunzip uniprot_sprot.xml.gz uniprot_sprot.xml
 
 wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_trembl.xml.gz
-gunzip --stdout uniprot_trembl.xml.gz > uniprot_trembl.xml
+gunzip uniprot_trembl.xml.gz uniprot_trembl.xml
 
 run_annotation_parse_uniprot_xml.pl uniprot_sprot.xml uniprot_trembl.xml
+rm -v uniprot_sprot.xml uniprot_trembl.xml
 echo `basename $0`": FINISHED Updating uniprot."
 
