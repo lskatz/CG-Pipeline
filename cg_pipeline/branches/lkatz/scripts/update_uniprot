@@ -41,9 +41,9 @@ mv -v uniprot_sprot_trembl.filtered.fasta uniprot_sprot_trembl.fasta
 mv -v uniprot_sprot.filtered.fasta uniprot_sprot.fasta
 
 # format the databases
-legacy_blast.pl formatdb -p T -t uniprot_sprot_trembl -n uniprot_sprot_trembl -i uniprot_sprot_trembl.fasta -o T
-legacy_blast.pl formatdb -p T -t uniprot_sprot -n uniprot_sprot -i uniprot_sprot.fasta -o T
-legacy_blast.pl formatdb -p T -t uniprot_trembl -n uniprot_trembl -i uniprot_trembl.fasta -o T
+legacy_blast.pl formatdb -p T -t uniprot_sprot_trembl -n uniprot_sprot_trembl -i uniprot_sprot_trembl.fasta
+legacy_blast.pl formatdb -p T -t uniprot_sprot -n uniprot_sprot -i uniprot_sprot.fasta
+#legacy_blast.pl formatdb -p T -t uniprot_trembl -n uniprot_trembl -i uniprot_trembl.fasta -o T
 
 # get XML descriptions
 wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.xml.gz
