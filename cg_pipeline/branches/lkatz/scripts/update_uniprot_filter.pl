@@ -55,8 +55,7 @@ sub downloadDats{
     # download the dat file if it doesn't exist in gz or uncompressed form
     if(! -f $path && ! -f $datpath){
       logmsg "Downloading $_ => $path";
-      my $ff=File::Fetch->new(uri=>$_);
-      my $where=$ff->fetch(to=>\$path) or die $ff->error; # to cwd
+      system("wget '$_' -O '$path'"); die if $?;
     }
     if(! -f $datpath){
       logmsg "Uncompressing $path";
