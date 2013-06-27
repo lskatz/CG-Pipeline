@@ -90,7 +90,10 @@ sub combinePredictionAndAnnotation{
     # TODO figure out why species_obj isn't transferring subspecies name properly. 
 
     $seq->add_SeqFeature($sourceFeat);
-    $seq->annotation->add_Annotation('reference',$$metaData{$seqid}{'reference'});
+
+    # the reference line comes out to "1" for some reason in the output file
+    # fixme
+    #$seq->annotation->add_Annotation('reference',$$metaData{$seqid}{'reference'});
 
     addTableFeature($sourceFeat);
 
