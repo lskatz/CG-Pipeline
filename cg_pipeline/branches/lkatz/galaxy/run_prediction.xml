@@ -20,7 +20,8 @@
     </param>
   </inputs>
   <outputs>
-    <data format="fasta" name="out" label="${outfile}" />
+    <data format="genbank" name="out" label="${outfile}" />
+    <data format="fasta" name="out2" label="${outfile}.fna" />
   </outputs>
   <help>
 .. class:: infomark
