@@ -58,7 +58,7 @@ sub metrics{
     system("run_assembly_metrics.pl $project/assembly.fasta");
     die if $?;
   }
-  if(-e "$$settings{project}/prediction.gb"){
+  if(-e "$project/prediction.gb"){
     system("run_prediction_metrics.pl $project/prediction.gb");
     die if $?;
   }
