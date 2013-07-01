@@ -29,25 +29,35 @@ use Archive::Tar;
 use File::Slurp;
 
 $0=fileparse $0;
-sub logmsg {my $FH = *STDERR; print $FH "$0: ".(caller(1))[3].": @_\n";}
+local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; print STDERR ("$0: ".(caller(1))[3].": ".$e); exit -1; };
+sub logmsg {return 0 if $$settings{quiet}; my $FH = *STDERR; print $FH "$0: ".(caller(1))[3].": @_\n";}
 exit(main());
 
 sub main{
   die usage() if @ARGV<1;
-  GetOptions($settings,qw(export clean));
+  GetOptions($settings,qw(export clean casm cpred cann boolean quiet));
   die usage() if @ARGV<1;
 
   my @project=@ARGV;
 
+  logmsg "WARNING: exit codes might not work as intended when you get to 127 genome projects and above" if(@project>=127);
+
+  my $exit_code=0;
   for my $p(@project){
     if(!is_cgp_project($p,$settings)){
       logmsg "$p is not a CGP project. I will skip it.";
       next;
-    } else { logmsg "CGP project $p"; }
+    } else { 
+      logmsg "CGP project $p";
+      $exit_code++;
+    }
     exportProject($p,$settings) if($$settings{export});
     cleanProject($p,$settings) if($$settings{clean});
+    cleanAssembly($p,$settings) if($$settings{casm});
+    cleanPrediction($p,$settings) if($$settings{cpred});
+    cleanAnnotation($p,$settings) if($$settings{cann});
   }
-  return 0;
+  return $exit_code;
 }
 
 sub is_cgp_project{
@@ -60,9 +70,26 @@ sub is_cgp_project{
 
 sub cleanProject{
   my($project,$settings)=@_;
-  for(glob("$project/build/assembly/* $project/build/prediction/* $project/build/annotation/*")){
-    File::Path->remove_tree($_,{keep_root=>1}) or die "Could not remove $_: $!";
-  }
+  my $return=0;
+  $return+=cleanAssembly($project,$settings); 
+  $return+=cleanPrediction($project,$settings); 
+  $return+=cleanAnnotation($project,$settings);
+  return $return;
+}
+
+sub cleanAssembly{
+  my($project,$settings)=@_;
+  File::Path->remove_tree("$project/build/assembly/*",{keep_root=>1}) or die "Could not remove $_: $!";
+  return 1;
+}
+sub cleanPrediction{
+  my($project,$settings)=@_;
+  File::Path->remove_tree("$project/build/prediction/*",{keep_root=>1}) or die "Could not remove $_: $!";
+  return 1;
+}
+sub cleanAnnotation{
+  my($project,$settings)=@_;
+  File::Path->remove_tree("$project/build/annotation/*",{keep_root=>1}) or die "Could not remove $_: $!";
   return 1;
 }
   
@@ -92,6 +119,14 @@ sub usage{
   Usage: $0 project [project2 ...] -e > outfile
   project: a cg_pipeline project directory (created by 'run_pipeline create')
   -e export the project directory
-  -c clean the project directory
+  --clean clean out all temporary files, 
+          or use one or more of the following to clean a specific stage
+    -casm -cpre -cann
+  -q for quiet
+
+  Exit codes can be used to your advantage with this script
+  for example:
+    system('$0 -q CGPdir'); \$e=\$? >> 8; if(\$e){ print 'This is a CGP project directory!';}
+  However, an exit code of 255 signifies an error.
   ";
 }
