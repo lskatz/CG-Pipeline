@@ -42,8 +42,9 @@ sub main{
   for my $p (@$project){
     my $file=locateFile($p,$settings);
     my($name,$path,$suffix)=fileparse($file,qw(.gb .gbk .fasta));
+    $p=~s/\/+$//; # remove trailing slashes
     my $tmpfile="$$settings{tempdir}/$p$suffix";
-    copy($file,$tmpfile) or die "Could not copy $file to $tmpfile because $!";
+    copy($file,$tmpfile) or die "Could not copy $file to $tmpfile because $!\n";
     push(@filesToCompress,$tmpfile);
   }
 
