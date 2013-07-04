@@ -1,6 +1,5 @@
-<tool id="cgp_run_assembly_shuffleReads" name="CG-Pipeline">
+<tool id="cgp_run_assembly_shuffleReads" name="CG-Pipeline shuffle-reads">
   <description>Interleve fastq reads</description>
-  <!-- <command interpreter="bash">run_assembly -1 $pair1 -2 $pair2 -o $out -R $reference -e $expectedSize</command> -->
   <command interpreter="bash">run_assembly_shuffleReads.sh $pair1 $pair2 $out</command>
   <inputs>
     <param name="pair1" type="data" format="fastq" label="Pair 1">
@@ -9,10 +8,10 @@
     <param name="pair2" type="data" format="fastq" label="Pair 2">
       <validator type="empty_field" message="You must specify a file"/>
     </param>
-    <param name="outfile" type="text" width="20" label="Output file name" help=".fastq will be appended to the filename" />
+    <param name="outfile" type="text" width="20" label="Output file name" help="The extension should be .fastq" />
   </inputs>
   <outputs>
-    <data format="fastq" name="out" label="${outfile}.fastq" />
+    <data format="fastq" name="out" label="${outfile}" />
   </outputs>
   <help>
 .. class:: infomark
