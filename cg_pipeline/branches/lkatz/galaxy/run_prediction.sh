@@ -1,11 +1,12 @@
 #!/bin/sh
-# run_prediction $assembly $tag $strain $out
+# run_prediction $assembly $tag $strain $out $outfna
 # Predicts where genes are in a genome assembly
 
 ASSEMBLY=$1
 TAG=$2
 STRAIN=$3
 OUT=$4
+OUTFNA=$5
 
 . `dirname $0`/cgpipelineGalaxyrc
 
@@ -22,4 +23,10 @@ if [ $? -gt 0 ]; then
   echo "ERROR with prediction. See the log for details." 1>&2
   exit 1
 fi
-
+echo "Finished with gene prediction."
+echo "Extracting all genes to nucleotide multi-fasta file..."
+mv -v "$OUT.fna" "$OUTFNA"
+if [ $? -gt 0 ]; then
+  echo "ERROR with creating the fasta file. See the log for details." 1>&2
+  exit 1
+fi
