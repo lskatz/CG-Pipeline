@@ -79,17 +79,23 @@ sub cleanProject{
 
 sub cleanAssembly{
   my($project,$settings)=@_;
-  File::Path->remove_tree("$project/build/assembly/*",{keep_root=>1}) or die "Could not remove $_: $!";
+  my $dir="$project/build/assembly";
+  return 0 if(!glob("$dir/*"));
+  File::Path->remove_tree($dir,{keep_root=>1}) or die "Could not remove $dir: $!";
   return 1;
 }
 sub cleanPrediction{
   my($project,$settings)=@_;
-  File::Path->remove_tree("$project/build/prediction/*",{keep_root=>1}) or die "Could not remove $_: $!";
+  my $dir="$project/build/prediction";
+  return 0 if(!glob("$dir/*"));
+  File::Path->remove_tree($dir,{keep_root=>1}) or die "Could not remove $dir: $!";
   return 1;
 }
 sub cleanAnnotation{
   my($project,$settings)=@_;
-  File::Path->remove_tree("$project/build/annotation/*",{keep_root=>1}) or die "Could not remove $_: $!";
+  my $dir="$project/build/annotation";
+  return 0 if(!glob("$dir/*"));
+  File::Path->remove_tree($dir,{keep_root=>1}) or die "Could not remove $dir: $!";
   return 1;
 }
   
