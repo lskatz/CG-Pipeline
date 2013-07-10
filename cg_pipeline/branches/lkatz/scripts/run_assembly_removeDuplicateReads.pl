@@ -43,7 +43,7 @@ sub main{
   # get settings from cg_pipeline/conf/cgpipelinerc and ./cgpipelinerc
   $settings=AKUtils::loadConfig($settings);
   # get CLI flags into $settings with Getopt::Long
-  GetOptions($settings,qw(help tempdir=s downsample=s)); 
+  GetOptions($settings,qw(help tempdir=s downsample=s length=i)); 
   die usage() if(@ARGV<1 || $$settings{help});
   # additional settings using ||= operator
   $$settings{tempdir}||=AKUtils::mktempdir(); # any temp file you make should go under the tempdir
@@ -59,6 +59,9 @@ sub main{
 
 sub removeDuplicateReads{
   my($infile,$settings)=@_;
+  my $linker="~" x 4; # tildes are probably not in the sequence, so it's safe for putting into the hash ID
+  my $linkerFirstChar=substr($linker,0,1);
+  my $l=$$settings{length}||0;
 
   for my $fastq(@$infile){
     my ($basename,$dir,$inSuffix) = fileparse($fastq,@IOextensions);
@@ -87,7 +90,13 @@ sub removeDuplicateReads{
         my $discard2=<FQ>;
         my $qual2=<FQ>;
         $read.="$id2$sequence2\n+\n$qual2";
-        $hashId.="~~~~$sequence2"; # tildes are probably not in the sequence, so it's probably safe for putting into the hash ID
+        $hashId.="$linker$sequence2";
+      }
+
+      # if desired, only look at the first X nucleotides when considering a duplicate
+      if($l){
+        $hashId=~s/^(.{$l,$l}).*$linker(.+)/$1$linker$2/; # accept only X nucleotides from the front
+        $hashId=~s/($linker.{$l,$l}).*($|$linker)/$1$2/g if($poly>1);
       }
 
       # downsampling at this step is more accurate than later, after dupes are removed
@@ -113,6 +122,7 @@ sub usage{
    Usage: $0 read.fastq[.gz] > read.fastq
          $0 read.fastq[.gz] | gzip -c > read.fastq.gz
      --downsample 0.5  # filter 50% of reads out
+     --length 100      # only consider up to 100bp when deciding if a read is a duplicate. Default: no limit
   ";
 }
 
