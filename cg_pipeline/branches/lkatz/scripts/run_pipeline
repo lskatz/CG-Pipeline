@@ -137,7 +137,7 @@ sub main(){
     case (/^build$|^predict$/){
       my $logfile="$project/log/prediction.$logSuffix.txt";
       CGLog($logfile,"PREDICTION START on project $project ".date());
-      system("ln -sf ".fileparse($logfile)." $project/log/yrediction.txt;");
+      system("ln -sf ".fileparse($logfile)." $project/log/prediction.txt;");
       my $mfaArg="";
       foreach(@{ $$settings{input} }){
         if(! -e){
