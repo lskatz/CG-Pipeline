@@ -450,7 +450,7 @@ sub removeLinkers{
     $f->location->start($f->location->start - $numFirstReplacements*$linkerLength);
     $f->location->end($f->location->end - $numFirstReplacements*$linkerLength);
 
-    $f->location->start("<1") if($f->location->start<1);
+    $f->location->start("1") if($f->location->start<1);
     $f->location->end($gbseq->length) if($f->location->end > $gbseq->length);
   }
   $gbseq->remove_SeqFeatures();
