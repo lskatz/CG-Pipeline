@@ -34,7 +34,7 @@ exit(main());
 sub main{
   die usage() if @ARGV<1;
   GetOptions($settings,qw(project=s@ outfile=s));
-
+  logmsg "WARNING: this script is deprecated.  Use run_pipeline_manage.pl instead.";
   my $project=$$settings{project} or die "Error: no project given\n".usage();
   
   $$settings{tempdir}||=AKUtils::mktempdir();
