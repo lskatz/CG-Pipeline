@@ -71,7 +71,7 @@ sub trimUpAndDown{
     if(/^pos/){
       while(<STREAM>){
         last if(/Ns per read/);
-        print if($$settings{"fastqqc-verbose"});
+        #print if($$settings{"fastqqc-verbose"});
         chomp;
         my($pos,$a,$c,$g,$t,$n,$q)=split /\t/; 
         push(@a,$a); push(@c,$c); push(@g,$g); push(@t,$t);
@@ -80,7 +80,10 @@ sub trimUpAndDown{
     }
   } 
   close STREAM;
-  die if($$settings{"fastqqc-verbose"});
+  if($$settings{"fastqqc-verbose"}){
+    fastqqcOutput(\@a,\@c,\@g,\@t,\@q,$settings);
+    return 0;
+  }
 
   # find where to make the cut
   my ($upstreamTrim,$downstreamTrim);
@@ -150,6 +153,20 @@ sub trimUpAndDown{
   }
   close IN;
   return $i;
+}
+
+sub fastqqcOutput{
+  my($a,$c,$g,$t,$q,$settings)=@_;
+  my $numBases=@$a;
+  print join("\t",qw(nt a c g t q slope))."\n";
+  for(my $i=0;$i<$numBases;$i++){
+    my $slope="-";
+    if($i>0){
+      $slope=(abs($$a[$i+1]-$$a[$i])+abs($$c[$i+1]-$$c[$i])+abs($$g[$i+1]-$$g[$i])+abs($$t[$i+1]-$$t[$i]))/4;
+    }
+    print join("\t",$i+1,$$a[$i],$$c[$i],$$g[$i],$$t[$i],$$q[$i],$slope)."\n";
+  }
+  return $numBases;
 }
 
 sub is_fastqGz($;$){
