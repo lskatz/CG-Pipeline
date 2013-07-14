@@ -31,11 +31,14 @@ sub logmsg {my $FH=*STDERR; print $FH "$0: ".(caller(1))[3].": @_\n";}
 exit(main());
 
 sub main() {
-  GetOptions($settings, qw(help tempdir=s));
+  GetOptions($settings, qw(help tempdir=s trimCleanXopts=s strimUpAndDownXopts=s duplicatesXopts=s));
   die usage() if($$settings{help});
   $$settings{tempdir}||=AKUtils::mktempdir();
-  mkdir $$settings{tempdir} if(!-d $$settings{tempdir});
+  $$settings{trimCleanXopts}||="";
+  $$settings{strimUpAndDownXopts}||="";
+  $$settings{duplicatesXopts}||="";
   
+  mkdir $$settings{tempdir} if(!-d $$settings{tempdir});
   my @read=@ARGV;
   die usage() if(!@read);
 
@@ -54,7 +57,7 @@ sub main() {
 sub trimUpAndDown{
   my($read,$settings)=@_;
   my $trimmedReads="$$settings{tempdir}/reads.trimmed.fastq.gz";
-  system("run_assembly_trimLowQualEnds.pl -c 9999 ".join(" ",@$read)." | gzip -c > $trimmedReads");
+  system("run_assembly_trimLowQualEnds.pl $$settings{strimUpAndDownXopts} ".join(" ",@$read)." | gzip -c > $trimmedReads");
   die if $?;
   return $trimmedReads;
 }
@@ -62,7 +65,7 @@ sub trimUpAndDown{
 sub removeDuplicateReads{
   my($reads,$settings)=@_;
   my $noDupes="$$settings{tempdir}/reads.noDupes.fastq.gz";
-  system("run_assembly_removeDuplicateReads.pl $reads > $noDupes");
+  system("run_assembly_removeDuplicateReads.pl $$settings{duplicatesXopts} $reads > $noDupes");
   die if $?;
   return $reads;
 }
@@ -70,7 +73,7 @@ sub removeDuplicateReads{
 sub trimClean{
   my($reads,$settings)=@_;
   my $out="$$settings{tempdir}/reads.trimmedCleaned.fastq";
-  system("run_assembly_trimClean.pl -i $reads -o $out 1>&2 ");
+  system("run_assembly_trimClean.pl $$settings{trimCleanXopts} -i $reads -o $out 1>&2 ");
   die if $?;
   return $out;
 }
@@ -80,5 +83,11 @@ sub usage{
   "This is a wrapper around all CGP cleaning scripts.
   Usage: $0 reads.fastq [reads2.fastq...] > reads.cleaned.fastq
     -h for this help menu
+
+    The following options can send options directly to the sub-scripts. 
+    These parameters are not sanity-checked.
+    -t ' ' run_assembly_trimClean.pl options
+    -s ' ' run_assembly_trimLowQualEnds.pl options
+    -d ' ' run_assembly_removeDuplicateReads.pl options
   "
 }
