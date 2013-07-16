@@ -87,7 +87,6 @@ sub main(){
     mkpath(["$project/annotation","$project/log","$project/build/assembly","$project/build/prediction","$project/build/annotation","$project/database"]);
     CGLog($logfile,"Project created ".date());
     system("ln -sf ".fileparse($logfile)." $project/log/create.txt;");
-    last if($command !~ /^build$/);
   }
   if($command=~/build|assemble/){
     my $logfile="$project/log/assembly.$logSuffix.txt";
@@ -134,7 +133,6 @@ sub main(){
     CGLog($logfile,'ASSEMBLY END '.date(),'append');
     $$settings{input}=""; # unset input for any possible future steps, because input was meant as an SFF in this case
 
-    last if($command !~ /^build$/);
   }
   if($command=~/build|predict/){
     my $logfile="$project/log/prediction.$logSuffix.txt";
@@ -160,7 +158,6 @@ sub main(){
     CGLog($logfile,"PREDICTION END on project $project ".date(),'append');
     # It's not necessary to unset variables here like in assembly, because if build were the command, then everything is unset. 
     #   If predict is the command, then the wrapper will not continue.
-    last if($command !~ /^build$/);
   }
   if($command=~/build|annotate/){
     my $logfile="$project/log/annotation.$logSuffix.txt";
@@ -185,10 +182,9 @@ sub main(){
     }
     CGLog($logfile,"COMMAND\n  $invoke_string",'append');
     system($invoke_string);
-    #last if($? || $@ || $!);
+    die if $?;
     system("cp -v $home/$project/annotation/annotation.gb $home/$project/annotation.gb 2>&1 | tee --append $logfile"); 
     CGLog($logfile,"ANNOTATION END on $project ".date(),'append');
-    last if($command !~ /^build$|^annotate$/);
   }
   if($command=~/build|annotate|makedb/){
     my $logfile="$project/log/database.$logSuffix.txt";
@@ -201,7 +197,6 @@ sub main(){
     CGLog($logfile,"COMMAND\n $invoke_string",'append');
     system($invoke_string);
     CGLog($logfile,"ANNOTATION DATABASE END on $project ".date(),'append');
-    last if($command !~ /^build$/);
   }
 
   # give final stats for the project
