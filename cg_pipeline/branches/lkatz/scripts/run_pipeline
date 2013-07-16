@@ -28,7 +28,6 @@ use File::Basename;
 use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
 use Data::Dumper;
-use Switch 'fallthrough';
 use POSIX qw(strftime);
 
 my $verbose;
@@ -74,136 +73,135 @@ sub main(){
   my $logSuffix=join("-",$year,$mon,$mday).".$$";
 
   # based on the command, do a variety of things (create, assemble, predict, annotate or do everything which is "build")
-  my $invoke_string;
-  switch($command){
-    # if build then go through every stage of the pipeline
-    case (/^build$/){
-      #print __LINE__."\n";
-    }
-    case (/^build$|^create$/){
-      my $logfile="$project/log/create.$logSuffix.txt";
-      mkpath(["$project/annotation","$project/log","$project/build/assembly","$project/build/prediction","$project/build/annotation","$project/database"]);
-      CGLog($logfile,"Project created ".date());
-      system("ln -sf ".fileparse($logfile)." $project/log/create.txt;");
-      last if($command !~ /^build$/);
-    }
-    case (/^build$|^assemble$/){
-      my $logfile="$project/log/assembly.$logSuffix.txt";
-      CGLog($logfile,"ASSEMBLY START ".date());
-      system("ln -sf ".fileparse($logfile)." $project/log/assembly.txt;");
-      foreach(@$target){
-        if(! -e){
-          die("Target file not found $_.\n".usage());
-        }
-      }
-      my $refarg="";
-      if($$settings{Reference}){
-        my @reference=split(/\s+/,$$settings{Reference});
-        # TODO allow for multiple references
-        if(@reference>1){
-          die "Sorry, but multiple references are not supported right now."
-        }
-        foreach(@reference){
-          $refarg.="-R $_ ";
-        }
-      }
-      else{
-        CGLog($logfile,"No reference genome provided.  Proceeding with the de novo assembly...\n",'append');
-      }
-      # loop through each sff file and see if it exists.  If so, make an argument.
-      my $sffarg="";
-      foreach(@{ $$settings{input} }){
-        if(! -e){
-          die("SFF file $_ does not exist.");
-        }
-        $sffarg.="$_ ";
-      }
-      $invoke_string="time run_assembly $sffarg --tempdir=$home/$project/build/assembly --keep $refarg --output $home/$project/assembly.fasta ";
-      $invoke_string.="-d T " if($$settings{deNovo});
-      $invoke_string.="-e $$settings{expectedGenomeSize} " if($$settings{expectedGenomeSize});
-      if($verbose>1){
-        $invoke_string.=" 2>&1 |tee --append $logfile";
-      }
-      else{
-        $invoke_string.=">>$logfile 2>&1";
-      }
-      CGLog($logfile,"COMMAND to assemble with ".scalar(@{ $$settings{input} })." files\n  $invoke_string",'append');
-      system($invoke_string);
-      CGLog($logfile,'ASSEMBLY END '.date(),'append');
-      $$settings{input}=""; # unset input for any possible future steps, because input was meant as an SFF in this case
+  # Control the command using regex so that it doesn't have to be too strict later
+  $command=~/^(build|create|assemble|predict|annotate|makedb)$/i;
+  $command=lc($1);
+  die "ERROR: Command $command not understood!\n ".usage() if($command!~/build|create|assemble|predict|annotate|makedb/);
 
-      last if($command !~ /^build$/);
+  my $invoke_string;
+  if($command eq "build"){
+    #print __LINE__."\n";
+  }
+  if($command=~/build|create/){
+    my $logfile="$project/log/create.$logSuffix.txt";
+    mkpath(["$project/annotation","$project/log","$project/build/assembly","$project/build/prediction","$project/build/annotation","$project/database"]);
+    CGLog($logfile,"Project created ".date());
+    system("ln -sf ".fileparse($logfile)." $project/log/create.txt;");
+    last if($command !~ /^build$/);
+  }
+  if($command=~/build|assemble/){
+    my $logfile="$project/log/assembly.$logSuffix.txt";
+    CGLog($logfile,"ASSEMBLY START ".date());
+    system("ln -sf ".fileparse($logfile)." $project/log/assembly.txt;");
+    foreach(@$target){
+      if(! -e){
+        die("Target file not found $_.\n".usage());
+      }
     }
-    case (/^build$|^predict$/){
-      my $logfile="$project/log/prediction.$logSuffix.txt";
-      CGLog($logfile,"PREDICTION START on project $project ".date());
-      system("ln -sf ".fileparse($logfile)." $project/log/prediction.txt;");
-      my $mfaArg="";
-      foreach(@{ $$settings{input} }){
-        if(! -e){
-          die("Input FASTA file $_ does not exist.");
-        }
-        $mfaArg.="$_ ";
+    my $refarg="";
+    if($$settings{Reference}){
+      my @reference=split(/\s+/,$$settings{Reference});
+      # TODO allow for multiple references
+      if(@reference>1){
+        die "Sorry, but multiple references are not supported right now."
       }
-      $mfaArg=$mfaArg||"$home/$project/assembly.fasta";
-      $invoke_string="time run_prediction $mfaArg -crispr --tempdir=$home/$project/build/prediction --keep -o $home/$project/prediction.gb --strain_name=$project 2>&1 ";
-      if($verbose>1){
-        $invoke_string.="|tee --append $logfile";
+      foreach(@reference){
+        $refarg.="-R $_ ";
       }
-      else{
-        $invoke_string.=">>$logfile";
-      }
-      CGLog($logfile,"COMMAND\n  $invoke_string",'append');
-      system($invoke_string);
-      CGLog($logfile,"PREDICTION END on project $project ".date(),'append');
-      # It's not necessary to unset variables here like in assembly, because if build were the command, then everything is unset. 
-      #   If predict is the command, then the wrapper will not continue.
-      last if($command !~ /^build$/);
-    }
-    case (/^build$|^annotate$/){
-      my $logfile="$project/log/annotation.$logSuffix.txt";
-      CGLog($logfile,"ANNOTATION START on $project ".date());
-      system("ln -sf ".fileparse($logfile)." $project/log/annotation.txt;");
-      my $gbArg="";
-      foreach(@{ $$settings{input} }){
-        if(! -e){
-          die("Input GENBANK file $_ does not exist.");
-        }
-        $gbArg.="$_ ";
-      }
-      $gbArg=$gbArg||"$home/$project/prediction.gb";
-      my $gotoArg=($$settings{goto})?"--goto=$$settings{goto}":"";
-         $gotoArg=($$settings{just})?"--just=$$settings{just}":"";
-      $invoke_string="run_annotation $gbArg -tempdir=$home/$project/build/annotation --keep --outdir=$home/$project/annotation $gotoArg  2>&1 ";
-      if($verbose>1){
-        $invoke_string.="|tee --append $logfile";
-      }
-      else{
-        $invoke_string.=">>$logfile";
-      }
-      CGLog($logfile,"COMMAND\n  $invoke_string",'append');
-      system($invoke_string);
-      #last if($? || $@ || $!);
-      system("cp -v $home/$project/annotation/annotation.gb $home/$project/annotation.gb 2>&1 | tee --append $logfile"); 
-      CGLog($logfile,"ANNOTATION END on $project ".date(),'append');
-      last if($command !~ /^build$|^annotate$/);
-    }
-    case (/^build$|^annotate$|^makedb$/){
-      my $logfile="$project/log/database.$logSuffix.txt";
-      CGLog($logfile,"ANNOTIATION DATABASE START on $project ".date());
-      system("ln -sf ".fileparse($logfile)." $project/log/database.txt;");
-      $invoke_string="cg_pipeline_genbank2gff3.pl $project/annotation.gb > $project/database/$project.gff 2>$logfile";
-      CGLog($logfile,"COMMAND\n  $invoke_string",'append');
-      system($invoke_string);
-      $invoke_string="cg_pipeline_init_database.pl $project $project/database/$project.gff $project/database  2>>$logfile";
-      CGLog($logfile,"COMMAND\n $invoke_string",'append');
-      system($invoke_string);
-      CGLog($logfile,"ANNOTATION DATABASE END on $project ".date(),'append');
-      last if($command !~ /^build$/);
     }
     else{
-      die "ERROR: Command $command not found.\n".usage();
+      CGLog($logfile,"No reference genome provided.  Proceeding with the de novo assembly...\n",'append');
     }
+    # loop through each sff file and see if it exists.  If so, make an argument.
+    my $sffarg="";
+    foreach(@{ $$settings{input} }){
+      if(! -e){
+        die("SFF file $_ does not exist.");
+      }
+      $sffarg.="$_ ";
+    }
+    $invoke_string="time run_assembly $sffarg --tempdir=$home/$project/build/assembly --keep $refarg --output $home/$project/assembly.fasta ";
+    $invoke_string.="-d T " if($$settings{deNovo});
+    $invoke_string.="-e $$settings{expectedGenomeSize} " if($$settings{expectedGenomeSize});
+    if($verbose>1){
+      $invoke_string.=" 2>&1 |tee --append $logfile";
+    }
+    else{
+      $invoke_string.=">>$logfile 2>&1";
+    }
+    CGLog($logfile,"COMMAND to assemble with ".scalar(@{ $$settings{input} })." files\n  $invoke_string",'append');
+    system($invoke_string);
+    CGLog($logfile,'ASSEMBLY END '.date(),'append');
+    $$settings{input}=""; # unset input for any possible future steps, because input was meant as an SFF in this case
+
+    last if($command !~ /^build$/);
+  }
+  if($command=~/build|predict/){
+    my $logfile="$project/log/prediction.$logSuffix.txt";
+    CGLog($logfile,"PREDICTION START on project $project ".date());
+    system("ln -sf ".fileparse($logfile)." $project/log/prediction.txt;");
+    my $mfaArg="";
+    foreach(@{ $$settings{input} }){
+      if(! -e){
+        die("Input FASTA file $_ does not exist.");
+      }
+      $mfaArg.="$_ ";
+    }
+    $mfaArg=$mfaArg||"$home/$project/assembly.fasta";
+    $invoke_string="time run_prediction $mfaArg -crispr --tempdir=$home/$project/build/prediction --keep -o $home/$project/prediction.gb --strain_name=$project 2>&1 ";
+    if($verbose>1){
+      $invoke_string.="|tee --append $logfile";
+    }
+    else{
+      $invoke_string.=">>$logfile";
+    }
+    CGLog($logfile,"COMMAND\n  $invoke_string",'append');
+    system($invoke_string);
+    CGLog($logfile,"PREDICTION END on project $project ".date(),'append');
+    # It's not necessary to unset variables here like in assembly, because if build were the command, then everything is unset. 
+    #   If predict is the command, then the wrapper will not continue.
+    last if($command !~ /^build$/);
+  }
+  if($command=~/build|annotate/){
+    my $logfile="$project/log/annotation.$logSuffix.txt";
+    CGLog($logfile,"ANNOTATION START on $project ".date());
+    system("ln -sf ".fileparse($logfile)." $project/log/annotation.txt;");
+    my $gbArg="";
+    foreach(@{ $$settings{input} }){
+      if(! -e){
+        die("Input GENBANK file $_ does not exist.");
+      }
+      $gbArg.="$_ ";
+    }
+    $gbArg=$gbArg||"$home/$project/prediction.gb";
+    my $gotoArg=($$settings{goto})?"--goto=$$settings{goto}":"";
+       $gotoArg=($$settings{just})?"--just=$$settings{just}":"";
+    $invoke_string="run_annotation $gbArg -tempdir=$home/$project/build/annotation --keep --outdir=$home/$project/annotation $gotoArg  2>&1 ";
+    if($verbose>1){
+      $invoke_string.="|tee --append $logfile";
+    }
+    else{
+      $invoke_string.=">>$logfile";
+    }
+    CGLog($logfile,"COMMAND\n  $invoke_string",'append');
+    system($invoke_string);
+    #last if($? || $@ || $!);
+    system("cp -v $home/$project/annotation/annotation.gb $home/$project/annotation.gb 2>&1 | tee --append $logfile"); 
+    CGLog($logfile,"ANNOTATION END on $project ".date(),'append');
+    last if($command !~ /^build$|^annotate$/);
+  }
+  if($command=~/build|annotate|makedb/){
+    my $logfile="$project/log/database.$logSuffix.txt";
+    CGLog($logfile,"ANNOTIATION DATABASE START on $project ".date());
+    system("ln -sf ".fileparse($logfile)." $project/log/database.txt;");
+    $invoke_string="cg_pipeline_genbank2gff3.pl $project/annotation.gb > $project/database/$project.gff 2>$logfile";
+    CGLog($logfile,"COMMAND\n  $invoke_string",'append');
+    system($invoke_string);
+    $invoke_string="cg_pipeline_init_database.pl $project $project/database/$project.gff $project/database  2>>$logfile";
+    CGLog($logfile,"COMMAND\n $invoke_string",'append');
+    system($invoke_string);
+    CGLog($logfile,"ANNOTATION DATABASE END on $project ".date(),'append');
+    last if($command !~ /^build$/);
   }
 
   # give final stats for the project
