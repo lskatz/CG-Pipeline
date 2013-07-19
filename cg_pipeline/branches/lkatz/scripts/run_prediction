@@ -46,7 +46,7 @@ exit(main());
 sub main() {
   $settings = AKUtils::loadConfig($settings);
 
-  my $usage = "$0 input.mfa [, input2.mfa, ...] -strain_name=name [-crispr] [-tag_prefix=prefix] [-classification=classification] [-R references.mfa] [-C workdir] [-blast_db=db] [-crisprPrediction] [-o=output_filename.gb]";
+  my $usage = "$0 input.mfa [, input2.mfa, ...] -strain_name=name [-tag_prefix=prefix] [-classification=classification] [-R references.mfa] [-C workdir] [-blast_db=db] [-crisprPrediction] [-o=output_filename.gb]";
 
   die("Usage: $usage\n") if @ARGV < 1;
 
@@ -56,7 +56,7 @@ sub main() {
   die("Argument classification is required. Usage: $usage\n") unless defined $$settings{classification};
   
   $$settings{outfile} ||= "$0.out.gb";
-  $$settings{assembly_linker} ||= "NNNNNCACACACTTAATTAATTAAGTGTGTGNNNNN";
+  $$settings{assembly_linker} ||= ""; #"NNNNNCACACACTTAATTAATTAAGTGTGTGNNNNN";
   $$settings{min_predictors_to_call_orf}=1; 
   $$settings{min_predictors_to_call_orf}++ if ($$settings{prediction_use_genemark});
 
@@ -97,8 +97,8 @@ sub loadInputs($$) {
   foreach my $file (@$input_files) {
     my $contigSeqs=AKUtils::readMfa($file);
     # add linker on either side of each sequence
-    #for(values(%$contigSeqs)){
     while(my($seqid,$sequence)=each(%$contigSeqs)){
+      last if(!$linker);
       logmsg "WARNING: the linker sequence was found to be present already in $seqid at position $-[0]. The linker is\n  $linker" if($sequence=~/$linker/ig);
       my $numRepl=($$contigSeqs{$seqid}=~s/^|$/$linker/g);
       logmsg "$numRepl linkers added to $seqid";
