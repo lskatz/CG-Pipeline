@@ -39,7 +39,7 @@ sub main() {
 
 	die usage() if @ARGV < 1;
 
-	my @cmd_options = ('Reference=s@', 'keep', 'tempdir=s', 'output=s', 'debug','numcpus=i', 'expectedGenomeSize=i', 'illumina=s@', '454=s@');
+	my @cmd_options = qw(Reference=s@ keep tempdir=s output=s debug numcpus=i expectedGenomeSize=i illumina=s@ 454=s@);
 	GetOptions($settings, @cmd_options) or die;
 	$$settings{numcpus}||=AKUtils::getNumCPUs();
 
