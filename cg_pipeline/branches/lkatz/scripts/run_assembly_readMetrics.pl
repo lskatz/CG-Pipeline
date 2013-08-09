@@ -122,10 +122,12 @@ sub fastqFastStats{
   close FASTQ;
 
   my $avgReadLength=$firstReadlengthsTotalSize/$numReadsToAverage;
-  my $avgQuality=$firstReadlengthsTotalQual/$firstReadlengthsTotalSize;
+  my $avgQuality=1;
+  $avgQuality=$firstReadlengthsTotalQual/$firstReadlengthsTotalSize if($firstReadlengthsTotalSize);
   my $numReads=$numLines/4;
   my $totalBases=$avgReadLength*$numReads;
-  my $readScore=round(log($totalBases*$avgQuality*$avgReadLength));
+  my $readScore=0;
+  $readScore=round(log($totalBases*$avgQuality*$avgReadLength)) if($avgQuality>1);
   my $isPE=AKUtils::is_fastqPE($infile,$settings) || 0;
 
   print join("\t",$infile,round($avgReadLength),int($totalBases),'.','.',round($avgQuality),$numReads,$isPE,$readScore)."\n";
