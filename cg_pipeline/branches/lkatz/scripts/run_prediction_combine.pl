@@ -55,7 +55,7 @@ sub main() {
 
   my @input_files = @ARGV;
 
-  foreach my $file (@input_files, @ref_files) {
+  foreach my $file (@input_files) {
     $file = File::Spec->rel2abs($file);
     die("Input or reference file $file not found") unless -f $file;
   }
@@ -76,24 +76,41 @@ sub getGenePredictions($$$$$) {
   my (%all_predictions, %unified_predictions);
   my @minority_rep_orfs;
 
+  logmsg "Loading sequences";
+  my %seqs;
+  for my $file(@$input_files){
+    my $pred_type=guessPredType($file,$settings);
+    if($pred_type eq 'fasta'){
+      %seqs=(%seqs,%{ AKUtils::readMfa($file,{first_word_only=>1}) });
+    }
+  }
+
+  logmsg "Finding predictions";
   for my $file(@$input_files){
     my $pred_set={};
     my $pred_type=guessPredType($file,$settings);
     if($pred_type eq 'genemark'){
-      $pred=getGeneMarkResults($file,$settings);
+      $pred_set=getGeneMarkResults($file,\%seqs,$settings);
     } elsif($pred_type eq 'glimmer'){
-      $pred=getGlimmerResults($file,$settings);
+      $pred_set=getGlimmerResults($file,\%seqs,$settings);
+    } elsif($pred_type eq 'blast'){
+      logmsg "DEBUG";next;
+      $pred_set=getBlastResults($file,\%seqs,$settings);
     } elsif($pred_type eq 'gff3'){
-      $pred=getGff3Results($file,$settings);
+      logmsg "DEBUG";next;
+      $pred_set=getGff3Results($file,\%seqs,$settings);
+    } elsif($pred_type eq 'fasta'){
     } else{
       die "ERROR: I did not know how to interpret $file. I guessed the format as $pred_type";
     }
+    # add on all the predictions from the current set
     foreach my $seq(keys %$pred_set){
       foreach my $pred (@{$$pred_set{$seq}}) {
         push(@{$all_predictions{$seq}->{$$pred{strand}}->{$$pred{stop}}},$pred);
       }
     }
   }
+  print Dumper %all_predictions;die;
   
   # Categorize and reconcile predictions
   my $numAbnormalTranslations=0;
@@ -112,6 +129,7 @@ sub getGenePredictions($$$$$) {
         my $best_start;
         if ($contrib_predictions->[0]->{strand} eq '+') {
           # Choose the least trivial (most downstream) predicted start.
+          die "TODO find all the different predictors to get the max from instead of hard-coding";
           $best_start = max($starts{gmhmmp}, $starts{Glimmer3});
 
           if (defined $starts{BLAST} and $starts{BLAST} < $best_start) {
@@ -139,6 +157,7 @@ sub getGenePredictions($$$$$) {
         
         $unified_predictions{$seq}->{$strand}->{$stop} = \%prediction;
 
+        logmsg "DEBUG"; my $input_seqs;
         my $nt_seq = substr($$input_seqs{$seq}, min($best_start, $stop)-1, abs($best_start - $stop)+1);
         if ($contrib_predictions->[0]->{strand} eq '-') {
           $nt_seq = reverse($nt_seq); $nt_seq =~ tr/ATGC/TACG/;
@@ -289,6 +308,75 @@ sub generateGenBankFile($$$) {
   }
   
   return $$settings{outfile};
+}
+
+sub getGeneMarkResults{
+  my($lst_file,$seqs,$settings)=@_;
+  my @id=keys(%$seqs);
+  my %fakeMap;
+  @fakeMap{@id}=@id;
+  return AKUtils::loadGMHMMPredictions($lst_file, $seqs, \%fakeMap);
+}
+
+sub getGlimmerResults{
+  my($file,$seqs,$settings)=@_;
+  my @id=keys(%$seqs);
+  my %fakeMap;
+  @fakeMap{@id}=@id;
+  return AKUtils::loadGlimmer3Predictions($file,$seqs,\%fakeMap);
+}
+
+sub getBlastResults{
+  my($file,$seqs,$settings)=@_;
+  die "TODO use threads before continuing.  Use code from AKUtils.";
+  my @blsResult=();
+  open(BLSOUT,$file) or die "Could not open blast file $file:$!";
+  while(<BLSOUT>){
+    # With -m 9, each entry is delmited by a set of comment lines.
+    # Therefore queue a result whenever a comment line is found.
+    if(/^#/){
+      # TODO to make this safe with perl 5.8 (I think), send a string instead of an array.
+      #$blastQueue->enqueue(\@blsResult) if(@blsResult);
+      @blsResult=();
+    }else{
+      push(@blsResult,$_);
+    }
+  }
+
+  close BLAST;
+}
+
+sub getGff3Results{
+
+}
+
+sub guessPredType{
+  my($file,$settings)=@_;
+  open(IN,$file) or die "Could not read prediction file $file:$!";
+  my @line=<IN>;
+  close IN;
+  @line=grep(!/^$/,@line);
+
+  my @F0=split /\s+/,$line[0];
+  my @F1=split /\s+/,$line[1];
+  my @F2=split /\s+/,$line[2];
+  
+  # Glimmer has seqname and then 5 columns.
+  # Genemark has seqname and then genemark on the next row.
+  if($line[0]=~/^\s*>/){ # glimmer has seqname and then 5 columns
+    return "glimmer" if(@F1>=5);
+    return "genemark" if($F1[0]=~/genemark/i);
+    return "fasta" if($line[1]!~/[^ATCGN\s]/i);
+  }
+  # tab delimited blast (might need tweaking)
+  if($line[0]=~/#\s*blast/i || @F1 >=12 || @F2 >=12){
+    return "blast";
+  }
+  if($line[0]=~/##gff-version\s*3/){
+    return "gff3";
+  }
+
+  die "ERROR: could not guess the format of $file!";
 }
 
 sub usage{
