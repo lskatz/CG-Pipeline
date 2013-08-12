@@ -1450,7 +1450,11 @@ sub getGlimmer3Predictions($;$) {
 	# Save and restore sequence names
 	my $i; my (%renamed_seqs, %seqname_orig2working, %seqname_working2orig);
 	foreach my $seqname (keys %$seqs) {
+		$seqname_orig2working{$seqname} = $seqname;
+		$seqname_working2orig{$seqname} = $seqname;
+		$renamed_seqs{$seqname_orig2working{$seqname}} = $$seqs{$seqname};
 		$i++;
+    next;
 		$seqname_orig2working{$seqname} = 'seq'.$i;
 		$seqname_working2orig{'seq'.$i} = $seqname;
 		$renamed_seqs{$seqname_orig2working{$seqname}} = $$seqs{$seqname};
@@ -1518,7 +1522,7 @@ sub loadGlimmer3Predictions($;$$) {
 	while (<PRED>) {
 		if (/^\>\s*(.+?)\s*$/) {
 			$cur_seq = $1;
-			$cur_seq = $$seqname_remap{$cur_seq} if defined $seqname_remap;
+			$cur_seq = $$seqname_remap{$cur_seq} if(defined $seqname_remap);
 		} else {
 			my @line = split /\s+/;
 			my ($gene_id, $start, $end, $frame, $raw_score) = @line;
@@ -1617,6 +1621,10 @@ sub getGenemarkPredictions($;$) {
 	# Save and restore sequence names
 	my $i; my (%renamed_seqs, %seqname_orig2working, %seqname_working2orig);
 	foreach my $seqname (keys %$seqs) {
+		$seqname_orig2working{$seqname} = $seqname;
+		$seqname_working2orig{$seqname} = $seqname;
+		$renamed_seqs{$seqname_orig2working{$seqname}} = $$seqs{$seqname};
+    next;
 		$i++;
 		$seqname_orig2working{$seqname} = 'seq'.$i;
 		$seqname_working2orig{'seq'.$i} = $seqname;
