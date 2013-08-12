@@ -97,7 +97,7 @@ sub loadInputs($$) {
   my ($input_seqs, $ref_seqs) = ({}, {});
   my $linker=$$settings{assembly_linker};
   foreach my $file (@$input_files) {
-    my $contigSeqs=AKUtils::readMfa($file);
+    my $contigSeqs=AKUtils::readMfa($file,{first_word_only=>1});
     # add linker on either side of each sequence
     while(my($seqid,$sequence)=each(%$contigSeqs)){
       last if(!$linker);
