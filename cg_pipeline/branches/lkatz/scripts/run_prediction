@@ -19,6 +19,7 @@ use FindBin;
 use lib "$FindBin::RealBin/../lib";
 $ENV{PATH} = "$FindBin::RealBin:".$ENV{PATH};
 use AKUtils qw(logmsg);
+use CGPipelineUtils;
 
 use Getopt::Long;
 use File::Temp ('tempdir');
@@ -59,6 +60,7 @@ sub main() {
   $$settings{assembly_linker} ||= ""; #"NNNNNCACACACTTAATTAATTAAGTGTGTGNNNNN";
   $$settings{min_predictors_to_call_orf}=1; 
   $$settings{min_predictors_to_call_orf}++ if ($$settings{prediction_use_genemark});
+  $$settings{min_predictors_to_call_orf}++ if ($$settings{prediction_use_prodigal});
 
   my @l = split(/\s+/, $$settings{classification});
   $$settings{classification} = [@l[$#l-5..$#l]]; # last 6 words
@@ -132,9 +134,12 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 #goto RNA;
 #logmsg "DEBUG";goto CRISPR;
   # Obtain ab initio predictions
-  my $genemark_predictions;
+  my ($genemark_predictions,$prodigal_predictions);
   if ($$settings{prediction_use_genemark}) {
     $genemark_predictions = AKUtils::getGenemarkPredictions($input_seqs, $settings);
+  }
+  if ($$settings{prediction_use_prodigal}) {
+    $prodigal_predictions = CGPipelineUtils::getProdigalPredictions($input_files,$settings);
   }
   my $glimmer_predictions = AKUtils::getGlimmer3Predictions($input_seqs, $settings);
   my $blast_predictions = AKUtils::getBLASTGenePredictions($input_seqs, $settings);
@@ -144,7 +149,7 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
   # TODO correction: set up database such that IS elements are combined with sprot
 
   # Combine and index predictions by strand, stop
-  foreach my $pred_set ($genemark_predictions, $glimmer_predictions, $blast_predictions) {
+  foreach my $pred_set ($genemark_predictions, $glimmer_predictions, $blast_predictions, $prodigal_predictions) {
     next unless $pred_set;
     foreach my $seq (keys %$pred_set) {
       foreach my $pred (@{$$pred_set{$seq}}) {

@@ -150,5 +150,31 @@ sub loadSignalPPredictions($) {
   return \%prediction;
 }
 
+sub getProdigalPredictions{
+  my($assembly,$settings)=@_;
+
+  # run Prodigal
+  my $asm=join(" ",@$assembly);
+  my $gff=`run_prediction_prodigal.pl $asm -t $$settings{tempdir}`; die if $?;
+  my @gff=split("\n",$gff);
+  
+  # read the gff file
+  my %predictions;
+  for(@gff){
+    next if(/^\s*#/);
+    my($seqname,$predictor,$type,$lo,$hi,$score,$strand,undef,$attribute)=split /\t/;
+    my $p={lo=>$lo,hi=>$hi,predictor=>$predictor,seqname=>$seqname,strand=>$strand,type=>$type};
+    if($strand eq '+'){
+      $$p{start}=$lo;
+      $$p{stop}=$hi;
+    } else {
+      $$p{start}=$hi;
+      $$p{stop}=$lo;
+    }
+    push(@{$predictions{$seqname}},$p);
+  }
+  return \%predictions;
+}
+
 1;
 
