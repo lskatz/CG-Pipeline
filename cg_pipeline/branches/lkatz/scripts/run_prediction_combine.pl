@@ -83,7 +83,7 @@ sub getGenePredictions($$$$$) {
     if($pred_type eq 'fasta'){
       %seqs=(%seqs,%{ AKUtils::readMfa($file,{first_word_only=>1}) });
     }
-  }
+  } my $input_seqs=\%seqs; # a fix to make the variable name match
 
   logmsg "Finding predictions";
   for my $file(@$input_files){
@@ -97,9 +97,9 @@ sub getGenePredictions($$$$$) {
       logmsg "DEBUG";next;
       $pred_set=getBlastResults($file,\%seqs,$settings);
     } elsif($pred_type eq 'gff3'){
-      logmsg "DEBUG";next;
       $pred_set=getGff3Results($file,\%seqs,$settings);
     } elsif($pred_type eq 'fasta'){
+      # do nothing because the sequences were opened earlier in the code
     } else{
       die "ERROR: I did not know how to interpret $file. I guessed the format as $pred_type";
     }
@@ -110,7 +110,6 @@ sub getGenePredictions($$$$$) {
       }
     }
   }
-  print Dumper %all_predictions;die;
   
   # Categorize and reconcile predictions
   my $numAbnormalTranslations=0;
@@ -121,16 +120,16 @@ sub getGenePredictions($$$$$) {
         if (scalar(@$contrib_predictions) < $$settings{min_predictors_to_call_orf}) {
           push(@minority_rep_orfs, @$contrib_predictions); next;
         }
-        my %starts;
+        my (%starts,%denovoStarts);
 
         foreach my $pred (@$contrib_predictions) {
           $starts{$$pred{predictor}} = $$pred{start};
+          $denovoStarts{$$pred{predictor}} = $$pred{start} unless($$pred{predictor}=~/blast/i);
         }
         my $best_start;
         if ($contrib_predictions->[0]->{strand} eq '+') {
           # Choose the least trivial (most downstream) predicted start.
-          die "TODO find all the different predictors to get the max from instead of hard-coding";
-          $best_start = max($starts{gmhmmp}, $starts{Glimmer3});
+          $best_start = max(values(%denovoStarts));
 
           if (defined $starts{BLAST} and $starts{BLAST} < $best_start) {
             # BLAST alignment extends upstream of the predicted start, so find the closest Met to the start predicted by BLAST.
@@ -138,7 +137,7 @@ sub getGenePredictions($$$$$) {
           }
         } else {
           $starts{gmhmmp} ||= 1e999; $starts{Glimmer3} ||= 1e999;
-          $best_start = min($starts{gmhmmp}, $starts{Glimmer3});
+          $best_start = min(values(%denovoStarts));
 #          die("Internal error") if $best_start == 1e999;
           if (defined $starts{BLAST} and $starts{BLAST} > $best_start) {
             # BLAST alignment extends upstream of the predicted start, so find the closest Met to the start predicted by BLAST.
@@ -157,7 +156,6 @@ sub getGenePredictions($$$$$) {
         
         $unified_predictions{$seq}->{$strand}->{$stop} = \%prediction;
 
-        logmsg "DEBUG"; my $input_seqs;
         my $nt_seq = substr($$input_seqs{$seq}, min($best_start, $stop)-1, abs($best_start - $stop)+1);
         if ($contrib_predictions->[0]->{strand} eq '-') {
           $nt_seq = reverse($nt_seq); $nt_seq =~ tr/ATGC/TACG/;
@@ -347,7 +345,12 @@ sub getBlastResults{
 }
 
 sub getGff3Results{
+  return _getGffResults(@_);
+}
 
+sub _getGffResults{
+  my($gff,$seqs,$settings)=@_;
+  die "DEBUG";
 }
 
 sub guessPredType{
