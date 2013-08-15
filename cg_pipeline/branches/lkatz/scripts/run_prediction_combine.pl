@@ -185,6 +185,7 @@ sub getGenePredictions($$$$$) {
     close MR;
   }
 
+  print Dumper \%unified_predictions;die;
   return \%unified_predictions;
 }
 
@@ -350,7 +351,24 @@ sub getGff3Results{
 
 sub _getGffResults{
   my($gff,$seqs,$settings)=@_;
-  die "DEBUG";
+    # read the gff file
+  my %predictions;
+  open(GFF,$gff) or die "Could not open GFF file $gff:$!";
+  while(<GFF>){
+    next if(/^\s*#/);
+    my($seqname,$predictor,$type,$lo,$hi,$score,$strand,undef,$attribute)=split /\t/;
+    my $p={lo=>$lo,hi=>$hi,predictor=>$predictor,seqname=>$seqname,strand=>$strand,type=>$type};
+    if($strand eq '+'){
+      $$p{start}=$lo;
+      $$p{stop}=$hi;
+    } else {
+      $$p{start}=$hi;
+      $$p{stop}=$lo;
+    }
+    push(@{$predictions{$seqname}},$p);
+  }
+  close GFF;
+  return \%predictions;
 }
 
 sub guessPredType{
