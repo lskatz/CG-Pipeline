@@ -35,6 +35,8 @@ use Bio::Annotation::SimpleValue;
 use AKUtils;
 use CGPipeline::TagFactory;
 use Data::Dumper;
+use threads;
+use Thread::Queue;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
@@ -52,6 +54,7 @@ sub main() {
   
   $$settings{outfile} ||= "$0.out.gff";
   $$settings{min_predictors_to_call_orf}||=1; 
+  $$settings{num_cpus}||=AKUtils::getNumCPUs();
 
   my @input_files = @ARGV;
 
@@ -66,6 +69,8 @@ sub main() {
   logmsg "Temporary directory is $$settings{tempdir}";
 
   my $predictions = getGenePredictions(\@input_files, $settings);
+  my $numGenes=predictionsToGff($predictions,$$settings{outfile},$settings);
+  logmsg "$numGenes genes written to $$settings{outfile}";
 
   return 0;
 }
@@ -94,7 +99,6 @@ sub getGenePredictions($$$$$) {
     } elsif($pred_type eq 'glimmer'){
       $pred_set=getGlimmerResults($file,\%seqs,$settings);
     } elsif($pred_type eq 'blast'){
-      logmsg "DEBUG";next;
       $pred_set=getBlastResults($file,\%seqs,$settings);
     } elsif($pred_type eq 'gff3'){
       $pred_set=getGff3Results($file,\%seqs,$settings);
@@ -185,7 +189,6 @@ sub getGenePredictions($$$$$) {
     close MR;
   }
 
-  print Dumper \%unified_predictions;die;
   return \%unified_predictions;
 }
 
@@ -327,22 +330,7 @@ sub getGlimmerResults{
 
 sub getBlastResults{
   my($file,$seqs,$settings)=@_;
-  die "TODO use threads before continuing.  Use code from AKUtils.";
-  my @blsResult=();
-  open(BLSOUT,$file) or die "Could not open blast file $file:$!";
-  while(<BLSOUT>){
-    # With -m 9, each entry is delmited by a set of comment lines.
-    # Therefore queue a result whenever a comment line is found.
-    if(/^#/){
-      # TODO to make this safe with perl 5.8 (I think), send a string instead of an array.
-      #$blastQueue->enqueue(\@blsResult) if(@blsResult);
-      @blsResult=();
-    }else{
-      push(@blsResult,$_);
-    }
-  }
-
-  close BLAST;
+  return AKUtils::parseBlastGenePredictions($file,$settings);
 }
 
 sub getGff3Results{
@@ -398,6 +386,31 @@ sub guessPredType{
   }
 
   die "ERROR: could not guess the format of $file!";
+}
+
+sub predictionsToGff{
+  my($predictions,$outfile,$settings)=@_;
+
+  #print Dumper $predictions;die;
+  # TODO put the GFF header on top of the file
+  my $numGenes=0;
+  open(GFF," | sort -k1,1 -k4,4n > '$outfile'") or die "Could not write to $outfile:$!";
+  while(my($seqname,$strandHash)=each(%$predictions)){
+    while(my($strand,$stopHash)=each(%$strandHash)){
+      while(my($stop,$pred)=each(%$stopHash)){
+        my @predictor=@{$$pred{predictor}};
+        print GFF join("\t",$seqname, 
+          "CG-Pipeline_v".$$settings{pipeline_version},
+          "CDS",$$pred{start},$$pred{stop},
+          scalar(@predictor), $strand, "0",
+          "predictors=".join(",",@predictor)
+        )."\n";
+        $numGenes++;
+      }
+    }
+  }
+  close GFF;
+  return $numGenes;
 }
 
 sub usage{
