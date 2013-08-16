@@ -1917,8 +1917,13 @@ sub getBLASTGenePredictions($$) {
     system("echo '# last line' >> $blast_outfile"); die if $?; 
   } else { logmsg "Found blast file; skipping blast.";}
 
+  return parseBlastGenePredictions($blast_outfile,$settings);
+}
+
+sub parseBlastGenePredictions{
+  my($blast_outfile,$settings)=@_;
   logmsg "Reading blast results";
-  my $reportEvery=int($numOrfs/100); # send out 100 total updates
+  my $reportEvery=100;
   $reportEvery=10 if($reportEvery<10); 
   $$settings{blast_reportEvery}=$reportEvery;
   my $orfCount=0;
@@ -1928,8 +1933,7 @@ sub getBLASTGenePredictions($$) {
 	my %blast_preds;
   my $blastQueue=Thread::Queue->new;
   my @thread;
-  my %tmpOrfs=%$orfs; # pass a new copy of orfs to each thread to avoid sharing/freezing issues
-  push(@thread, threads->new(\&blastGenePredictionWorker,\%tmpOrfs,$blastQueue,$settings)) for(1..$$settings{num_cpus});
+  push(@thread, threads->new(\&blastGenePredictionWorker,$blastQueue,$settings)) for(1..$$settings{num_cpus});
   open(BLSOUT,"<",$blast_outfile) or die "Could not open blast outfile $blast_outfile: $!";
   my @blsResult=();
   while(<BLSOUT>){
@@ -2007,7 +2011,8 @@ sub getBLASTGenePredictions($$) {
 }
 
 sub blastGenePredictionWorker{
-  my($orfs,$Q,$settings)=@_;
+  my($Q,$settings)=@_;
+  #my($orfs,$Q,$settings)=@_;
   my @best_hits=();
   while(defined(my $blsResultArr=$Q->dequeue)){
     next if(!@$blsResultArr);
