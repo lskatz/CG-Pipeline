@@ -1,4 +1,4 @@
-pipeline_version = "0.4.0.0"
+pipeline_version = "0.4.1.0"
 pipeline_reference = "Andrey O. Kislyuk, Lee S. Katz, Sonia Agrawal, Matthew S. Hagen, Andrew B. Conley, Pushkala Jayaraman, Viswateja Nelakuditi, Jay C. Humphrey, Scott A. Sammons, Dhwani Govil, Raydel D. Mair, Kathleen M. Tatti, Maria L. Tondella, Brian H. Harcourt, Leonard W. Mayer, and I. King Jordan.|A computational genomics pipeline for prokaryotic sequencing projects.|Bioinformatics Advance Access published on June 2, 2010, DOI 10.1093/bioinformatics/btq284.|20519285"
 
 classification = "Vibrio cholerae Vibrio Vibrionaceae Vibrionales Gammaproteobacteria Proteobacteria Bacteria"
