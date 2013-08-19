@@ -43,7 +43,7 @@ sub main{
   # get settings from cg_pipeline/conf/cgpipelinerc and ./cgpipelinerc
   $settings=AKUtils::loadConfig($settings);
   # get CLI flags into $settings with Getopt::Long
-  GetOptions($settings,qw(help tempdir=s downsample=s length=i)); 
+  GetOptions($settings,qw(help tempdir=s downsample=s length=i sizeTo=s));
   die usage() if(@ARGV<1 || $$settings{help});
   # additional settings using ||= operator
   $$settings{tempdir}||=AKUtils::mktempdir(); # any temp file you make should go under the tempdir
@@ -65,6 +65,12 @@ sub removeDuplicateReads{
 
   for my $fastq(@$infile){
     my ($basename,$dir,$inSuffix) = fileparse($fastq,@IOextensions);
+
+    # change the downsample parameter if settings{sizeTo} is set
+    if($$settings{sizeTo}){
+      $$settings{downsample}=findDownsamplingFromSizeto($fastq,$$settings{sizeTo},$settings);
+    }
+
     my $poly=AKUtils::is_fastqPE($fastq,$settings)+1;
     if($inSuffix=~/\.fastq$/){
       open(FQ,'<',$fastq) or die "Could not open $fastq for reading: $!";
@@ -116,6 +122,17 @@ sub removeDuplicateReads{
   logmsg "Done";
 }
 
+sub findDownsamplingFromSizeto{
+  my($fastq,$sizeTo,$settings)=@_;
+
+  # probably not the best way to do this, since run_assembly_readMetrics.pl could change col order
+  my $origBp=`run_assembly_readMetrics.pl --fast '$fastq'|cut -f 3|tail -n 1`; chomp($origBp);
+  my $downsample=$sizeTo/$origBp;
+  $downsample=1 if($downsample > 1);
+  logmsg "Estimating downsampling as $downsample of the original with requested size of $sizeTo";
+  return $downsample;
+}
+
 
 sub usage{
   "Removes duplicate reads from a raw read set
@@ -123,6 +140,7 @@ sub usage{
          $0 read.fastq[.gz] | gzip -c > read.fastq.gz
      --downsample 0.5  # filter 50% of reads out
      --length 100      # only consider up to 100bp when deciding if a read is a duplicate. Default: no limit
+     -s downsample to the many bp. Internally, a new --downsample parameter is calculated
   ";
 }
 
