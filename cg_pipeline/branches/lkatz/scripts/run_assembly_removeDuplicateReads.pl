@@ -129,7 +129,7 @@ sub findDownsamplingFromSizeto{
   my $origBp=`run_assembly_readMetrics.pl --fast '$fastq'|cut -f 3|tail -n 1`; chomp($origBp);
   my $downsample=$sizeTo/$origBp;
   $downsample=1 if($downsample > 1);
-  logmsg "Estimating downsampling as $downsample of the original with requested size of $sizeTo";
+  logmsg "Downsampling as $downsample of the original with requested size of $sizeTo";
   return $downsample;
 }
 
