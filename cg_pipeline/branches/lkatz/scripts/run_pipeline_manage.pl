@@ -81,21 +81,45 @@ sub cleanAssembly{
   my($project,$settings)=@_;
   my $dir="$project/build/assembly";
   return 0 if(!glob("$dir/*"));
-  File::Path->remove_tree($dir,{keep_root=>1}) or die "Could not remove $dir: $!";
+  File::Path->remove_tree($dir,{keep_root=>1,error=>\my $err});
+  if(@$err){
+    logmsg "At least one error was returned when cleaning. Attempting one more time.";
+    File::Path->remove_tree($dir,{keep_root=>1,error=>$err});
+    if(@$err){
+      logmsg "I still encountered at least one error.";
+      die Dumper $err;
+    }
+  }
   return 1;
 }
 sub cleanPrediction{
   my($project,$settings)=@_;
   my $dir="$project/build/prediction";
   return 0 if(!glob("$dir/*"));
-  File::Path->remove_tree($dir,{keep_root=>1}) or die "Could not remove $dir: $!";
+  File::Path->remove_tree($dir,{keep_root=>1,error=>\my $err});
+  if(@$err){
+    logmsg "At least one error was returned when cleaning. Attempting one more time.";
+    File::Path->remove_tree($dir,{keep_root=>1,error=>$err});
+    if(@$err){
+      logmsg "I still encountered at least one error.";
+      die Dumper $err;
+    }
+  }
   return 1;
 }
 sub cleanAnnotation{
   my($project,$settings)=@_;
   my $dir="$project/build/annotation";
   return 0 if(!glob("$dir/*"));
-  File::Path->remove_tree($dir,{keep_root=>1}) or die "Could not remove $dir: $!";
+  File::Path->remove_tree($dir,{keep_root=>1,error=>\my $err});
+  if(@$err){
+    logmsg "At least one error was returned when cleaning. Attempting one more time.";
+    File::Path->remove_tree($dir,{keep_root=>1,error=>$err});
+    if(@$err){
+      logmsg "I still encountered at least one error.";
+      die Dumper $err;
+    }
+  }
   return 1;
 }
   
