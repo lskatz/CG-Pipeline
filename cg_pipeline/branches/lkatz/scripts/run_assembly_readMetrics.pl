@@ -48,7 +48,7 @@ sub main() {
   $settings = AKUtils::loadConfig($settings);
   die(usage($settings)) if @ARGV<1;
 
-  my @cmd_options=qw(help fast qual_offset=i minLength=i);
+  my @cmd_options=qw(help fast qual_offset=i minLength=i numcpus=i);
   GetOptions($settings, @cmd_options) or die;
   $$settings{qual_offset}||=33;
   $$settings{numcpus}||=AKUtils::getNumCPUs();
@@ -301,6 +301,7 @@ sub usage{
     A reads file can be fasta or fastq
     The quality file for a fasta file is assumed to be reads.fasta.qual
   --fast for fast mode: fewer stats but much faster!
+  -n 1 to specify the number of cpus
   --qual_offset 33
     Set the quality score offset (usually it's 33, so the default is 33)
   --minLength 0
