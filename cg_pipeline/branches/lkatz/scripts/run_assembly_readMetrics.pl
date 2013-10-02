@@ -76,7 +76,6 @@ sub printReadMetricsFromFile{
   if(grep(/$ext/,@fastqExt)){
     $numEntries=readFastq($file,$Q,$settings);
   } elsif(grep(/$ext/,@fastaExt)) {
-    die "TODO read fasta";
     $numEntries=readFasta($file,$Q,$settings);
   } elsif(grep(/$ext/,@sffExt)){
     $numEntries=readSff($file,$Q,$settings);
@@ -180,6 +179,7 @@ sub readFastq{
     }
   }
   $Q->enqueue(@queueBuffer);
+  close $fp;
   return $numEntries;
 }
 
@@ -217,6 +217,7 @@ sub readSff{
     }
   }
   $Q->enqueue(@queueBuffer);
+  close QUAL; close FNA;
 
   return $numEntries;
 }
@@ -224,7 +225,40 @@ sub readSff{
 sub readFasta{
   my($file,$Q,$settings)=@_;
   my($basename,$dirname,$ext)=fileparse($file,(@fastaExt,@fastqExt, @sffExt));
-  die "TODO";
+
+  local $/="\n>";
+  open(FNA,$file) or die "Could not open $file:$!";
+  open(QUAL,"$file.qual") or warn "WARNING: Could not open qual $file.qual:$!";
+  my @queueBuffer;
+  my $numEntries=0;
+  my $bufferSize=$$settings{bufferSize};
+  while(my $defline=<FNA>){
+    $numEntries++;
+    <QUAL>; # burn the qual defline because it is the same as the fna
+    my $seq=<FNA>;
+    my $qual=<QUAL> || "";
+    push(@queueBuffer,[$seq,$qual]);
+    next if($numEntries % $bufferSize !=0);
+    # Don't process the buffer until it is full
+
+    # flush the buffer
+    $Q->enqueue(@queueBuffer);
+    @queueBuffer=();
+    if($$settings{fast} && $numEntries>$bufferSize){
+      while(<FNA>){
+        $numEntries++; # count the rest of the reads
+      }
+      last;
+    }
+    # pause if the queue is too full
+    while($Q->pending > $bufferSize * 3){
+      sleep 1;
+    }
+  }
+  $Q->enqueue(@queueBuffer);
+  close FNA; close QUAL;
+
+  return $numEntries;
 }
 
 # Truncate to the hundreds place.
