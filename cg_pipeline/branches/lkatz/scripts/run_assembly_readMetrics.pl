@@ -45,8 +45,10 @@ sub main() {
   $settings = AKUtils::loadConfig($settings);
   die(usage($settings)) if @ARGV<1;
 
-  my @cmd_options=qw(help fast qual_offset=i minLength=i numcpus=i);
+  my @cmd_options=qw(help fast qual_offset=i minLength=i numcpus=i expectedGenomeSize=s histogram);
   GetOptions($settings, @cmd_options) or die;
+  die usage() if($$settings{help});
+  die "ERROR: need reads file\n".usage() if(@ARGV<1);
   $$settings{qual_offset}||=33;
   $$settings{numcpus}||=AKUtils::getNumCPUs();
   $$settings{tempdir}||=AKUtils::mktempdir();
@@ -55,7 +57,7 @@ sub main() {
   # the sample frequency is 100% by default or 1% if "fast"
   $$settings{sampleFrequency} ||= ($$settings{fast})?0.01:1;
 
-  print join("\t",qw(File avgReadLength totalBases minReadLength maxReadLength avgQuality numReads PE? readScore))."\n";
+  print join("\t",qw(File avgReadLength totalBases minReadLength maxReadLength avgQuality numReads PE? coverage readScore))."\n";
   for my $input_file(@ARGV){
     printReadMetricsFromFile($input_file,$settings);
   }
@@ -93,6 +95,7 @@ sub printReadMetricsFromFile{
     $count{qualSum} +=$$c{qualSum};
     $count{maxReadLength}=max($$c{maxReadLength},$count{maxReadLength});
     $count{minReadLength}=min($$c{minReadLength},$count{minReadLength});
+    push(@{$count{readLength}},@{$$c{readLength}});
   }
 
   # extrapolate the counts to the total number of reads if --fast
@@ -101,12 +104,34 @@ sub printReadMetricsFromFile{
   $count{extrapolatedNumBases}=int($count{numBases}/$fractionReadsRead);
   $count{extrapolatedNumReads}=int($count{numReads}*$fractionReadsRead);
 
+  # derive some more values
   my $avgQual=round($count{qualSum}/$count{numBases});
   my $avgReadLength=round($count{numBases}/$count{extrapolatedNumReads});
   my $isPE=(AKUtils::is_fastqPE($file))?"yes":"no";
-  print join("\t",$file,$avgReadLength,$count{extrapolatedNumBases},$count{minReadLength},$count{maxReadLength},$avgQual,$count{numReads},$isPE,'.')."\n";
+  # coverage is bases divided by the genome size
+  my $coverage=($$settings{expectedGenomeSize})?round($count{extrapolatedNumBases}/$$settings{expectedGenomeSize}):'.';
+
+  print join("\t",$file,$avgReadLength,$count{extrapolatedNumBases},$count{minReadLength},$count{maxReadLength},$avgQual,$count{numReads},$isPE,$coverage,'.')."\n";
+  printHistogram($count{readLength},$fractionReadsRead,$settings) if($$settings{histogram});
+  return \%count;
 }
 
+sub printHistogram{
+  my($data,$coefficient,$settings)=@_;
+  my @data=map(int($_/100)*100,@$data);
+  my $numData=@data;
+  my %count;
+  for(@data){
+    $count{$_}++;
+  }
+  #$sum=int($sum / $coefficient);
+  #print Dumper \%count;die;
+  for my $datum(sort {$a<=>$b} keys(%count)){
+    print join("\t",$datum,$count{$datum},round($count{$datum}/$numData))."\n";
+  }
+  print join("\t","total",$numData,'.')."\n";
+  return \%count;
+}
 
 # Reads a Thread::Queue to give metrics but does not derive any metrics, e.g. avg quality
 sub readMetrics{
@@ -115,13 +140,15 @@ sub readMetrics{
   my %count;
   my $minReadLength=1e999;
   my $maxReadLength=0;
+  my @length;
   while(defined(my $tmp=$Q->dequeue)){
     my($seq,$qual)=@$tmp;
     # trim
-    $seq=~s/^\s+|\s+$//g;
+    $seq =~s/^\s+|\s+$//g;
     $qual=~s/^\s+|\s+$//g;
     my $readLength=length($seq);
     next if($readLength<$$settings{minLength});
+    push(@length,$readLength);
     $count{numBases}+=$readLength;
     if($readLength<$minReadLength){
       $minReadLength=$readLength;
@@ -141,6 +168,7 @@ sub readMetrics{
   }
   $count{minReadLength}=$minReadLength;
   $count{maxReadLength}=$maxReadLength;
+  $count{readLength}=\@length;
   return \%count;
 }
 
@@ -274,15 +302,15 @@ sub usage{
   "Prints useful assembly statistics
   Usage: $0 reads.fasta 
          $0 reads.fasta | column -t
-    A reads file can be fasta or fastq
-    The quality file for a fasta file is assumed to be reads.fasta.qual
+    A reads file can be fasta, sff, or fastq
+    The quality file for a fasta file reads.fasta is assumed to be reads.fasta.qual
   --fast for fast mode: samples 1% of the reads and extrapolates
-  -n 1 to specify the number of cpus
+  -n 1 to specify the number of cpus (default: all cpus)
   --qual_offset 33
     Set the quality score offset (usually it's 33, so the default is 33)
   --minLength 1
     Set the minimum read length used for calculations
-  --help for this help menu
-  The reads score is log(numBases*avgQuality*avgReadLength), and 40 is the default quality and 100 is the default read length, if not shown
+  -e 4000000 expected genome size, in bp
+  --hist to generate a histogram of the reads
   "
 }
