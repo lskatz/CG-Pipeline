@@ -43,7 +43,7 @@ sub main() {
 
 	die(usage()) if @ARGV < 1;
 
-	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'outfile=s', 'estimatedGenomeSize=i','numcpus=i');
+	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'outfile=s', 'estimatedGenomeSize=i','numcpus=i', 'fast');
 	GetOptions($settings, @cmd_options) or die;
   $$settings{estimatedGenomeSize}||=5000000; # default: 5 MB
   $$settings{numcpus}||=AKUtils::getNumCPUs();
@@ -271,7 +271,10 @@ sub runVelvetAssembly($$){
     logmsg "I estimate that you have enough memory for $memNumThreads threads, and you have $$settings{numcpus} max threads. Threads set to $numThreads.";
   }
 
-  my $command="VelvetOptimiser.pl -a -v -p $velvetPrefix -d $run_name -t $numThreads ";
+  my $step='-x 2'; #VelvetOptimiser hash step size. Cannot be odd or less than 2
+  $step='-x 10' if($$settings{fast});
+
+  my $command="VelvetOptimiser.pl -a -v -p $velvetPrefix -d $run_name -t $numThreads $step ";
   #warn "=======Debugging: only running hashes of 29 and 31\n"; $command.=" -s 29 -e 31 ";
   $command.="-f '";
   foreach my $fqFiles (@$fastqfiles){
