@@ -35,6 +35,7 @@ use Thread::Queue;
 my @fastaExt=qw(.fasta .fa .mfa .fas .fna);
 my @fastqExt=qw(.fastq .fq .fastq.gz .fq.gz);
 my @sffExt=qw(.sff);
+my @samExt=qw(.sam .bam);
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
 sub logmsg {my $FH = $FSFind::LOG || *STDERR; print $FH "$0: ".(caller(1))[3].": @_\n";}
@@ -57,7 +58,7 @@ sub main() {
   # the sample frequency is 100% by default or 1% if "fast"
   $$settings{sampleFrequency} ||= ($$settings{fast})?0.01:1;
 
-  print join("\t",qw(File avgReadLength totalBases minReadLength maxReadLength avgQuality numReads PE? coverage readScore))."\n";
+  print join("\t",qw(File avgReadLength totalBases minReadLength maxReadLength avgQuality numReads PE? coverage readScore avgFragmentLength))."\n";
   for my $input_file(@ARGV){
     printReadMetricsFromFile($input_file,$settings);
   }
@@ -68,7 +69,7 @@ sub main() {
 # main subroutine to print the metrics from a raw reads file
 sub printReadMetricsFromFile{
   my($file,$settings)=@_;
-  my($basename,$dirname,$ext)=fileparse($file,(@fastaExt,@fastqExt, @sffExt));
+  my($basename,$dirname,$ext)=fileparse($file,(@fastaExt,@fastqExt, @sffExt, @samExt));
   # start the queue and threads
   my $Q=Thread::Queue->new();
   my @thr;
@@ -81,6 +82,8 @@ sub printReadMetricsFromFile{
     $numEntries=readFasta($file,$Q,$settings);
   } elsif(grep(/$ext/,@sffExt)){
     $numEntries=readSff($file,$Q,$settings);
+  } elsif(grep(/$ext/,@samExt)) {
+    $numEntries=readSam($file,$Q,$settings);
   } else {
     die "Could not understand filetype $ext";
   }
@@ -95,6 +98,7 @@ sub printReadMetricsFromFile{
     $count{qualSum} +=$$c{qualSum};
     $count{maxReadLength}=max($$c{maxReadLength},$count{maxReadLength});
     $count{minReadLength}=min($$c{minReadLength},$count{minReadLength});
+    push(@{$count{tlen}},@{$$c{tlen}});
     push(@{$count{readLength}},@{$$c{readLength}});
   }
 
@@ -108,10 +112,16 @@ sub printReadMetricsFromFile{
   my $avgQual=round($count{qualSum}/$count{numBases});
   my $avgReadLength=round($count{numBases}/$count{extrapolatedNumReads});
   my $isPE=(AKUtils::is_fastqPE($file))?"yes":"no";
+  my $avgFragLen='.';
+  if(grep(/$ext/,@samExt)){
+    # bam files are PE if they have at least some fragment sizes
+    $isPE=(@{$count{tlen}} > 10)?"yes":"no"; 
+    $avgFragLen=round(sum(@{$count{tlen}})/scalar(@{$count{tlen}})) if($isPE);
+  }
   # coverage is bases divided by the genome size
   my $coverage=($$settings{expectedGenomeSize})?round($count{extrapolatedNumBases}/$$settings{expectedGenomeSize}):'.';
 
-  print join("\t",$file,$avgReadLength,$count{extrapolatedNumBases},$count{minReadLength},$count{maxReadLength},$avgQual,$count{numReads},$isPE,$coverage,'.')."\n";
+  print join("\t",$file,$avgReadLength,$count{extrapolatedNumBases},$count{minReadLength},$count{maxReadLength},$avgQual,$count{numReads},$isPE,$coverage,'.',$avgFragLen)."\n";
   printHistogram($count{readLength},$fractionReadsRead,$settings) if($$settings{histogram});
   return \%count;
 }
@@ -141,8 +151,9 @@ sub readMetrics{
   my $minReadLength=1e999;
   my $maxReadLength=0;
   my @length;
+  my @tlen; # fragment length
   while(defined(my $tmp=$Q->dequeue)){
-    my($seq,$qual)=@$tmp;
+    my($seq,$qual,$tlen)=@$tmp;
     # trim
     $seq =~s/^\s+|\s+$//g;
     $qual=~s/^\s+|\s+$//g;
@@ -157,6 +168,9 @@ sub readMetrics{
     }
     $count{numReads}++;
 
+    $tlen||=0;
+    push(@tlen,$tlen) if($tlen>0);
+
     # quality metrics
     my @qual;
     if($qual=~/\s/){ # if it is numbers separated by spaces
@@ -169,6 +183,7 @@ sub readMetrics{
   $count{minReadLength}=$minReadLength;
   $count{maxReadLength}=$maxReadLength;
   $count{readLength}=\@length;
+  $count{tlen}=\@tlen;
   return \%count;
 }
 
@@ -286,6 +301,41 @@ sub readFasta{
   $Q->enqueue(@queueBuffer);
   close FNA; close QUAL;
 
+  return $numEntries;
+}
+
+sub readSam{
+  my($file,$Q,$settings)=@_;
+  my($basename,$dir,$ext)=fileparse($file,@samExt);
+  if($ext=~/sam/){
+    open(SAM,$file) or die "ERROR: I could not read $file: $!";
+  } elsif($ext=~/bam/){
+    open(SAM,"samtools view $file | ") or die "ERROR: I could not use samtools to read $file: $!";
+  } else {
+    die "ERROR: I do not know how to read the $ext extension in $file";
+  }
+  my @queueBuffer;
+  my $numEntries=0;
+  my $bufferSize=$$settings{bufferSize};
+  while(<SAM>){
+    next if(/^@/);
+    chomp;
+    my($qname,$flag,$rname,$pos,$mapq,$cigar,$rnext,$pnext,$tlen,$seq,$qual)=split /\t/;
+    #push(@queueBuffer,[$seq,$qual,$tlen]) if(rand() <= 0.1);
+    push(@queueBuffer,[$seq,$qual,$tlen]) if(rand() <= $$settings{sampleFrequency});
+    next if(++$numEntries % $bufferSize !=0);
+    #print Dumper \@queueBuffer;die;
+    
+    $Q->enqueue(@queueBuffer);
+    @queueBuffer=();
+
+    while($Q->pending > $bufferSize * 3){
+      sleep 1;
+    }
+  }
+  $Q->enqueue(@queueBuffer);
+  close SAM;
+  
   return $numEntries;
 }
 
