@@ -24,6 +24,7 @@ use File::Copy;
 use File::Basename;
 use List::Util qw(min max sum shuffle);
 use Data::Dumper;
+use Fatal;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
@@ -34,22 +35,81 @@ exit(main());
 sub main() {
   GetOptions($settings, qw(tempdir=s cutoffReadNum=i readlength=i fastqqc-verbose badSlope=s));
   die usage() if(@ARGV<1);
-  $$settings{badSlope}||=0.7; # this is kind of empirical for a cutoff
+  $$settings{badSlope}||=0.5; # this is kind of empirical for a cutoff
   $$settings{cutoffReadNum}=0 if(!defined $$settings{cutoffReadNum});
   $$settings{readlength}||=999;
+  $$settings{tempdir}||=AKUtils::mktempdir();
   logmsg "Read length was given as $$settings{readlength}bp. NOTE: Reads longer than $$settings{readlength} will be trimmed regardless of quality";
   my @file=@ARGV;
 
   for my $file (@file){
-    my $trimmedFile=trimUpAndDown($file,$settings);
+    # if the file is paired end, then de-shuffle it before trimming.
+    if(AKUtils::is_fastqPE($file,$settings)){
+      trimUpAndDownPE($file,$settings);
+    } else {
+      trimUpAndDownSE($file,$settings);
+    }
   }
 
   return 0;
 }
 
+# split a paired end read before trimming
+sub trimUpAndDownPE{
+  my($file,$settings)=@_;
+
+  $$settings{random}=int(rand(99999));
+
+  # deshuffle reads
+  my($file1,$file2)=splitReads($file,$settings);
+
+  # prevent the trimming sub from printing to stdout
+  my ($fp1,$fp2);
+  my($trimmed1,$trimmed2)=(
+                   "$$settings{tempdir}/readTrimmed1.$$settings{random}.fastq",
+                   "$$settings{tempdir}/readTrimmed2.$$settings{random}.fastq"
+  );
+  open($fp1,">",$trimmed1) or die $!;
+  select($fp1);
+  trimUpAndDownSE($file1,$settings);
+  open($fp2,">",$trimmed2) or die $!;
+  select($fp2);
+  trimUpAndDownSE($file2,$settings);
+  select(STDOUT);
+
+  # shuffle the reads back
+  my $trimmedPE=shuffleReads($trimmed1,$trimmed2,$settings);
+  system("cat $trimmedPE"); die if $?;
+
+  return $trimmedPE;
+}
+
+sub splitReads{
+  my($file,$settings)=@_;
+  my $RAND=$$settings{random};
+  my($file1,$file2)=(
+                      "$$settings{tempdir}/read1.$RAND.fastq",
+                      "$$settings{tempdir}/read2.$RAND.fastq"
+                    );
+  logmsg "Splitting PE fastq into $file1 and $file2";
+  system("run_assembly_shuffleReads.pl -d '$file' > '$file1' 2> '$file2'");
+  die "ERROR: \n" . `cat $file2` if $?;
+  return ($file1,$file2);
+}
+
+sub shuffleReads{
+  my($file1,$file2,$settings)=@_;
+  my $RAND=$$settings{random};
+  my $shuffled="$$settings{tempdir}/shuffled.$RAND.fastq";
+  logmsg "Shuffling reads into $shuffled";
+  system("run_assembly_shuffleReads.pl '$file1' '$file2' > '$shuffled'");
+  die if $?;
+  return $shuffled;
+}
+
 # Trim upstream and downstream based on the stability of ATCG percentages.
 # Uses fastqqc internally
-sub trimUpAndDown{
+sub trimUpAndDownSE{
   my($file,$settings)=@_;
 
   my $numSlopesToBeGood=2;
@@ -187,11 +247,11 @@ sub ext($){ # return the extension of a filename
 }
 
 sub usage{
-  "Usage: $0 reads.fastq > reads.trimmed.fastq
+  "Usage: $0 reads.fastq [reads2.fastq reads3.fastq ...] > reads.trimmed.fastq
     -c 9999 number of reads to sample before deciding on an average quality.
       0 for all (not recommended because it is very slow and the quality will not be too different)
     -r 999 the length of all reads. There is no effect of going over the read length, but it is bad if you go under
     --fastqqc-verbose print the fastqqc report and exit
-    -b 0.7 the percentage change in average ATCG content that is considered to be a bad skew (default: 0.7%)
+    -b 0.5 the percentage change in average ATCG content that is considered to be a bad skew (default: 0.5%)
   "
 }
