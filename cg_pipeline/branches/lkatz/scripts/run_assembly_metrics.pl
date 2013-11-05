@@ -2,8 +2,6 @@
 
 # run_assembly_metrics.pl: finds metrics of a given assembly and prints them
 # Author: Lee Katz (lskatz@gatech.edu)
-# TODO allow multiple genomes
-# TODO have a table output if multiple genomes are given
 
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
@@ -13,7 +11,7 @@ my $settings = {
     # these are the subroutines for all assembly metrics
     metrics=>[qw(N50 genomeLength longestContig numContigs avgContigLength assemblyScore minContigLength expectedGenomeLength kmer21)],
     # these are the subroutines for all standard assembly metrics
-    stdMetrics=>[qw(genomeLength kmer21 N50 numContigs assemblyScore)],
+    stdMetrics=>[qw(genomeLength N50 numContigs assemblyScore)],
 };
 my $stats;
 
@@ -33,6 +31,8 @@ use File::Basename;
 use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
 use Data::Dumper;
+use threads;
+use Thread::Queue;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
@@ -44,10 +44,11 @@ sub main() {
   $settings = AKUtils::loadConfig($settings);
   die(usage($settings)) if @ARGV<1;
 
-  my @cmd_options=qw(output=s expectedGenomeLength=i minContigLength=i statistic=s@ numberOnly allMetrics);
+  my @cmd_options=qw(output=s expectedGenomeLength=i minContigLength=i statistic=s@ numberOnly allMetrics numcpus=i);
   GetOptions($settings, @cmd_options) or die;
   $$settings{minContigLength}||=500;
   $$settings{expectedGenomeLength}||=0;
+  $$settings{numcpus}||=AKUtils::getNumCPUs();
 
   my @input_file;
   for my $file(@ARGV){
@@ -59,15 +60,36 @@ sub main() {
     push(@input_file,$file);
   }
 
-  my %metrics;
+  # start off the threads
+  my $Q=Thread::Queue->new;
+  my @thr;
+  $thr[$_]=threads->new(\&assemblyMetricsWorker,$Q,$settings) for(0..$$settings{numcpus}-1);
+
   for my $file(@input_file){
-    my $metrics=assemblyMetrics($file,$settings);
-    $metrics{$file}=$metrics;
+    $Q->enqueue($file);
+  }
+
+  # close out the threads
+  $Q->enqueue(undef) for(@thr);
+  my %metrics;
+  for(@thr){
+    my $metrics=$_->join;
+    %metrics=(%metrics,%$metrics);
   }
 
   printMetrics(\%metrics,$settings);
 
   return 0;
+}
+
+sub assemblyMetricsWorker{
+  my($Q,$settings)=@_;
+  my %metrics;
+  while(defined(my $file=$Q->dequeue)){
+    my $metrics=assemblyMetrics($file,$settings);
+    $metrics{$file}=$metrics;
+  }
+  return \%metrics;
 }
 
 sub assemblyMetrics($$){
@@ -280,20 +302,25 @@ sub usage{
   my ($settings)=@_;
   "Prints useful assembly statistics
   Usage: $0 assembly1.fasta [-e expectedGenomeLength] [-m minContigLength]
-  Usage, advanced: $0 *.fasta | sort -k 5 -n | column -t
+  OPTIONS
   -e genome length
     helps with N50 calculation but not necessary
   -m size
     only consider contigs of size m in the calculations
-  -n
-    Output only the number of the metric(s) you supplied. Works well with -s
+  -number
+    Output only the number of the metric(s) you supplied and not the header. Works well with -s
+  --numcpus 1 The number of threads to use
   -s stat (in contrast, see -a)
     only print out the value for this stat (or these stats) only.
     Possible values: ".join(", ",@{$$settings{metrics}})."
-  -a
-    output all stats. To select only some stats, use -s
+    Default output: ".join(", ",@{$$settings{stdMetrics}})."
+  -a to output all stats. To select only some stats, use -s
   The assembly score is calculated as a log of (N50/numContigs * percentOfGenomeCovered)
     The percent of the genome covered is 1 if you do not supply an expected genome length.
     The percent of the genome covered counts against you if you assemble higher than the expected genome size.
+  EXAMPLES
+    $0 *.fasta | sort -k 5 -n | column -t # pretty output and sorted
+    $0 *.fasta -a | column -t             # get all stats
+    N50=`$0 assembly.fasta -n -s N50`     # set a bash variable equal to an assembly's N50
   "
 }
