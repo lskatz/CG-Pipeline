@@ -88,6 +88,12 @@ sub printReadMetricsFromFile{
     die "Could not understand filetype $ext";
   }
 
+  # Avoid zero-read errors
+  if($numEntries<1){
+    logmsg "WARNING: there were no reads in $file. Moving on...\n";
+    next;
+  }
+
   # Combine the threads
   my %count=(minReadLength=>1e999); # need a min length to avoid a bug later
   $Q->enqueue(undef) for(@thr);
