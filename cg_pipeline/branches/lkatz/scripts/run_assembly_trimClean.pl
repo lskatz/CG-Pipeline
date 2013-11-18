@@ -47,16 +47,18 @@ sub main() {
     #poly=>1, # number of reads per group (1=SE, 2=paired end)
     qualOffset=>33,
     # trimming
-    min_quality=>35,
+    min_quality=>30,
     bases_to_trim=>20, # max number of bases that will be trimmed on either side
     # cleaning
-    min_avg_quality=>30,
+    min_avg_quality=>10,
     min_length=>62,# twice kmer length sounds good
     singletons=>1, # yes, output singletons
+    'trim-on-average'=>0, # trimming until a base > min_quality is found
+    trim=>1,              # yes perform trimming
   };
   
   # TODO option to not have singletons (annoying!)
-  GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter notrim debug qualOffset=i numcpus=i singletons!)) or die "Error in command line arguments";
+  GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter trim! debug qualOffset=i numcpus=i singletons! trim-on-average!)) or die "Error in command line arguments";
   $$settings{numcpus}||=getNumCPUs();
   
   my $infile=$$settings{infile} or die "Error: need an infile\n".usage($settings);
@@ -65,6 +67,16 @@ sub main() {
   my $outfileDir;
   ($$settings{outBasename},$outfileDir,$$settings{outSuffix}) = fileparse($outfile,@IOextensions);
   my $singletonOutfile="$outfileDir/$$settings{outBasename}.singletons$$settings{outSuffix}";
+
+  if($$settings{trim}){
+    if($$settings{'trim-on-average'}){
+      logmsg "Trimming on an expanding average";
+    } else {
+      logmsg "Trimming on a simple threshold";
+    }
+  } else {
+    logmsg "I will not perform trimming because the user specified --notrim";
+  }
 
   # trimming/filtering starts here
   my $printQueue=Thread::Queue->new;
@@ -114,7 +126,7 @@ sub qualityTrimFastqPoly($;$){
     logmsg "Trimming and cleaning a file $fastq with poly=$poly with a quality offset of $$settings{qualOffset}";
   
     # check the file before continuing
-    my $readsToCheck=5;
+    my $readsToCheck=10;
     my $warnings=checkFirstXReads($fastq,$readsToCheck,$settings);
     warn "WARNING: There were $warnings warnings. Judging from the first $readsToCheck reads, it is possible that many or all sequences will be filtered out." if($warnings);
 
@@ -268,34 +280,60 @@ sub singletonPrintWorker{
 
 # Trim a read using the trimming options
 # The read is a hash of id, sequence, and qual
-# Note: I think I mixed up 3 and 5?  Ugh.  Whatever.
 sub trimRead{
   my($read,$settings)=@_;
   # TODO just kill off this read right away if it is less than the min_length, to save on time
-  my($numToTrim3,$numToTrim5,@qual)=(0,0,);
-  @qual=map(ord($_)-$$settings{qualOffset},split(//,$$read{qual}));
-  for(my $i=0;$i<$$settings{bases_to_trim};$i++){
-    if(sum(@qual[0..$i])/($i+1)<$$settings{min_quality}){
-      $numToTrim5++;
-    } else {
-      last if($i>5); # check minimum 5 bases before quitting
-    }
-  }
-  #for(my $i=$$read{length}-$$settings{bases_to_trim};$i<@qual;$i++){
-  for(my $i=0;$i<$$settings{bases_to_trim};$i++){
-    my $pos=$$read{length}-$i;
-    if(sum(@qual[$pos..$#qual])/($i+1)<$$settings{min_quality}){
-      $numToTrim3++;
-    } else {
-      last if($i>5); # check minimum 5 bases before quitting
-    }
-  }
+  my @qual=map(ord($_)-$$settings{qualOffset},split(//,$$read{qual}));
+  my($numToTrim5,$numToTrim3)=numToTrim(\@qual,$read,$settings);
   if($numToTrim3 || $numToTrim5){
-    #my $tmp= "TRIM  ==>$numToTrim5 ... $numToTrim3<==\n  >$$read{seq}<\n   $$read{qual}";
     $$read{seq}=substr($$read{seq},$numToTrim5,$$read{length}-$numToTrim5-$numToTrim3);
     $$read{qual}=substr($$read{qual},$numToTrim5,$$read{length}-$numToTrim5-$numToTrim3);
-    #print "$tmp\n  >$$read{seq}<\n\n";
   }
+}
+
+# returns ($numToTrim5,$numToTrim3)
+sub numToTrim{
+  my($qual,$read,$settings)=@_;
+  my @rQual=reverse(@$qual); # for 3' trimming
+  my $length=$$read{length};
+  # TODO set bases_to_trim equal to the read length if larger than
+  #   ...or should I?  Might be a huge time cost.
+
+  my($numToTrim3,$numToTrim5)=(0,0);
+  if($$settings{'trim-on-average'}){
+    for(my $i=0;$i<$$settings{bases_to_trim};$i++){
+      if(sum(@$qual[0..$i])/($i+1)<$$settings{min_quality}){
+        $numToTrim5++;
+      } else {
+        last if($i>5); # check minimum 5 bases before quitting
+      }
+    }
+    for(my $i=0;$i<$$settings{bases_to_trim};$i++){
+      if(sum(@rQual[0..$i])/($i+1)<$$settings{min_quality}){
+        $numToTrim3++;
+      } else {
+        last if($i>5); # check minimum 5 bases before quitting
+      }
+    }
+  } 
+  # ELSE trimming until the first good quality
+  else {
+    for(my $i=0;$i<$$settings{bases_to_trim};$i++){
+      if($$qual[$i]<$$settings{min_quality}){
+        $numToTrim5++;
+      } else {
+        last;
+      }
+    }
+    for(my $i=0;$i<$$settings{bases_to_trim};$i++){
+      if($rQual[$i]<$$settings{min_quality}){
+        $numToTrim3++;
+      } else {
+        last;
+      }
+    }
+  }
+  return($numToTrim5,$numToTrim3);
 }
 
 # Deterimine if a single read is good or bad (0 or 1)
@@ -347,7 +385,7 @@ sub checkFirstXReads{
 
   # figure out if the min_length is larger than any of the first X reads.
   # If so, spit out a warning. Do not change the value. The user should be allowed to make a mistake.
-  logmsg "Checking minimum sequence length param on the first 5 sequences.";
+  logmsg "Checking minimum sequence length param on the first $numReads sequences.";
   if($$settings{inSuffix}=~/\.fastq$/){
     open(IN,'<',$infile) or die "Could not open $infile for reading: $!";
   }
@@ -420,18 +458,19 @@ sub usage{
   -quieter for somewhat quiet mode (use 1>/dev/null for totally quiet)
   --notrim to skip trimming of the reads. Useful for assemblers that require equal read lengths.
   -qual 64 to use an offset of 64 instead of 33(default).
-  --numcpus 1 or --numcpus 2 for single or multithreaded. Default: $$settings{numcpus}
+  --numcpus 1 or --numcpus 2 for single or multithreaded. Currently: $$settings{numcpus}
   --nosingletons Do not output singleton reads, which are those whose pair has been filtered out.
+  --trim-on-average Trim until an average quality is reached on the 5' and 3' ends. Ordinarily, trimming will stop when a base > min_quality is reached.
 
   Use phred scores (e.g. 20 or 30) or length in base pairs if it says P or L, respectively
   --min_quality P             # trimming
-    default: $$settings{min_quality}
+    currently: $$settings{min_quality}
   --bases_to_trim L           # trimming
-    default: $$settings{bases_to_trim}
+    currently: $$settings{bases_to_trim}
   --min_avg_quality P         # cleaning
-    default: $$settings{min_avg_quality}
+    currently: $$settings{min_avg_quality}
   --min_length L              # cleaning
-    default: $$settings{min_length}
+    currently: $$settings{min_length}
   "
 }
 
