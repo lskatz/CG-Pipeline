@@ -52,10 +52,11 @@ sub main() {
     # cleaning
     min_avg_quality=>30,
     min_length=>62,# twice kmer length sounds good
+    singletons=>1, # yes, output singletons
   };
   
   # TODO option to not have singletons (annoying!)
-  GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter notrim debug qualOffset=i numcpus=i));
+  GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter notrim debug qualOffset=i numcpus=i singletons!)) or die "Error in command line arguments";
   $$settings{numcpus}||=getNumCPUs();
   
   my $infile=$$settings{infile} or die "Error: need an infile\n".usage($settings);
@@ -236,6 +237,19 @@ sub printWorker{
 }
 sub singletonPrintWorker{
   my($outfile,$Q,$settings)=@_;
+
+  # discard all singletons if the user does not want them
+  if(!$$settings{singletons}){
+    logmsg "User has specified no singletons, so I will be discarding singleton reads";
+    while(defined(my $line=$Q->dequeue)){
+      # do nothing except dequeue
+    }
+    return 0;
+  }
+  # END discarding singletons
+
+
+  logmsg "User has specified singletons, so I will be placing singleton reads in $outfile";
   if($$settings{outSuffix}=~/\.fastq$/){
     open(OUT,">",$outfile) or die "Error: could not open $outfile for writing because $!";
   }
@@ -407,6 +421,7 @@ sub usage{
   --notrim to skip trimming of the reads. Useful for assemblers that require equal read lengths.
   -qual 64 to use an offset of 64 instead of 33(default).
   --numcpus 1 or --numcpus 2 for single or multithreaded. Default: $$settings{numcpus}
+  --nosingletons Do not output singleton reads, which are those whose pair has been filtered out.
 
   Use phred scores (e.g. 20 or 30) or length in base pairs if it says P or L, respectively
   --min_quality P             # trimming
