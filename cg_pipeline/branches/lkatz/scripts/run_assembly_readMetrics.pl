@@ -28,6 +28,7 @@ use File::Basename;
 use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
 use Data::Dumper;
+use Statistics::Descriptive;
 
 use threads;
 use Thread::Queue;
@@ -58,7 +59,7 @@ sub main() {
   # the sample frequency is 100% by default or 1% if "fast"
   $$settings{sampleFrequency} ||= ($$settings{fast})?0.01:1;
 
-  print join("\t",qw(File avgReadLength totalBases minReadLength maxReadLength avgQuality numReads PE? coverage readScore avgFragmentLength))."\n";
+  print join("\t",qw(File avgReadLength totalBases minReadLength maxReadLength avgQuality numReads PE? coverage readScore medianFragmentLength))."\n";
   for my $input_file(@ARGV){
     printReadMetricsFromFile($input_file,$settings);
   }
@@ -118,16 +119,21 @@ sub printReadMetricsFromFile{
   my $avgQual=round($count{qualSum}/$count{numBases});
   my $avgReadLength=round($count{numBases}/$count{extrapolatedNumReads});
   my $isPE=(AKUtils::is_fastqPE($file))?"yes":"no";
-  my $avgFragLen='.';
+  my $medianFragLen='.';
   if(grep(/$ext/,@samExt)){
     # bam files are PE if they have at least some fragment sizes
     $isPE=(@{$count{tlen}} > 10)?"yes":"no"; 
-    $avgFragLen=round(sum(@{$count{tlen}})/scalar(@{$count{tlen}})) if($isPE);
+    my $tlenStats=Statistics::Descriptive::Full->new;
+    $tlenStats->add_data(@{$count{tlen}});
+    my $tlen25=$tlenStats->percentile(25);
+    my $tlen50=$tlenStats->percentile(50);
+    my $tlen75=$tlenStats->percentile(75);
+    $medianFragLen="$tlen50\[$tlen25,$tlen75]";
   }
   # coverage is bases divided by the genome size
   my $coverage=($$settings{expectedGenomeSize})?round($count{extrapolatedNumBases}/$$settings{expectedGenomeSize}):'.';
 
-  print join("\t",$file,$avgReadLength,$count{extrapolatedNumBases},$count{minReadLength},$count{maxReadLength},$avgQual,$count{numReads},$isPE,$coverage,'.',$avgFragLen)."\n";
+  print join("\t",$file,$avgReadLength,$count{extrapolatedNumBases},$count{minReadLength},$count{maxReadLength},$avgQual,$count{numReads},$isPE,$coverage,'.',$medianFragLen)."\n";
   printHistogram($count{readLength},$fractionReadsRead,$settings) if($$settings{histogram});
   return \%count;
 }
