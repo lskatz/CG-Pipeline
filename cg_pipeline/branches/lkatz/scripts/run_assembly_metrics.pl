@@ -9,7 +9,7 @@ my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 my $settings = {
     appname => 'cgpipeline',
     # these are the subroutines for all assembly metrics
-    metrics=>[qw(N50 genomeLength longestContig numContigs avgContigLength assemblyScore minContigLength expectedGenomeLength kmer21)],
+    metrics=>[qw(N50 genomeLength longestContig numContigs avgContigLength assemblyScore minContigLength expectedGenomeLength kmer21 GC)],
     # these are the subroutines for all standard assembly metrics
     stdMetrics=>[qw(genomeLength N50 numContigs assemblyScore)],
 };
@@ -270,6 +270,22 @@ sub genomeLength($){
   }
   $length||=0.01;
   return $length;
+}
+
+# percent GC
+sub GC($){
+  my($seqs)=@_;
+  my($gc,$length);
+  foreach my $seqname(keys %$seqs){
+    $length+=length($$seqs{$seqname});
+
+    my $sequence=$$seqs{$seqname};
+    my $s=$sequence; # I think this should help avoid modifying the sequence
+    $gc+=($s=~s/[GCgc]//g);
+  }
+  my $GC=$gc/$length;
+  $GC=(sprintf("%0.3f",$GC) * 100) . '%';
+  return $GC;
 }
 
 # make a crude assembly score for comparing the best assemblies
