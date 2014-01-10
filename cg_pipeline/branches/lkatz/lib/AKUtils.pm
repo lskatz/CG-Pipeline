@@ -2458,12 +2458,13 @@ sub _is_fastqPESra{
       close $fp;
       return 0;
     }
-    my($instrument,$flowcellid,$lane,$x,$y)=split(/:/,$info1);
+    my($instrument,$flowcellid,$lane,$x,$y,$X,$Y)=split(/:/,$info1);
     $discard=<$fp> for(1..3); # discard the sequence and quality of the read for these purposes
     my $secondId=<$fp>;
     my($genome2,$info3,$info4)=split(/\s+/,$secondId);
-    my($instrument2,$flowcellid2,$lane2,$x2,$y2)=split(/:/,$info3);
-    if($instrument ne $instrument2 || $flowcellid ne $flowcellid2 || $lane ne $lane2 || $x ne $x2 || $y ne $y2){
+    my($instrument2,$flowcellid2,$lane2,$x2,$y2,$X2,$Y2)=split(/:/,$info3);
+    $_||="" for($X,$Y,$X2,$Y2); # these variables might not be present
+    if($instrument ne $instrument2 || $flowcellid ne $flowcellid2 || $lane ne $lane2 || $x ne $x2 || $y ne $y2 || $X ne $X2 || $Y ne $Y2){
       close $fp;
       return 0;
     }
