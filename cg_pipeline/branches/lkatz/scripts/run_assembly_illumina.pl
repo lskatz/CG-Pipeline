@@ -43,7 +43,7 @@ sub main() {
 
 	die(usage()) if @ARGV < 1;
 
-	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'outfile=s', 'estimatedGenomeSize=i','numcpus=i', 'fast');
+	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'outfile=s', 'estimatedGenomeSize=i','numcpus=i', 'fast', 'concatenateWith=s');
 	GetOptions($settings, @cmd_options) or die;
   $$settings{estimatedGenomeSize}||=5000000; # default: 5 MB
   $$settings{numcpus}||=AKUtils::getNumCPUs();
@@ -158,6 +158,12 @@ sub main() {
 	foreach my $seq (keys %$final_seqs) {
 		delete $$final_seqs{$seq} if length($$final_seqs{$seq}) < $$settings{assembly_min_contig_length};
 	}
+
+  if(defined($$settings{concatenateWith})){
+    my $sequence=join($$settings{concatenateWith},
+                      values(%$final_seqs));
+    $final_seqs={"concatenatedAssembly assembly_pipeline=CGP_$$settings{pipeline_version}" => $sequence};
+  }
 	AKUtils::printSeqsToFile($final_seqs, $$settings{outfile}, {order_seqs_by_name => 1});
 
 	logmsg "Output is in $$settings{outfile}";
@@ -560,5 +566,6 @@ sub command{
 sub usage{
 	"Usage: $0 input.fastq [, input2.fastq, ...] [-o outfile.fasta] [-R references.mfa] [-t tempdir]
   Input files can also be fasta files.  *.fasta.qual files are considered as the relevant quality files
+  -concat LINKER to concatenate the contigs with a linker, e.g. NNNNNCACACACTTAATTAATTAAGTGTGTGNNNNN
   "
 }
