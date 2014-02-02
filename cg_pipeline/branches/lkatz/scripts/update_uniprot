@@ -16,7 +16,7 @@ if [ ! -f "uniprot_trembl.fasta" ]; then
 fi;
 
 # We don't really need trembl by itself. Concat it with Swiss-prot
-echo "Concatenating the tremble database with uniprot database to make a comprehensive database"
+echo "Concatenating the trembl database with uniprot database to make a comprehensive database"
 cat uniprot_sprot.fasta uniprot_trembl.fasta > uniprot_sprot_trembl.fasta
 if [ $? -gt 0 ]; then 
   rm -v uniprot_sprot_trembl.fasta; 
@@ -26,7 +26,7 @@ fi
 echo "Filtering the sprot and uniprot databases for just bacterial genera";
 run_annotation_parse_uniprot_fasta.pl uniprot_sprot.fasta > uniprot_sprot.fasta.filtered && mv -v uniprot_sprot.fasta.filtered uniprot_sprot.fasta
 if [ $? -gt 0 ]; then exit $?; fi
-run_annotation_parse_uniprot_fasta.pl prot_sprot_trembl.fasta > uniprot_sprot_trembl.fasta.filtered && mv -v uniprot_sprot_trembl.fasta.filtered uniprot_sprot_trembl.fasta
+run_annotation_parse_uniprot_fasta.pl uniprot_sprot_trembl.fasta > uniprot_sprot_trembl.fasta.filtered && mv -v uniprot_sprot_trembl.fasta.filtered uniprot_sprot_trembl.fasta
 if [ $? -gt 0 ]; then exit $?; fi
 
 echo "Formatting the sprot and uniprot databases"
