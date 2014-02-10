@@ -43,7 +43,7 @@ sub main(){
     chomp($home);
   
   # get options
-  my @cmd_options = ('help','deNovo=s','force','project=s','input=s@','tag_prefix=s','Reference=s','command=s','verbose=i','goto=s','just=s','expectedGenomeSize=i');
+  my @cmd_options = ('help','deNovo=s','force','project=s','input=s@','tag_prefix=s','Reference=s','command=s','verbose=i','goto=s','just=s','expectedGenomeSize=i', 'skip=s@');
   GetOptions($settings,@cmd_options) or die;
   $verbose =(defined($$settings{verbose}))?$$settings{verbose}:2;
   
@@ -173,7 +173,8 @@ sub main(){
     $gbArg=$gbArg||"$home/$project/prediction.gb";
     my $gotoArg=($$settings{goto})?"--goto=$$settings{goto}":"";
        $gotoArg=($$settings{just})?"--just=$$settings{just}":"";
-    $invoke_string="run_annotation $gbArg -tempdir=$home/$project/build/annotation --keep --outdir=$home/$project/annotation $gotoArg  2>&1 ";
+    my $skipArg=($$settings{skip})?"--skip=".join(" --skip=",@{$$settings{skip}})."":"";
+    $invoke_string="run_annotation $gbArg $skipArg -tempdir=$home/$project/build/annotation --keep --outdir=$home/$project/annotation $gotoArg  2>&1 ";
     if($verbose>1){
       $invoke_string.="|tee --append $logfile";
     }
