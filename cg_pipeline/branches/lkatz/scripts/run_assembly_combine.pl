@@ -168,7 +168,7 @@ sub combine2Assemblies{
 # make a crude assembly score for sorting the best assemblies
 sub assemblyScore{
   my($a,$settings)=@_;
-  my $tmp= `run_assembly_metrics.pl $a -s assemblyScore -n`;
+  my $tmp= `run_assembly_metrics.pl $a -s assemblyScore -number`;
   chomp($tmp);
   return $tmp;
 }
