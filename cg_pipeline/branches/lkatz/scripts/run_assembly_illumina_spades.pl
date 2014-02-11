@@ -143,17 +143,23 @@ sub main() {
     }
 	} else {
     my($velvet_basename,$velvet_assembly,$spades_basename,$spades_assembly);
-    my $combined_filename="$$settings{tempdir}/denovoCombined.fasta";
+    $combined_filename="$$settings{tempdir}/denovoCombined.fasta";
     
     $spades_basename = runSpadesAssembly($fastqfiles,$settings);
-    $spades_assembly = "$spades_basename/contigs.fasta";
+    $spades_assembly = "$spades_basename/asm/contigs.fasta";
 
     $velvet_basename = runVelvetAssembly($fastqfiles,$settings);
     $velvet_assembly="$velvet_basename/contigs.fa";
 
-    # in case assemblies from multiple assemblers are combined
-    system("run_assembly_combine $spades_assembly $velvet_assembly -m 100 -o $combined_filename");
+    mkdir "$$settings{tempdir}/combine";
+    my $combined_assembly="$$settings{tempdir}/combine/combined_out.fasta";
+    system("run_assembly_combine.pl $spades_assembly $velvet_assembly -m 100 -o $combined_assembly -t $$settings{tempdir}/combine");
     die if $?;
+
+    # Even though the assemblies have been combined, find the best assembly.
+    # Maybe the combined one isn't the best.
+    system("run_assembly_chooseBest.pl $spades_assembly $velvet_assembly $combined_assembly -o $combined_filename");
+    die "ERROR: run_assembly_chooseBest.pl failed" if $?;
 	}
 
   $final_seqs = AKUtils::readMfa("$combined_filename");
@@ -258,25 +264,35 @@ sub fastq2fastaqual($$) {
 sub runSpadesAssembly($$){
   my($fastqfiles,$settings)=@_;
   my $run_name = "$$settings{tempdir}/spades";
-  mkdir $run_name;
+  
+  # has it been run before?
+  my $continueArg="";
+  if(-d $run_name){
+    $continueArg="--continue ";
+  } else {
+    system("mkdir -p $run_name");
+    die if $?;
+  }
   logmsg "Executing SPAdes assembly $run_name";
   
-  my $spadesxopts="";
+  my $spadesxopts=$$settings{spadesxopts}||"";
   my $fastqArg;
+  my $carefulArg=""; # is set only if there are PE reads
   logmsg "WARNING: only using the first five input files for SPAdes" if(@$fastqfiles > 5);
-  my @fastqfiles=splice(@$fastqfiles,0,5);
-  for(my $i=0;$i<@fastqfiles;$i++){
+  my @fastqfiles=("blurg",@$fastqfiles[0..4]); # unshift a bogus 0th element since we're in 1-based
+     @fastqfiles=grep defined, @fastqfiles;
+  for(my $i=1;$i<@fastqfiles;$i++){  # 1-based to match spades parameters
     if(AKUtils::is_fastqPE($fastqfiles[$i])){
       $fastqArg.="--pe$i-12 $fastqfiles[$i] ";
-      $fastqArg.="--careful ";
+      $carefulArg="--careful";
     } else {
       $fastqArg.="-s $fastqfiles[$i] ";
     }
   }
 
-  my $command="spades.py --tmp-dir $run_name/tmp -t $$settings{numcpus} -o $run_name/asm $fastqArg ";
+  my $command="spades.py --tmp-dir $run_name/tmp -t $$settings{numcpus} -o $run_name/asm $fastqArg $carefulArg $continueArg";
   system($command);
-  die if $?;
+  die "ERROR: Problem with SPAdes (spades.py)" if $?;
 
   return $run_name;
 }
@@ -596,5 +612,6 @@ sub usage{
 	"Usage: $0 input.fastq [, input2.fastq, ...] [-o outfile.fasta] [-R references.mfa] [-t tempdir]
   Input files can also be fasta files.  *.fasta.qual files are considered as the relevant quality files
   -concat LINKER to concatenate the contigs with a linker, e.g. NNNNNCACACACTTAATTAATTAAGTGTGTGNNNNN
+  -n numcpus Default: 1
   "
 }
