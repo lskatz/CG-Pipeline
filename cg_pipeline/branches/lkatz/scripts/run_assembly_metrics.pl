@@ -299,6 +299,7 @@ sub assemblyScore{
   my $score=$$metrics{N50}/$$metrics{numContigs} * $percentGenomeCovered;
   die "score is negative and so it cannot be put on the log scale because: $$metrics{N50}/$$metrics{numContigs} * [1-abs(1-$$settings{expectedGenomeLength}/$$metrics{genomeLength})]\n" if($score<=0);
   my $logscore=log($score);
+  $logscore=sprintf("%0.3f",$logscore); # round to 1000s place
   return $logscore;
 }
 
