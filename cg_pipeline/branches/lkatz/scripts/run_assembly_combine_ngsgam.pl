@@ -36,6 +36,7 @@ sub main{
   # check for assemblies and reads
   my @asm=glob("$$settings{asmDir}/*.{fasta,fna,fa}");
   die "ERROR: no assemblies found in $$settings{asmDir} \n".usage() if(!@asm);
+  die "ERROR: can only accept two assemblies right now. There are ".scalar(@asm)." assemblies in $$settings{asmDir} right now." if(@asm>2);
   my @read=(glob("$$settings{readsDir}/*.{fastq,fastq.gz}"));
   die "ERROR: no assemblies found in $$settings{readsDir} \n".usage() if(!@read);
 
@@ -46,6 +47,7 @@ sub main{
   my $fasta=gamMerge($gamDir,$sortedAsm,$settings);
 
   system("cat $fasta"); die if $?;
+  logmsg "Done. Assembly was redirected to stdout";
 
   return 0;
 }
@@ -86,11 +88,13 @@ sub mapReads{
     
     # merge and sort all reads' bams if there are >1
     if(@read > 1){
-      #$sorted="$$settings{tempdir}/".fileparse($assembly).".sorted";
-      system("samtools merge ".join(" ",@bam)." $mappingTempdir/merged.bam");
+      my $command="samtools merge $mappingTempdir/merged.bam ".join(" ",@bam);
+      logmsg $command;
+      system($command);
+      die "ERROR with samtools merge. Command was\n  $command" if $?;
+      system("samtools sort $mappingTempdir/merged.bam $sorted");
       die if $?;
-      system("samtools sort $mappingTempdir/merged.bam $mappingTempdir/".fileparse($assembly));
-      die if $?;
+      unlink "$mappingTempdir/merged.bam";
     } else {
     # just sort the one bam
       system("samtools sort $bam[0] $sorted");
@@ -130,6 +134,7 @@ sub gamCreate{
   my %insRange;
   for my $asm(@$sortedAsm){
     my $bam=$$asmBam{$asm};
+    logmsg "Reading insert sizes for $bam";
     # find out the insert size
     my $readMetrics=_readMetrics($bam,$settings);
     if($$readMetrics{medianFragmentLength} && $$readMetrics{medianFragmentLength}=~/(\d+)\[(\d+),(\d+)\]/){
@@ -160,7 +165,7 @@ sub gamCreate{
   }
   close SLAVE;
 
-  system("gam-create --master-bam $masterGam --slave-bam $slaveGam  --min-block-size 10 --output $gamDir/out");
+  system("gam-create --master-bam $masterGam --slave-bam $slaveGam  --min-block-size 5 --output $gamDir/out");
   die "ERROR: Problem with gam-create" if $?;
   return $gamDir;
 }
@@ -169,7 +174,7 @@ sub gamMerge{
   my($gamDir,$sortedAsm,$settings)=@_;
   my $outPrefix="$gamDir/gam-ngs.out";
   logmsg "Running gam-merge";
-  my $command="gam-merge --blocks-file $gamDir/out.blocks --master-fasta $$sortedAsm[0] --slave-fasta $$sortedAsm[1] --master-bam $gamDir/master.PE.bams.txt --slave-bam $gamDir/slave.PE.bams.txt --min-block-size 10 --threads $$settings{numcpus} --output $outPrefix 1>&2";
+  my $command="gam-merge --blocks-file $gamDir/out.blocks --master-fasta $$sortedAsm[0] --slave-fasta $$sortedAsm[1] --master-bam $gamDir/master.PE.bams.txt --slave-bam $gamDir/slave.PE.bams.txt --min-block-size 5 --threads $$settings{numcpus} --output $outPrefix 1>&2";
   logmsg $command;
   system($command);
   die "ERROR: problem with gam-merge" if $?;
