@@ -39,12 +39,13 @@ sub main() {
 
   die(usage($settings)) if @ARGV < 1;
 
-  my @cmd_options = qw(keep tempdir=s outfile=s force assembly=s@ reads=s@ minContigSize=i);
+  my @cmd_options = qw(keep tempdir=s outfile=s force assembly=s@ reads=s@ minContigSize=i expectedGenomeSize=i);
   GetOptions($settings, @cmd_options) or die;
 
   $$settings{cpus}=AKUtils::getNumCPUs();
   $$settings{minContigSize}||=500;
   $$settings{assembly}||=[];
+  $$settings{expectedGenomeSize}||=0;
 
   my @assembly=(@ARGV,@{$$settings{assembly}}) or die "Need assemblies:\n".usage($settings);
   $$settings{outfile} ||= "$0.out.fasta"; # TODO determine if an ace should be the output
@@ -89,7 +90,7 @@ sub combineAllAssemblies{
   
   logmsg "Sorting the assemblies by combining assembly metrics";
   my @assembly=sort({
-    assemblyScore($b) <=> assemblyScore($a);
+    assemblyScore($b,$settings) <=> assemblyScore($a,$settings);
   } @$assembly);
   $assembly=\@assembly;
 
@@ -141,10 +142,11 @@ sub combine2Assemblies{
   logmsg "Running Minimus2 with reference genome $refGenome and query genome $queryGenome";
   system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
   die "Problem with toAmos with command\n  toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'" if $?;
-  my $command="minimus2 -D REFCOUNT=$numContigs '$$settings{tempdir}/minimus.combined' 2>&1";
+  my $command="minimus2 -D OVERLAP=200 -D MINID=90 -D REFCOUNT=$numContigs '$$settings{tempdir}/minimus.combined' 2>&1";
+  logmsg "Executing command\n  $command";
   system($command);
   if($?){ # sometimes minimus2 is not installed correctly. Give a helpful error message.
-    warn "ERROR: there was a problem with Minimus2 with the following command\n  $command.\n";
+    warn "ERROR: there was a problem with Minimus2 with the following command\n  $command.\n  ERROR message was $!\n";
     warn "A possible problem is that Minimus2 does not know the correct locations of the ".
          "following files or directory. Edit the minimus2 executable to correct the paths ".
          "(e.g. sudo vim `which minimus2`)\n";
@@ -168,7 +170,9 @@ sub combine2Assemblies{
 # make a crude assembly score for sorting the best assemblies
 sub assemblyScore{
   my($a,$settings)=@_;
-  my $tmp= `run_assembly_metrics.pl $a -s assemblyScore -number`;
+  my $command="run_assembly_metrics.pl -m 1 $a -s assemblyScore -number ";
+  $command.="-e $$settings{expectedGenomeSize} " if($$settings{expectedGenomeSize});
+  my $tmp=`$command`;
   chomp($tmp);
   return $tmp;
 }
@@ -177,7 +181,9 @@ sub assembly_metrics{
   my($a,$settings)=@_;
   my %seqMetric;
   return %seqMetric if(-s $a < 1);
-  my $metrics=`run_assembly_metrics.pl '$a'`;
+  my $command="run_assembly_metrics.pl -m 1 '$a' ";
+  $command.="-e $$settings{expectedGenomeSize} " if($$settings{expectedGenomeSize});
+  my $metrics=`$command`;
   my($header,$m)=split(/\n/,$metrics);
   my @header=split(/\t/,$header);
   my @metric=split(/\t/,$m);
@@ -196,9 +202,8 @@ sub usage{
     optional parameters:
     -m minimum size of a contig
     -t tempdir
-    -f
-      force
-    -k
-      keep temp files
+    -f to force
+    -k to keep temp files
+    -e expectedGenomeSize (default: not needed; for 3MB genome, use -e 3000000)
   "
 }
