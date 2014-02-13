@@ -44,11 +44,12 @@ sub main() {
   $settings = AKUtils::loadConfig($settings);
   die(usage($settings)) if @ARGV<1;
 
-  my @cmd_options=qw(output=s expectedGenomeLength=i minContigLength=i statistic=s@ numberOnly allMetrics numcpus=i);
+  my @cmd_options=qw(output=s expectedGenomeLength=i minContigLength=i statistic=s@ numberOnly allMetrics numcpus=i help);
   GetOptions($settings, @cmd_options) or die;
   $$settings{minContigLength}||=500;
   $$settings{expectedGenomeLength}||=0;
   $$settings{numcpus}||=AKUtils::getNumCPUs();
+  die(usage($settings)) if $$settings{help};
 
   my @input_file;
   for my $file(@ARGV){
@@ -317,27 +318,30 @@ sub numContigs($){
 
 sub usage{
   my ($settings)=@_;
-  "Prints useful assembly statistics
+  my $text="Prints useful assembly statistics
   Usage: $0 assembly1.fasta [-e expectedGenomeLength] [-m minContigLength]
-  OPTIONS
-  -e genome length
-    helps with N50 calculation but not necessary
-  -m size
-    only consider contigs of size m in the calculations
-  -number
-    Output only the number of the metric(s) you supplied and not the header. Works well with -s
+  -e genome length Helps with N50 calculation and assemblyScore but not necessary
+  -m size   Only consider contigs of size m in the calculations
+  -number   Output only the number of the metric(s) you supplied and not the header. Works well with -s
   --numcpus 1 The number of threads to use
-  -s stat (in contrast, see -a)
+  -s stat   (in contrast, see -a)
     only print out the value for this stat (or these stats) only.
     Possible values: ".join(", ",@{$$settings{metrics}})."
     Default output: ".join(", ",@{$$settings{stdMetrics}})."
   -a to output all stats. To select only some stats, use -s
-  The assembly score is calculated as a log of (N50/numContigs * percentOfGenomeCovered)
+  -h for more help";
+  return $text if(!$$settings{help});
+  $text.="\n  NOTES
+    The assembly score is calculated as a log of (N50/numContigs * percentOfGenomeCovered)
     The percent of the genome covered is 1 if you do not supply an expected genome length.
     The percent of the genome covered counts against you if you assemble higher than the expected genome size.
-  EXAMPLES
-    $0 *.fasta | sort -k 5 -n | column -t # pretty output and sorted
-    $0 *.fasta -a | column -t             # get all stats
-    N50=`$0 assembly.fasta -n -s N50`     # set a bash variable equal to an assembly's N50
-  "
+  EXAMPLES - combine piped commands like column sort to get even better output
+    $0 *.fasta | column -t             # pretty output
+    $0 *.fasta | sort -k5,5n           # sorted output
+    $0 *.fasta -a                      # get all stats
+    $0 *.fasta | sed 's|.*/||'         # remove directories from filenames
+    N50=`$0 file.fasta -number -s N50` # set a bash variable equal to an assembly's N50
+  ";
+  return $text;
 }
+
