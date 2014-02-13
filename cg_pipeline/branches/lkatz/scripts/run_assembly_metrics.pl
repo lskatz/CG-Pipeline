@@ -363,7 +363,7 @@ sub usage{
     $0 *.fasta | sed 's|.*/||'         # remove directories from filenames
     N50=`$0 file.fasta -number -s N50` # set a bash variable equal to an assembly's N50
     # histogram of contig lengths
-    $0 file.fasta -o lengths | cut -f 3| perl -lane 'print(int(\$_/100000)*100000)'|sort -n|uniq -c
+    $0 file.fasta -o lengths | perl -lane 'print(int(\$F[2]/100000)*100000)'|sort -n|uniq -c
   ";
   return $text;
 }
