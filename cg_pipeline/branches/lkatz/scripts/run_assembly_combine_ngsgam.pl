@@ -41,9 +41,11 @@ sub main{
 
   my $merged;
   my $asmBam=mapReads(\@read,\@asm,$settings);
-  @asm=sortAssemblies(\@asm,$settings); # best to worst
-  gamCreate();
-  gamMerge();
+  my $sortedAsm=sortAssemblies(\@asm,$settings); # best to worst
+  my $gamDir=gamCreate($sortedAsm,$asmBam,$settings);
+  my $fasta=gamMerge($gamDir,$sortedAsm,$settings);
+
+  system("cat $fasta"); die if $?;
 
   return 0;
 }
@@ -84,16 +86,20 @@ sub mapReads{
     
     # merge and sort all reads' bams if there are >1
     if(@read > 1){
-      $sorted="$$settings{tempdir}/".fileparse($assembly).".sorted";
+      #$sorted="$$settings{tempdir}/".fileparse($assembly).".sorted";
       system("samtools merge ".join(" ",@bam)." $mappingTempdir/merged.bam");
       die if $?;
       system("samtools sort $mappingTempdir/merged.bam $mappingTempdir/".fileparse($assembly));
       die if $?;
     } else {
-    # just copy the reads if there is only one bam
-      system("cp -v $read[0] $sorted.bam");
+    # just sort the one bam
+      system("samtools sort $bam[0] $sorted");
       die if $?;
     }
+    
+    # also need to index the bam file
+    system("samtools index $sorted.bam");
+    die if $?;
   }
   return \%mergedBam;
 }
@@ -114,11 +120,74 @@ sub sortAssemblies{
 }
 
 sub gamCreate{
-  # gam-create --master-bam master.PE.bams.txt --slave-bam slave.PE.bams.txt --min-block-size 10
+  my($sortedAsm,$asmBam,$settings)=@_;
+
+  logmsg "Running gam-create";
+
+  my $gamDir="$$settings{tempdir}/gam";
+  mkdir $gamDir if(!-d $gamDir);
+
+  my %insRange;
+  for my $asm(@$sortedAsm){
+    my $bam=$$asmBam{$asm};
+    # find out the insert size
+    my $readMetrics=_readMetrics($bam,$settings);
+    if($$readMetrics{medianFragmentLength} && $$readMetrics{medianFragmentLength}=~/(\d+)\[(\d+),(\d+)\]/){
+      my $median=$1;
+      my $q1Dist=abs($median-$2);
+      my $q2Dist=abs($3-$median);
+      my $max=$median + 3*$q2Dist;
+      my $min=$median - 3*$q1Dist;
+      $min=1 if($min<1);
+      $insRange{$asm}=[$min,$max];
+    } else {
+      die "ERROR: Could not determine the fragment size from $bam";
+    }
+  }
+
+  # create the master/slave files needed for GAM, with min/max insert sizes
+  my $masterGam="$gamDir/master.PE.bams.txt";
+  my $slaveGam ="$gamDir/slave.PE.bams.txt";
+  # create the master file with the bam of the best assembly
+  open(MASTER,">",$masterGam) or die "ERROR: Could not open $masterGam for writing: $!";
+  print MASTER "$$asmBam{$$sortedAsm[0]}\n".join(" ",@{$insRange{$$sortedAsm[0]}})."\n";
+  close MASTER;
+
+  # slave file with the other assemblies
+  open(SLAVE,">",$slaveGam) or die "ERROR: Could not open $slaveGam for writing: $!";
+  for(my $i=1;$i<@$sortedAsm;$i++){
+    print SLAVE "$$asmBam{$$sortedAsm[$i]}\n".join(" ",@{$insRange{$$sortedAsm[$i]}})."\n";
+  }
+  close SLAVE;
+
+  system("gam-create --master-bam $masterGam --slave-bam $slaveGam  --min-block-size 10 --output $gamDir/out");
+  die "ERROR: Problem with gam-create" if $?;
+  return $gamDir;
 }
 
 sub gamMerge{
-  # gam-merge --blocks-file out.blocks --master-fasta spades.fasta --master-bam master.PE.bams.txt --slave-fasta velvet.fasta --slave-bam slave.PE.bams.txt --min-block-size 10 --threads 32 --output gam-ngs.out 2> gam-merge.err
+  my($gamDir,$sortedAsm,$settings)=@_;
+  my $outPrefix="$gamDir/gam-ngs.out";
+  logmsg "Running gam-merge";
+  my $command="gam-merge --blocks-file $gamDir/out.blocks --master-fasta $$sortedAsm[0] --slave-fasta $$sortedAsm[1] --master-bam $gamDir/master.PE.bams.txt --slave-bam $gamDir/slave.PE.bams.txt --min-block-size 10 --threads $$settings{numcpus} --output $outPrefix 1>&2";
+  logmsg $command;
+  system($command);
+  die "ERROR: problem with gam-merge" if $?;
+  return "$outPrefix.gam.fasta";
+}
+
+#### UTIL subroutines
+sub _readMetrics{
+  my($reads,$settings)=@_;
+  my $metrics=`run_assembly_readMetrics.pl --fast '$reads'`;
+  die "ERROR: problem with run_assembly_readMetrics.pl: $!" if $?;
+  chomp($metrics);
+  my ($header,$values)=split(/\n/,$metrics);
+  my @header=split /\t/,$header;
+  my @values=split /\t/,$values;
+  my %metrics;
+  @metrics{@header}=@values;
+  return \%metrics;
 }
 
 sub usage{
