@@ -44,11 +44,12 @@ sub main() {
   $settings = AKUtils::loadConfig($settings);
   die(usage($settings)) if @ARGV<1;
 
-  my @cmd_options=qw(output=s expectedGenomeLength=i minContigLength=i statistic=s@ numberOnly allMetrics numcpus=i help);
+  my @cmd_options=qw(outputType=s expectedGenomeLength=i minContigLength=i statistic=s@ numberOnly allMetrics numcpus=i help);
   GetOptions($settings, @cmd_options) or die;
   $$settings{minContigLength}||=500;
   $$settings{expectedGenomeLength}||=0;
   $$settings{numcpus}||=AKUtils::getNumCPUs();
+  $$settings{outputType}||="";
   die(usage($settings)) if $$settings{help};
 
   my @input_file;
@@ -61,24 +62,28 @@ sub main() {
     push(@input_file,$file);
   }
 
-  # start off the threads
-  my $Q=Thread::Queue->new;
-  my @thr;
-  $thr[$_]=threads->new(\&assemblyMetricsWorker,$Q,$settings) for(0..$$settings{numcpus}-1);
+  if($$settings{outputType} eq 'lengths'){
+    printContigLengths(\@input_file,$settings);
+  } else {
+    # start off the threads
+    my $Q=Thread::Queue->new;
+    my @thr;
+    $thr[$_]=threads->new(\&assemblyMetricsWorker,$Q,$settings) for(0..$$settings{numcpus}-1);
 
-  for my $file(@input_file){
-    $Q->enqueue($file);
+    for my $file(@input_file){
+      $Q->enqueue($file);
+    }
+
+    # close out the threads
+    $Q->enqueue(undef) for(@thr);
+    my %metrics;
+    for(@thr){
+      my $metrics=$_->join;
+      %metrics=(%metrics,%$metrics);
+    }
+
+    printMetrics(\%metrics,$settings);
   }
-
-  # close out the threads
-  $Q->enqueue(undef) for(@thr);
-  my %metrics;
-  for(@thr){
-    my $metrics=$_->join;
-    %metrics=(%metrics,%$metrics);
-  }
-
-  printMetrics(\%metrics,$settings);
 
   return 0;
 }
@@ -148,10 +153,11 @@ sub assemblyMetrics($$){
 sub printMetrics{
   my ($metrics,$settings)=@_;
   my $header=$$settings{statistic} || $$settings{stdMetrics};
+
+  # default output
   $header=$$settings{metrics} if($$settings{allMetrics});
   unshift(@$header,"File") if(!$$settings{numberOnly});
   my $d="\t"; # field delimiter
-
   print join($d,@$header)."\n" if(!$$settings{numberOnly});
   while(my($file,$m)=each(%$metrics)){
     my @line;
@@ -171,6 +177,17 @@ sub filterSeqs{
     $$newSeqs{$id}=$seq;
   }
   return $newSeqs;
+}
+
+sub printContigLengths{
+  my($file,$settings)=@_;
+  for my $f(@$file){
+    my $seqs=AKUtils::readMfa($f);
+    while(my($id,$seq)=each(%$seqs)){
+      print join("\t",$f,$id,length($seq))."\n";
+    }
+  }
+  return 1;
 }
 
 sub avgContigLength{
@@ -331,7 +348,11 @@ sub usage{
   -a to output all stats. To select only some stats, use -s
   -h for more help";
   return $text if(!$$settings{help});
-  $text.="\n  NOTES
+  $text.="\n  ADDITIONAL HELP
+    -o outputType Make different output type.  Output type can be one of the following
+      length  - shows lengths of contigs
+      default - no change
+    NOTES
     The assembly score is calculated as a log of (N50/numContigs * percentOfGenomeCovered)
     The percent of the genome covered is 1 if you do not supply an expected genome length.
     The percent of the genome covered counts against you if you assemble higher than the expected genome size.
@@ -341,6 +362,8 @@ sub usage{
     $0 *.fasta -a                      # get all stats
     $0 *.fasta | sed 's|.*/||'         # remove directories from filenames
     N50=`$0 file.fasta -number -s N50` # set a bash variable equal to an assembly's N50
+    # histogram of contig lengths
+    $0 file.fasta -o lengths | cut -f 3| perl -lane 'print(int(\$_/100000)*100000)'|sort -n|uniq -c
   ";
   return $text;
 }
