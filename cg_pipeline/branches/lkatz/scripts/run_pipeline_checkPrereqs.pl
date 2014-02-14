@@ -34,7 +34,7 @@ my $prereqs={
     pipeline=>{AKUtils=>"CGP Module",BerkeleyDB=>1,'Bio::Perl'=>"BioPerl",'Bio::Tools::Run::StandAloneBlast'=>1,CGPBase=>"CGP Module",CGPipelineUtils=>"CGP Module",'Data::Dumper'=>1,'Date::Format'=>1,'File::Basename'=>1,'File::Copy'=>1,'File::Path'=>1,'File::Spec'=>1,'File::Temp'=>1,FindBin=>1,'Getopt::Long'=>"For parsing options",'List::Util'=>1,'LWP::Simple'=>1,'Math::Round'=>1, 'Thread::Queue'=>1, threads=>1, 'threads::shared'=>1, 'XML::LibXML::Reader'=>1, 'HTML::TableExtract'=>1},
     assembly=>{},
     prediction=>{GTTmhmm=>"TMHMM module"},
-    annotation=>{'XML::Quote'=>1,'Mail::Send'=>1},
+    annotation=>{'XML::Quote'=>"Required by InterProScan",'Mail::Send'=>"Required by InterProScan"},
   },
   executables=>{
     pipeline=>{cat=>1,cp=>1,gzip=>1, gunzip=>1, ln=>1,mkdir=>1,rm=>1, touch=>1, },
@@ -76,7 +76,7 @@ sub checkEnvVars{
   while(my($module,$environmentalVariable)=each(%{$$prereqs{environmentalVariables}})){
     while(my($var,$description)=each(%$environmentalVariable)){
       my $presence_code=is_envVar_present($var,$settings);
-      $problems+=reportPresenceStatus($var,$description,$presence_code,$settings);
+      $problems+=reportPresenceStatus($var,$description,$module,$presence_code,$settings);
     }
   }
 
@@ -99,7 +99,7 @@ sub checkPerlLib{
   while(my($module,$lib)=each(%{$$prereqs{perllibs}})){
     while(my($libname,$description)=each(%$lib)){
       my $presence_code=is_perlLib_present($libname,$settings);
-      $problems+=reportPresenceStatus($libname,$description,$presence_code,$settings);
+      $problems+=reportPresenceStatus($libname,$description,$module,$presence_code,$settings);
     }
   }
   return $problems;
@@ -111,14 +111,15 @@ sub checkExecutables{
   while(my($module,$executable)=each(%{$$prereqs{executables}})){
     while(my($exec,$description)=each(%$executable)){
       my $presence_code=is_executable_present($exec,$settings);
-      $problems+=reportPresenceStatus($exec,$description,$presence_code,$settings);
+      $problems+=reportPresenceStatus($exec,$description,$module,$presence_code,$settings);
     }
   }
   return $problems;
 }
 
 sub reportPresenceStatus{
-  my($name,$desc,$presence_code,$settings)=@_;
+  my($name,$desc,$module,$presence_code,$settings)=@_;
+  $module=uc($module);
 
   # set up the description of the thing to report presence/absence
   my $description="no description";
@@ -128,13 +129,13 @@ sub reportPresenceStatus{
 
   my $problems=0;
   if($presence_code == $$settings{code_missing}){
-    logmsg "$name ($description) not found";
+    logmsg "$name ($module - $description) not found";
     $problems++;
   } elsif ($presence_code == $$settings{code_present}){
-    logmsg "$name ($description) present, but not readable";
+    logmsg "$name ($module - $description) present, but not readable";
     $problems++;
   } elsif ($presence_code == $$settings{code_usable}){
-    logmsg "$name ($description) is good!" if($$settings{verbose});
+    logmsg "$name ($module - $description) is good!" if($$settings{verbose});
   }
   return $problems;
 }
@@ -193,5 +194,7 @@ sub usage{
   Usage: $0
     -h for help
     -v for verbose
+  EXAMPLE
+    $0 | grep ASSEMBLY # see what is missing to perform assembly
   "
 }
