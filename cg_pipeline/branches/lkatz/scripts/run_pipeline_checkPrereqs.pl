@@ -22,11 +22,6 @@ use Data::Dumper;
 my $settings={
   appname=>'cgpipeline',
 
-  # prereqs. Deprecated in favor of the hash below.
-  perllibs=>[qw(AKUtils BerkeleyDB Bio::Assembly::IO Bio::Assembly::Scaffold Bio::Perl Bio::Seq Bio::SeqIO Bio::Seq::Quality Bio::Seq::RichSeq Bio::SeqUtils Bio::Tools::GFF Bio::Tools::Run::StandAloneBlast CGPBase CGPipeline::SQLiteDB CGPipelineUtils Data::Dumper Date::Format File::Basename File::Copy File::Path File::Spec File::Temp FindBin Getopt::Long GTTmhmm List::Util LWP::Simple Math::Round strict Thread::Queue threads threads::shared warnings XML::LibXML::Reader XML::Quote HTML::TableExtract IO::Scalar Mail::Send)],
-  executables=>[qw(spades.py gam-create gam-merge addRun amos2ace AMOScmp cat cp gzip gunzip ln minimus2 mkdir newAssembly newMapping rm runProject setRef sfffile toAmos toAmos_new touch tmhmm signalp bam2fastq vcfutils.pl bcftools fastqqc velveth velvetg VelvetOptimiser.pl tRNAscan-SE gmsn.pl long-orfs extract build-icm glimmer3 rnammer hmmsearch iprscan)],
-  environmentalVariables=>[qw(TMHMMDIR)],
-
   # presence/absence codes
   code_missing=>0,
   code_present=>1,
@@ -36,16 +31,16 @@ my $settings={
 # each prerequisite with their descriptions.  Single or no characters in the values for no description.
 my $prereqs={
   perllibs=>{
-    pipeline=>{AKUtils=>1,BerkeleyDB=>1,'Bio::Perl'=>1,'Bio::Tools::Run::StandAloneBlast'=>1,CGPBase=>1,CGPipelineUtils=>1,'Data::Dumper'=>1,'Date::Format'=>1,'File::Basename'=>1,'File::Copy'=>1,'File::Path'=>1,'File::Spec'=>1,'File::Temp'=>1,FindBin=>1,'Getopt::Long'=>1,'List::Util'=>1,'LWP::Simple'=>1,'Math::Round'=>1, 'Thread::Queue'=>1, threads=>1, 'threads::shared'=>1, 'XML::LibXML::Reader'=>1, 'HTML::TableExtract'=>1},
+    pipeline=>{AKUtils=>"CGP Module",BerkeleyDB=>1,'Bio::Perl'=>"BioPerl",'Bio::Tools::Run::StandAloneBlast'=>1,CGPBase=>"CGP Module",CGPipelineUtils=>"CGP Module",'Data::Dumper'=>1,'Date::Format'=>1,'File::Basename'=>1,'File::Copy'=>1,'File::Path'=>1,'File::Spec'=>1,'File::Temp'=>1,FindBin=>1,'Getopt::Long'=>"For parsing options",'List::Util'=>1,'LWP::Simple'=>1,'Math::Round'=>1, 'Thread::Queue'=>1, threads=>1, 'threads::shared'=>1, 'XML::LibXML::Reader'=>1, 'HTML::TableExtract'=>1},
     assembly=>{},
-    prediction=>{GTTmhmm=>1},
+    prediction=>{GTTmhmm=>"TMHMM module"},
     annotation=>{'XML::Quote'=>1,'Mail::Send'=>1},
   },
   executables=>{
     pipeline=>{cat=>1,cp=>1,gzip=>1, gunzip=>1, ln=>1,mkdir=>1,rm=>1, touch=>1, },
-    assembly=>{'spades.py'=>1,'gam-create'=>1,'gam-merge'=>1,addRun=>1,amos2ace=>1,AMOScmp=>1,minimus2=>1,newAssembly=>1, newMapping=>1, runProject=>1, setRef=>1, sfffile=>1, toAmos=>1, toAmos_new=>1,bam2fastq=>1,'vcfutils.pl'=>1,bcftools=>1,'fastqqc'=>1, velveth=>1, velvetg=>1, 'VelvetOptimiser.pl'=>1},
-    prediction=>{tmhmm=>1,signalp=>1,'tRNAscan-SE'=>1, 'gmsn.pl'=>1, 'long-orfs'=>1, extract=>1, 'build-icm'=>1, 'glimmer3'=>1, rnammer=>1, 'legacy_blast.pl'=>1},
-    annotation=>{hmmsearch=>1, iprscan=>1, 'legacy_blast.pl'=>1},
+    assembly=>{'spades.py'=>"SPAdes assembler",'gam-create'=>"NGS-GAM assembly merger",'gam-merge'=>"NGS-GAM assembly merger",addRun=>"Newbler",amos2ace=>"AMOS",AMOScmp=>"AMOS",minimus2=>"AMOS",newAssembly=>"Newbler", newMapping=>"Newbler", runProject=>"Newbler", setRef=>"Newbler", sfffile=>"Newbler", toAmos=>"AMOS", toAmos_new=>"AMOS",bam2fastq=>"Exporting fastq from bam files; found in cg_pipeline/etc",'vcfutils.pl'=>"Samtools",bcftools=>"Samtools",'fastqqc'=>"AMOS", velveth=>"Velvet", velvetg=>"Velvet", 'VelvetOptimiser.pl'=>"Velvet"},
+    prediction=>{tmhmm=>"TMHMM transmembrane helix predictor",signalp=>"Signal Peptides",'tRNAscan-SE'=>"tRNA prediction", 'gmsn.pl'=>"GeneMark", 'long-orfs'=>"Glimmer3", extract=>"Glimmer3", 'build-icm'=>"Glimmer3", 'glimmer3'=>"Glimmer3", rnammer=>"RNA prediction", 'legacy_blast.pl'=>"BLAST+", blastp=>"BLAST+"},
+    annotation=>{hmmsearch=>1, iprscan=>"InterProScan", 'legacy_blast.pl'=>"BLAST+", blastp=>"BLAST+"},
   },
   environmentalVariables=>{
     pipeline=>{},
@@ -81,7 +76,7 @@ sub checkEnvVars{
   while(my($module,$environmentalVariable)=each(%{$$prereqs{environmentalVariables}})){
     while(my($var,$description)=each(%$environmentalVariable)){
       my $presence_code=is_envVar_present($var,$settings);
-      $problems+=reportPresenceStatus($var,$presence_code,$settings);
+      $problems+=reportPresenceStatus($var,$description,$presence_code,$settings);
     }
   }
 
@@ -104,7 +99,7 @@ sub checkPerlLib{
   while(my($module,$lib)=each(%{$$prereqs{perllibs}})){
     while(my($libname,$description)=each(%$lib)){
       my $presence_code=is_perlLib_present($libname,$settings);
-      $problems+=reportPresenceStatus($libname,$presence_code,$settings);
+      $problems+=reportPresenceStatus($libname,$description,$presence_code,$settings);
     }
   }
   return $problems;
@@ -116,23 +111,30 @@ sub checkExecutables{
   while(my($module,$executable)=each(%{$$prereqs{executables}})){
     while(my($exec,$description)=each(%$executable)){
       my $presence_code=is_executable_present($exec,$settings);
-      $problems+=reportPresenceStatus($exec,$presence_code,$settings);
+      $problems+=reportPresenceStatus($exec,$description,$presence_code,$settings);
     }
   }
   return $problems;
 }
 
 sub reportPresenceStatus{
-  my($name,$presence_code,$settings)=@_;
+  my($name,$desc,$presence_code,$settings)=@_;
+
+  # set up the description of the thing to report presence/absence
+  my $description="no description";
+  if($desc && length($desc)>1){ # must have >1 character to be informative
+    $description=$desc;
+  }
+
   my $problems=0;
   if($presence_code == $$settings{code_missing}){
-    logmsg "$name not found";
+    logmsg "$name ($description) not found";
     $problems++;
   } elsif ($presence_code == $$settings{code_present}){
-    logmsg "$name present, but not readable";
+    logmsg "$name ($description) present, but not readable";
     $problems++;
   } elsif ($presence_code == $$settings{code_usable}){
-    logmsg "$name is good!" if($$settings{verbose});
+    logmsg "$name ($description) is good!" if($$settings{verbose});
   }
   return $problems;
 }
@@ -141,10 +143,11 @@ sub is_executable_present{
   my ($exe,$settings)=@_;
   my $code=$$settings{code_missing};
   for ("", split(/:/, $ENV{PATH})) {
-    if(-e $_."/".$exe){
-      next if(-d $_."/".$exe); # a directory is not "present but unusable" because it's not the actual exec
+    my $possibleExec=$_."/".$exe;
+    # If the possibleExec exists and is a file...
+    if(-e $possibleExec && -f $possibleExec){
       $code=$$settings{code_present};
-      if(-x $_."/".$exe){
+      if(-x $possibleExec){
         $code=$$settings{code_usable};
         return $code;
       }
