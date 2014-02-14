@@ -28,8 +28,6 @@ use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
 use Bio::Perl;
 use Data::Dumper;
-#use Bio::Tools::Run::BWA;
-#use Bio::Tools::Run::Samtools;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
@@ -39,14 +37,14 @@ exit(main());
 
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
-	$$settings{assembly_min_contig_length} ||= 100; #TODO put this into config file
+	$$settings{assembly_min_contig_length} ||= 500; #TODO put this into config file
 
 	die(usage()) if @ARGV < 1;
 
 	my @cmd_options = ('ChangeDir=s', 'Reference=s@', 'keep', 'tempdir=s', 'outfile=s', 'estimatedGenomeSize=i','numcpus=i', 'fast', 'concatenateWith=s');
 	GetOptions($settings, @cmd_options) or die;
   $$settings{estimatedGenomeSize}||=5000000; # default: 5 MB
-  $$settings{numcpus}||=AKUtils::getNumCPUs();
+  $$settings{numcpus}||=1;
 
 	$$settings{outfile} ||= "$0.out.fasta";
 	$$settings{outfile} = File::Spec->rel2abs($$settings{outfile});
@@ -144,13 +142,24 @@ sub main() {
       system("cp -v $referenceAsm $combined_filename");
     }
 	} else {
-    my($velvet_basename,$velvet_assembly);
+    my($velvet_basename,$velvet_assembly,$spades_basename,$spades_assembly);
+    $combined_filename="$$settings{tempdir}/denovoCombined.fasta";
+    
+    $spades_basename = runSpadesAssembly($fastqfiles,$settings);
+    $spades_assembly = "$spades_basename/asm/contigs.fasta";
 
     $velvet_basename = runVelvetAssembly($fastqfiles,$settings);
     $velvet_assembly="$velvet_basename/contigs.fa";
 
-    # in case assemblies from multiple assemblers are combined
-    $combined_filename=$velvet_assembly;
+    mkdir "$$settings{tempdir}/combine";
+    my $combined_assembly="$$settings{tempdir}/combine/combined_out.fasta";
+    system("run_assembly_combine.pl $spades_assembly $velvet_assembly -m 100 -o $combined_assembly -t $$settings{tempdir}/combine");
+    die if $?;
+
+    # Even though the assemblies have been combined, find the best assembly.
+    # Maybe the combined one isn't the best.
+    system("run_assembly_chooseBest.pl $spades_assembly $velvet_assembly $combined_assembly -o $combined_filename");
+    die "ERROR: run_assembly_chooseBest.pl failed" if $?;
 	}
 
   $final_seqs = AKUtils::readMfa("$combined_filename");
@@ -250,6 +259,42 @@ sub fastq2fastaqual($$) {
 		push(@fastaqualfiles, ["$$settings{tempdir}/$fastq_file.fasta", "$$settings{tempdir}/$fastq_file.qual"]);
 	}
 	return \@fastaqualfiles;
+}
+
+sub runSpadesAssembly($$){
+  my($fastqfiles,$settings)=@_;
+  my $run_name = "$$settings{tempdir}/spades";
+  
+  # has it been run before?
+  my $continueArg="";
+  if(-d $run_name){
+    $continueArg="--continue ";
+  } else {
+    system("mkdir -p $run_name");
+    die if $?;
+  }
+  logmsg "Executing SPAdes assembly $run_name";
+  
+  my $spadesxopts=$$settings{spadesxopts}||"";
+  my $fastqArg;
+  my $carefulArg=""; # is set only if there are PE reads
+  logmsg "WARNING: only using the first five input files for SPAdes" if(@$fastqfiles > 5);
+  my @fastqfiles=("blurg",@$fastqfiles[0..4]); # unshift a bogus 0th element since we're in 1-based
+     @fastqfiles=grep defined, @fastqfiles;
+  for(my $i=1;$i<@fastqfiles;$i++){  # 1-based to match spades parameters
+    if(AKUtils::is_fastqPE($fastqfiles[$i])){
+      $fastqArg.="--pe$i-12 $fastqfiles[$i] ";
+      $carefulArg="--careful";
+    } else {
+      $fastqArg.="-s $fastqfiles[$i] ";
+    }
+  }
+
+  my $command="spades.py --tmp-dir $run_name/tmp -t $$settings{numcpus} -o $run_name/asm $fastqArg $carefulArg $continueArg";
+  system($command);
+  die "ERROR: Problem with SPAdes (spades.py)" if $?;
+
+  return $run_name;
 }
 
 sub runVelvetAssembly($$){
@@ -567,5 +612,6 @@ sub usage{
 	"Usage: $0 input.fastq [, input2.fastq, ...] [-o outfile.fasta] [-R references.mfa] [-t tempdir]
   Input files can also be fasta files.  *.fasta.qual files are considered as the relevant quality files
   -concat LINKER to concatenate the contigs with a linker, e.g. NNNNNCACACACTTAATTAATTAAGTGTGTGNNNNN
+  -n numcpus Default: 1
   "
 }
