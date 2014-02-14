@@ -17,17 +17,42 @@ use lib "$FindBin::RealBin/../lib";
 #$ENV{PATH} = "$FindBin::RealBin:".$ENV{PATH};
 use AKUtils qw/logmsg/;
 use File::Basename;
+use Data::Dumper;
 
 my $settings={
   appname=>'cgpipeline',
+
+  # prereqs. Deprecated in favor of the hash below.
   perllibs=>[qw(AKUtils BerkeleyDB Bio::Assembly::IO Bio::Assembly::Scaffold Bio::Perl Bio::Seq Bio::SeqIO Bio::Seq::Quality Bio::Seq::RichSeq Bio::SeqUtils Bio::Tools::GFF Bio::Tools::Run::StandAloneBlast CGPBase CGPipeline::SQLiteDB CGPipelineUtils Data::Dumper Date::Format File::Basename File::Copy File::Path File::Spec File::Temp FindBin Getopt::Long GTTmhmm List::Util LWP::Simple Math::Round strict Thread::Queue threads threads::shared warnings XML::LibXML::Reader XML::Quote HTML::TableExtract IO::Scalar Mail::Send)],
-  executables=>[qw(addRun amos2ace AMOScmp cat cp gzip gunzip ln minimus2 mkdir newAssembly newMapping rm runProject setRef sfffile toAmos toAmos_new touch tmhmm signalp bam2fastq vcfutils.pl bcftools fastqqc velveth velvetg VelvetOptimiser.pl tRNAscan-SE gmsn.pl long-orfs extract build-icm glimmer3 rnammer hmmsearch iprscan)],
+  executables=>[qw(spades.py gam-create gam-merge addRun amos2ace AMOScmp cat cp gzip gunzip ln minimus2 mkdir newAssembly newMapping rm runProject setRef sfffile toAmos toAmos_new touch tmhmm signalp bam2fastq vcfutils.pl bcftools fastqqc velveth velvetg VelvetOptimiser.pl tRNAscan-SE gmsn.pl long-orfs extract build-icm glimmer3 rnammer hmmsearch iprscan)],
   environmentalVariables=>[qw(TMHMMDIR)],
 
   # presence/absence codes
   code_missing=>0,
   code_present=>1,
   code_usable=>2,
+};
+
+# each prerequisite with their descriptions.  Single or no characters in the values for no description.
+my $prereqs={
+  perllibs=>{
+    pipeline=>{AKUtils=>1,BerkeleyDB=>1,'Bio::Perl'=>1,'Bio::Tools::Run::StandAloneBlast'=>1,CGPBase=>1,CGPipelineUtils=>1,'Data::Dumper'=>1,'Date::Format'=>1,'File::Basename'=>1,'File::Copy'=>1,'File::Path'=>1,'File::Spec'=>1,'File::Temp'=>1,FindBin=>1,'Getopt::Long'=>1,'List::Util'=>1,'LWP::Simple'=>1,'Math::Round'=>1, 'Thread::Queue'=>1, threads=>1, 'threads::shared'=>1, 'XML::LibXML::Reader'=>1, 'HTML::TableExtract'=>1},
+    assembly=>{},
+    prediction=>{GTTmhmm=>1},
+    annotation=>{'XML::Quote'=>1,'Mail::Send'=>1},
+  },
+  executables=>{
+    pipeline=>{cat=>1,cp=>1,gzip=>1, gunzip=>1, ln=>1,mkdir=>1,rm=>1, touch=>1, },
+    assembly=>{'spades.py'=>1,'gam-create'=>1,'gam-merge'=>1,addRun=>1,amos2ace=>1,AMOScmp=>1,minimus2=>1,newAssembly=>1, newMapping=>1, runProject=>1, setRef=>1, sfffile=>1, toAmos=>1, toAmos_new=>1,bam2fastq=>1,'vcfutils.pl'=>1,bcftools=>1,'fastqqc'=>1, velveth=>1, velvetg=>1, 'VelvetOptimiser.pl'=>1},
+    prediction=>{tmhmm=>1,signalp=>1,'tRNAscan-SE'=>1, 'gmsn.pl'=>1, 'long-orfs'=>1, extract=>1, 'build-icm'=>1, 'glimmer3'=>1, rnammer=>1, 'legacy_blast.pl'=>1},
+    annotation=>{hmmsearch=>1, iprscan=>1, 'legacy_blast.pl'=>1},
+  },
+  environmentalVariables=>{
+    pipeline=>{},
+    assembly=>{},
+    prediction=>{TMHMMDIR=>1},
+    annotation=>{},
+  },
 };
 
 exit(main());
@@ -47,17 +72,21 @@ sub main{
 
   my $totalProblems=$exeProblems+$libProblems;
   return 0 if(!$totalProblems);
-  return (1+$totalProblems);
+  return (1+$totalProblems); # add one so that it doesn't look like a generic error
 }
 
 sub checkEnvVars{
   my($settings)=@_;
   my $problems=0;
-  for my $var(@{$$settings{environmentalVariables}}){
-    my $presence_code=is_envVar_present($var,$settings);
-    $problems+=reportPresenceStatus($var,$presence_code,$settings);
+  while(my($module,$environmentalVariable)=each(%{$$prereqs{environmentalVariables}})){
+    while(my($var,$description)=each(%$environmentalVariable)){
+      my $presence_code=is_envVar_present($var,$settings);
+      $problems+=reportPresenceStatus($var,$presence_code,$settings);
+    }
   }
-  # check the CGPipeline path by seeing if this script is in the path
+
+  ## Any special env variables?
+  # Check the CGPipeline path by seeing if this script is in the path
   local $0=basename $0;
   my $isInPath=AKUtils::fullPathToExec($0,{warn_on_error=>1});
   #die "=>$0:$isInPath<=";
@@ -72,9 +101,11 @@ sub checkEnvVars{
 sub checkPerlLib{
   my($settings)=@_;
   my $problems=0;
-  for my $lib(@{$$settings{perllibs}}){
-    my $presence_code=is_perlLib_present($lib,$settings);
-    $problems+=reportPresenceStatus($lib,$presence_code,$settings);
+  while(my($module,$lib)=each(%{$$prereqs{perllibs}})){
+    while(my($libname,$description)=each(%$lib)){
+      my $presence_code=is_perlLib_present($libname,$settings);
+      $problems+=reportPresenceStatus($libname,$presence_code,$settings);
+    }
   }
   return $problems;
 }
@@ -82,9 +113,11 @@ sub checkPerlLib{
 sub checkExecutables{
   my($settings)=@_;
   my $problems=0;
-  for my $exe(@{$$settings{executables}}){
-    my $presence_code=is_executable_present($exe,$settings);
-    $problems+=reportPresenceStatus($exe,$presence_code,$settings);
+  while(my($module,$executable)=each(%{$$prereqs{executables}})){
+    while(my($exec,$description)=each(%$executable)){
+      my $presence_code=is_executable_present($exec,$settings);
+      $problems+=reportPresenceStatus($exec,$presence_code,$settings);
+    }
   }
   return $problems;
 }
