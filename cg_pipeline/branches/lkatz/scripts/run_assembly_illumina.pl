@@ -150,10 +150,17 @@ sub main() {
 
     $velvet_basename = runVelvetAssembly($fastqfiles,$settings);
     $velvet_assembly="$velvet_basename/contigs.fa";
+    #system("run_assembly_combine.pl $spades_assembly $velvet_assembly -m 100 -o $combined_assembly -t $$settings{tempdir}/combine");
 
-    mkdir "$$settings{tempdir}/combine";
+    # combine assemblies
     my $combined_assembly="$$settings{tempdir}/combine/combined_out.fasta";
-    system("run_assembly_combine.pl $spades_assembly $velvet_assembly -m 100 -o $combined_assembly -t $$settings{tempdir}/combine");
+    mkdir "$$settings{tempdir}/combine";
+    mkdir "$$settings{tempdir}/combine/assembly";
+    mkdir "$$settings{tempdir}/combine/reads";
+    mkdir "$$settings{tempdir}/combine/ngsgam";
+    system("ln -s $velvet_assembly $spades_assembly $$settings{tempdir}/combine/assembly/"); die if $?;
+    system("ln -s ".join(" ".@$fastqfiles)." $$settings{tempdir}/combine/reads/"); die if $?;
+    system("run_assembly_combine_ngsgam.pl -asm $$settings{tempdir}/combine/assembly -reads $$settings{tempdir}/combine/reads -t $$settings{tempdir}/combine/ngsgam -e $$settings{expectedGenomeSize}");
     die if $?;
 
     # Even though the assemblies have been combined, find the best assembly.
@@ -280,7 +287,7 @@ sub runSpadesAssembly($$){
   my $carefulArg=""; # is set only if there are PE reads
   logmsg "WARNING: only using the first five input files for SPAdes" if(@$fastqfiles > 5);
   my @fastqfiles=("blurg",@$fastqfiles[0..4]); # unshift a bogus 0th element since we're in 1-based
-     @fastqfiles=grep defined, @fastqfiles;
+     @fastqfiles=grep defined, @fastqfiles;    # remove extra elements if I grabbed too much
   for(my $i=1;$i<@fastqfiles;$i++){  # 1-based to match spades parameters
     if(AKUtils::is_fastqPE($fastqfiles[$i])){
       $fastqArg.="--pe$i-12 $fastqfiles[$i] ";
@@ -291,8 +298,7 @@ sub runSpadesAssembly($$){
   }
 
   my $command="spades.py --tmp-dir $run_name/tmp -t $$settings{numcpus} -o $run_name/asm $fastqArg $carefulArg $continueArg";
-  system($command);
-  die "ERROR: Problem with SPAdes (spades.py)" if $?;
+  command($command);
 
   return $run_name;
 }
@@ -613,5 +619,6 @@ sub usage{
   Input files can also be fasta files.  *.fasta.qual files are considered as the relevant quality files
   -concat LINKER to concatenate the contigs with a linker, e.g. NNNNNCACACACTTAATTAATTAAGTGTGTGNNNNN
   -n numcpus Default: 1
+  -e estimated genome size, e.g., -e 3000000 for a 3MB genome
   "
 }
