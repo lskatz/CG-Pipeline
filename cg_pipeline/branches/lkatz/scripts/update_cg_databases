@@ -21,6 +21,8 @@ if [ $? -gt 0 ]; then exit $?; fi
 # antimicrobial resistance targets
 update_card.sh
 if [ $? -gt 0 ]; then exit $?; fi
+update_argannot.sh
+if [ $? -gt 0 ]; then exit $?; fi
 
 # annotation stage - uniprot+sprot
 update_uniprot
