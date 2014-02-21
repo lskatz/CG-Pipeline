@@ -119,7 +119,7 @@ sub main() {
   # Antibiotic resistance genes
   ABX:
   if(!$skip{ABX}){
-    my $abx_command="run_annotation_blast.pl $aa_file -d $$settings{card_blast_db} -o $aa_file.card_hits.sql -p '-F F -e 0.005' -tempdir='$$settings{tempdir}' --min_aa_coverage 98 2>&1";
+    my $abx_command="run_annotation_blast.pl $aa_file -d $$settings{card_blast_db} -o $aa_file.argannot_hits.sql -p '-F F -e 1e-10 -b 1 -v 1' -tempdir='$$settings{tempdir}' --min_aa_coverage 60 --min_aa_identity 90 2>&1";
     logmsg "Finding antimicrobial resistance genes with command\n  $abx_command";
     system($abx_command); die "Problem with antimicrobial resistance gene blasting" if $?;
     flushSql($settings);
