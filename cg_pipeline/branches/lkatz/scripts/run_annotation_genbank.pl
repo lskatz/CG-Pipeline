@@ -159,6 +159,7 @@ sub interpretCdsFeat{
   my $cogsFeat=interpretCogs($cdsFeat,$locusAnnotation,$extraAnnotationInfo,$settings);
   my $pdbFeat=interpretPdb($cdsFeat,$locusAnnotation,$settings);
   interpretCard($cdsFeat,$locusAnnotation,$settings);
+  interpretArgannot($cdsFeat,$locusAnnotation,$settings);
   
   ## annotations on portions of the gene
   my $signalpFeat=interpretSignalP($cdsFeat,$locusAnnotation,$settings);
@@ -453,6 +454,29 @@ sub interpretTmhmm{
   return $tmFeat;
 }
 
+sub interpretArgannot{
+  my($cdsFeat,$annotation,$settings)=@_;
+  my $argannot=$$annotation{argannot_hits};
+  return 0 if(!@$argannot);
+
+  my $feat=blastSqlToFeat($cdsFeat,$argannot,"ARG-ANNOT database",{});
+
+  my($abx,$gene,$dbHit,$coordinates,$length);
+  # (Bla)AMPH_EC:AP012030:395554-396711:1158
+  if(($feat->get_tag_values('product'))[0] =~/\((.+?)\)([^:]+):(.*)/ ){
+    ($abx,$gene)=($1,$2);
+    ($dbHit,$coordinates,$length)=split(/:/,$3);
+  } else {
+    die "ERROR: could not interpret ARG-ANNOT gene ".($feat->get_tag_values('product'))[0];
+  }
+  
+  if($feat->has_tag('product')){
+    $cdsFeat->add_tag_value('product',"ARG-ANNOT:$gene/$abx");
+    $cdsFeat->add_tag_value('note',"ARG-ANNOT:Hit against $dbHit:$coordinates");
+  }
+  return $feat;
+}
+
 sub interpretCard{
   my($cdsFeat,$annotation,$settings)=@_;
   my $card=$$annotation{card_hits};
@@ -672,6 +696,7 @@ sub annotationFieldMap{
     is_hits => [@blastFields],
     pdb_hits => [@blastFields],
     card_hits=> [@blastFields],
+    argannot_hits=> [@blastFields],
     ipr_matches => [qw/locus_tag accession_num product database_name start end evalue status evidence/],
     signalp_hmm  => [ qw/locus_tag prediction signal_peptide_probability max_cleavage_site_probability start end/],
     signalp_nn => [ qw/locus_tag measure_type start end value cutoff is_signal_peptide/],
