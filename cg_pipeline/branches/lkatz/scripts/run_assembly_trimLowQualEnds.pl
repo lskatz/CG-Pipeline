@@ -123,7 +123,7 @@ sub trimUpAndDownSE{
   # 5' and 3' trimming step
   my(@a,@t,@c,@g,@q);
   if(is_fastqGz($file,$settings)){
-    open(STREAM,"gunzip -c '$file' | $fastqqc $fastqqcXopts /dev/stdin |") or die "Could not run fastqqc: $!";
+    open(STREAM,"gunzip -c '$file' | perl $fastqqc $fastqqcXopts /dev/stdin |") or die "Could not run fastqqc: $!";
   } else {
     open(STREAM,"$fastqqc $fastqqcXopts '$file' |") or die "Could not run fastqqc: $!";
   }
