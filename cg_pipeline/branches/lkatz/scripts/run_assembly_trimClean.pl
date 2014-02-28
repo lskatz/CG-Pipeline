@@ -55,11 +55,13 @@ sub main() {
     singletons=>1, # yes, output singletons
     'trim-on-average'=>0, # trimming until a base > min_quality is found
     trim=>1,              # yes perform trimming
+    removeDots=>1,        # yes remove dots
   };
   
   # TODO option to not have singletons (annoying!)
-  GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter trim! debug qualOffset=i numcpus=i singletons! trim-on-average!)) or die "Error in command line arguments";
+  GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter trim! removeDots! debug qualOffset=i numcpus=i singletons! trim-on-average!)) or die "Error in command line arguments";
   $$settings{numcpus}||=getNumCPUs();
+  $$settings{'zero-quality'}=chr($$settings{qualOffset}); # zero quality
   
   my $infile=$$settings{infile} or die "Error: need an infile\n".usage($settings);
   my $outfile=$$settings{outfile} or die "Error: need an outfile\n".usage($settings);
@@ -201,6 +203,7 @@ sub trimCleanPolyWorker{
     for my $i (0..$poly-1){
       my $t={};
       ($$t{id},$$t{seq},undef,$$t{qual})=splice(@entryLine,0,4);
+      dotsToNs($t,$settings);
       trimRead($t,$settings) if(!$notrim);
       $is_singleton=1 if(!read_is_good($t,$settings));
       $read[$i]=$t;
@@ -289,6 +292,31 @@ sub trimRead{
     $$read{seq}=substr($$read{seq},$numToTrim5,$$read{length}-$numToTrim5-$numToTrim3);
     $$read{qual}=substr($$read{qual},$numToTrim5,$$read{length}-$numToTrim5-$numToTrim3);
   }
+}
+
+# make any dot into an N in the read, and also convert any N's quality to 0
+sub dotsToNs{
+  my($read,$settings)=@_;
+  return $read if($$read{seq} !~/\.|N|n/);
+  my $zero=$$settings{'zero-quality'};
+
+  # find which are naughty characters
+  my @index=();
+  while($$read{seq}=~/(\.|N|n)/g){
+    push(@index,length($`));
+  }
+
+  # zero out these positions
+  my @qual=split(//,$$read{qual});
+  my @seq=split(//,$$read{seq});
+  for my $i(@index){
+    #next if($seq[$i]!~/\.nN/);
+    $seq[$i]='N';
+    $qual[$i]=$zero;
+  }
+  
+  $$read{qual}=join("", @qual);
+  $$read{seq}=join("",@seq);
 }
 
 # returns ($numToTrim5,$numToTrim3)
@@ -447,7 +475,7 @@ sub getNumCPUs() {
 
 sub usage{
   my ($settings)=@_;
-  "trim and clean a set of raw reads
+  "Trim and clean a set of raw reads. Interleved reads if they are paired-end.
   Usage: $0 -i reads.fastq -o reads.filteredCleaned.fastq [-p 2]
     -i input file in fastq format
     -o output file in fastq format
@@ -457,6 +485,7 @@ sub usage{
     1 for SE, 2 for paired end (PE). 0 for automatic detection (default)
   -quieter for somewhat quiet mode (use 1>/dev/null for totally quiet)
   --notrim to skip trimming of the reads. Useful for assemblers that require equal read lengths.
+  --noremoveDots to skip the changing of dots to Ns and altering their qualities to zero
   -qual 64 to use an offset of 64 instead of 33(default).
   --numcpus 1 or --numcpus 2 for single or multithreaded. Currently: $$settings{numcpus}
   --nosingletons Do not output singleton reads, which are those whose pair has been filtered out.
