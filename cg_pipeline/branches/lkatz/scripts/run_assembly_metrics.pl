@@ -350,7 +350,7 @@ sub usage{
   return $text if(!$$settings{help});
   $text.="\n  ADDITIONAL HELP
     -o outputType Make different output type.  Output type can be one of the following
-      length  - shows lengths of contigs
+      lengths  - shows lengths of contigs
       default - no change
     NOTES
     The assembly score is calculated as a log of (N50/numContigs * percentOfGenomeCovered)

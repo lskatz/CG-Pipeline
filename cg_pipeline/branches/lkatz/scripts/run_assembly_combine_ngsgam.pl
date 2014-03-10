@@ -30,7 +30,7 @@ sub main{
   # error check
   for(qw(asmDir readsDir)){
     die "ERROR: need $_\n".usage() if(!$$settings{$_});
-    die "ERROR: $_ is not a directory\n".usage() if(!-d $$settings{$_});
+    die "ERROR: $$settings{$_} is not a directory\n".usage() if(!-d $$settings{$_});
   }
 
   # check for assemblies and reads
@@ -202,5 +202,6 @@ sub usage{
     -reads readsDir A directory of cleaned and shuffled PE reads
     -t tempDir
     -e expectedGenomeSize, e.g. for 3MB, -e 3000000
+    -n numcpus Default: 1
   "
 }
