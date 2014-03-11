@@ -59,7 +59,7 @@ sub main() {
   };
   
   # TODO option to not have singletons (annoying!)
-  GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter trim! removeDots! debug qualOffset=i numcpus=i singletons! trim-on-average!)) or die "Error in command line arguments";
+  GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter trim! removeDots! debug qualOffset=i numcpus=i singletons! trim-on-average! auto)) or die "Error in command line arguments";
   $$settings{numcpus}||=getNumCPUs();
   $$settings{'zero-quality'}=chr($$settings{qualOffset}); # zero quality
   
@@ -114,6 +114,11 @@ sub qualityTrimFastqPoly($;$){
   $poly=1 if($poly<1); #sanity check
   $$settings{poly}=$poly; # this line is a band-aid until I pass the parameter directly the workers later
   
+  # Choose automatic values before the threads are initialized.
+  $settings=autoChooseParameters($$fastq[0],$settings) if($$settings{auto});
+  # TODO insert these new settings into the threads
+  # TODO choose new settings for each fastq
+
   # initialize the threads
   my (@t,$t);
   my $Q=Thread::Queue->new;
@@ -398,7 +403,7 @@ sub queue_status_updater{
   return 1;
 }
 
-# TODO use this subroutine to find out if this is a paired-end file and set the default poly=X
+# TODO use this subroutine to call this script on the first X reads so that there is not any more code duplication
 sub checkFirstXReads{
   my($infile,$numReads,$settings)=@_;
 
@@ -441,6 +446,32 @@ sub checkFirstXReads{
 ################
 ## utility
 ################
+
+sub autoChooseParameters{
+  my($infile,$settings)=@_;
+  my %newSettings=%$settings; # copy the hash
+  
+  # find the metrics and put them into a hash
+  my $readMetrics=`run_assembly_readMetrics.pl '$infile' --fast`;
+  chomp($readMetrics);
+  my($header,$values)=split /\n/, $readMetrics;
+  my @header=split /\t/,$header;
+  my %metric;
+  @metric{@header}=split /\t/,$values;
+  
+  # suggest some values in settings
+  #$newSettings{bases_to_trim}=10;
+  $newSettings{min_length}=$metric{avgReadLength} - $newSettings{bases_to_trim};
+  $newSettings{min_avg_quality}=$metric{avgQuality} - 5;
+  $newSettings{min_quality}=$metric{avgQuality} - 5;
+  #print Dumper [\%metric,\%newSettings];die;
+
+  my $newOptions; $newOptions.="$_: $newSettings{$_}, " for(qw(bases_to_trim min_length min_avg_quality min_quality));
+  $newOptions=~s/,$//;
+  logmsg "Auto-choose was specified. New options are now: $newOptions";
+  
+  return \%newSettings;
+}
 
 # returns 1 for SE, 2 for PE, and -1 is for internal error
 sub checkPolyness{
@@ -492,6 +523,7 @@ sub usage{
   --trim-on-average Trim until an average quality is reached on the 5' and 3' ends. Ordinarily, trimming will stop when a base > min_quality is reached.
 
   Use phred scores (e.g. 20 or 30) or length in base pairs if it says P or L, respectively
+  --auto                      # to choose the following values automatically based on run_assembly_readMetrics.pl (experimental)
   --min_quality P             # trimming
     currently: $$settings{min_quality}
   --bases_to_trim L           # trimming
