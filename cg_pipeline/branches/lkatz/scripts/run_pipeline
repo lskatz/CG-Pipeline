@@ -43,9 +43,10 @@ sub main(){
     chomp($home);
   
   # get options
-  my @cmd_options = ('help','deNovo=s','force','project=s','input=s@','tag_prefix=s','Reference=s','command=s','verbose=i','goto=s','just=s','expectedGenomeSize=i', 'skip=s@');
+  my @cmd_options = ('help','deNovo=s','force','project=s','input=s@','tag_prefix=s','Reference=s','command=s','verbose=i','goto=s','just=s','expectedGenomeSize=i', 'skip=s@', 'numcpus=i');
   GetOptions($settings,@cmd_options) or die;
   $verbose =(defined($$settings{verbose}))?$$settings{verbose}:2;
+  $$settings{numcpus}||=1;
   
   # if the user needs help, print out verbose help
   if($$settings{help}){
@@ -119,7 +120,7 @@ sub main(){
       }
       $sffarg.="$_ ";
     }
-    $invoke_string="time run_assembly $sffarg --tempdir=$home/$project/build/assembly --keep $refarg --output $home/$project/assembly.fasta ";
+    $invoke_string="time run_assembly $sffarg --numcpus $$settings{numcpus} --tempdir=$home/$project/build/assembly --keep $refarg --output $home/$project/assembly.fasta ";
     $invoke_string.="-d T " if($$settings{deNovo});
     $invoke_string.="-e $$settings{expectedGenomeSize} " if($$settings{expectedGenomeSize});
     if($verbose>1){
@@ -277,6 +278,7 @@ Parameters:
   -v Set the level of verbosity. 0 for no stdout, 1 for some stdout, 2 for all stdout
     default: 2
   -e expected genome size in bp (4MB genome: -e 4000000)
+  --numcpus 1 The number of cpus to use
 
 examples:
 
