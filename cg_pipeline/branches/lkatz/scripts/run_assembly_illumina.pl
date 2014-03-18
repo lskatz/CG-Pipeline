@@ -161,7 +161,10 @@ sub main() {
     system("ln -s $velvet_assembly $spades_assembly $$settings{tempdir}/combine/assembly/"); die if $?;
     system("ln -s ".join(" ".@$fastqfiles)." $$settings{tempdir}/combine/reads/"); die if $?;
     system("run_assembly_combine_ngsgam.pl -asm $$settings{tempdir}/combine/assembly -reads $$settings{tempdir}/combine/reads -t $$settings{tempdir}/combine/ngsgam -e $$settings{expectedGenomeSize}");
-    die if $?;
+    if($?){
+      logmsg "WARNING: either a problem with ngs-gam or it is not installed. Assemblies will not be merged." if $?;
+      system("touch $combined_assembly"); die if $?;
+    }
 
     # Even though the assemblies have been combined, find the best assembly.
     # Maybe the combined one isn't the best.
