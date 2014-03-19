@@ -114,7 +114,7 @@ sub main() {
         my $illumina_basename=File::Spec->rel2abs("$$settings{tempdir}/$ref_name/illumina");
         mkdir($illumina_basename) if(!-d $illumina_basename);
         my $outIllumina="$illumina_basename/assembly.fasta";
-        system("run_assembly_illumina.pl ".join(" ",@{ $$fastaqualfiles{illumina} })." -R $ref_file -t $illumina_basename -o $illumina_basename/assembly.fasta --numcpus=$$settings{numcpus} -e estimatedGenomeSize 2>&1");
+        system("run_assembly_illumina.pl ".join(" ",@{ $$fastaqualfiles{illumina} })." -R $ref_file -t $illumina_basename -o $illumina_basename/assembly.fasta --numcpus=$$settings{numcpus} -e $$settings{estimatedGenomeSize} 2>&1");
         die "Could not perform illumina assembly" if $?;
         push(@ref_assembly,$outIllumina);
       }
