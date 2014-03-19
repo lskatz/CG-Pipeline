@@ -87,7 +87,7 @@ sub mapReads{
     }
     
     # merge and sort all reads' bams if there are >1
-    if(@read > 1){
+    if(@bam > 1){
       my $command="samtools merge $mappingTempdir/merged.bam ".join(" ",@bam);
       logmsg $command;
       system($command);

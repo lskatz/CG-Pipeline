@@ -160,7 +160,7 @@ sub main() {
     mkdir "$$settings{tempdir}/combine/ngsgam";
     symlink $_,"$$settings{tempdir}/combine/assembly/".fileparse($_) for($velvet_assembly, $spades_assembly);
     symlink $_, "$$settings{tempdir}/combine/reads/".fileparse($_) for(@$fastqfiles);
-    my $ngsgamCommand="run_assembly_combine_ngsgam.pl -asm $$settings{tempdir}/combine/assembly -reads $$settings{tempdir}/combine/reads -t $$settings{tempdir}/combine/ngsgam -e $$settings{estimatedGenomeSize} --numcpus $$settings{numcpus}";
+    my $ngsgamCommand="run_assembly_combine_ngsgam.pl -asm $$settings{tempdir}/combine/assembly -reads $$settings{tempdir}/combine/reads -t $$settings{tempdir}/combine/ngsgam -e $$settings{estimatedGenomeSize} --numcpus $$settings{numcpus} > '$combined_assembly'";
     system($ngsgamCommand);
     if($?){
       logmsg "WARNING: either a problem with ngs-gam or it is not installed. Assemblies will not be merged.  Command was:\n  $ngsgamCommand" if $?;
