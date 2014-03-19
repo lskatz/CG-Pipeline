@@ -59,9 +59,13 @@ sub main() {
   
   $$settings{outfile} ||= "$0.out.gb";
   $$settings{assembly_linker} ||= ""; #"NNNNNCACACACTTAATTAATTAAGTGTGTGNNNNN";
-  $$settings{min_predictors_to_call_orf}=1; 
-  $$settings{min_predictors_to_call_orf}++ if ($$settings{prediction_use_genemark});
-  $$settings{min_predictors_to_call_orf}++ if ($$settings{prediction_use_prodigal});
+
+  # How many gene predictors are needed to call an orf?
+  if(!$$settings{prediction_min_predictors_to_call_orf}){
+    $$settings{prediction_min_predictors_to_call_orf}=1; 
+    $$settings{prediction_min_predictors_to_call_orf}++ if ($$settings{prediction_use_genemark});
+    $$settings{prediction_min_predictors_to_call_orf}++ if ($$settings{prediction_use_prodigal});
+  }
 
   my @l = split(/\s+/, $$settings{classification});
   $$settings{classification} = [@l[$#l-5..$#l]]; # last 6 words
@@ -165,7 +169,7 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
     foreach my $strand (keys %{$all_predictions{$seq}}) {
       foreach my $stop (keys %{$all_predictions{$seq}->{$strand}}) {
         my $contrib_predictions = $all_predictions{$seq}->{$strand}->{$stop};
-        if (scalar(@$contrib_predictions) < $$settings{min_predictors_to_call_orf}) {
+        if (scalar(@$contrib_predictions) < $$settings{prediction_min_predictors_to_call_orf}) {
           push(@minority_rep_orfs, @$contrib_predictions); next;
         }
         my %starts;
