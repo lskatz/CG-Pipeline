@@ -1872,7 +1872,7 @@ sub loadBLAST8($) {
 
 sub getBLASTGenePredictions($$) {
 	my ($input_seqs, $settings) = @_;
-  $$settings{num_cpus}||=AKUtils::getNumCPUs();
+  $$settings{num_cpus}||=$$settings{numcpus}||1;
 	my $orfs = AKUtils::findOrfs2($input_seqs, {orftype=>'start2stop', need_seq=>1, need_aa_seq=>1});
 
   my $blastIn="$$settings{tempdir}/blastin.faa";
@@ -1922,6 +1922,7 @@ sub getBLASTGenePredictions($$) {
 
 sub parseBlastGenePredictions{
   my($blast_outfile,$settings)=@_;
+  $$settings{num_cpus}||=$$settings{numcpus}||1;
   logmsg "Reading blast results";
   my $reportEvery=100;
   $reportEvery=10 if($reportEvery<10); 
