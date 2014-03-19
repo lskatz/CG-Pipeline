@@ -39,7 +39,7 @@ sub main() {
 
 	die usage() if @ARGV < 1;
 
-	my @cmd_options = qw(Reference=s@ keep tempdir=s output=s debug numcpus=i expectedGenomeSize=i illumina=s@ 454=s@);
+	my @cmd_options = qw(Reference=s@ keep tempdir=s output=s debug numcpus=i estimatedGenomeSize=i illumina=s@ 454=s@);
 	GetOptions($settings, @cmd_options) or die;
 	$$settings{numcpus}||=1;
 
@@ -114,7 +114,7 @@ sub main() {
         my $illumina_basename=File::Spec->rel2abs("$$settings{tempdir}/$ref_name/illumina");
         mkdir($illumina_basename) if(!-d $illumina_basename);
         my $outIllumina="$illumina_basename/assembly.fasta";
-        system("run_assembly_illumina.pl ".join(" ",@{ $$fastaqualfiles{illumina} })." -R $ref_file -t $illumina_basename -o $illumina_basename/assembly.fasta --numcpus=$$settings{numcpus} 2>&1");
+        system("run_assembly_illumina.pl ".join(" ",@{ $$fastaqualfiles{illumina} })." -R $ref_file -t $illumina_basename -o $illumina_basename/assembly.fasta --numcpus=$$settings{numcpus} -e estimatedGenomeSize 2>&1");
         die "Could not perform illumina assembly" if $?;
         push(@ref_assembly,$outIllumina);
       }
@@ -172,7 +172,7 @@ sub main() {
       system("mkdir $illumina_basename") if(!-d $illumina_basename);
       die "Could not make the dir $illumina_basename because $!" if $?;
       #push(@assembly,$outIllumina); goto DENOVO_COMBINING;
-      $command="run_assembly_illumina.pl ".join(" ",@{ $$fastaqualfiles{illumina} })." -o $outIllumina -t $illumina_basename --numcpus $$settings{numcpus} 2>&1";
+      $command="run_assembly_illumina.pl ".join(" ",@{ $$fastaqualfiles{illumina} })." -o $outIllumina -t $illumina_basename --numcpus $$settings{numcpus} -e $$settings{estimatedGenomeSize} 2>&1";
       logmsg "Running Illumina assembly with\n   $command";
       system($command) unless($$settings{debug});
       die "Could not perform Velvet assembly" if $?;
@@ -292,7 +292,7 @@ sub qualityControlFastq{
   # Downsample if it helps.
   # Pretend like this is the ony read set in terms of coverage.
   # TODO downsample later in the pipeline again or remove singletons if downsampling is needed
-  if(my $e=$$settings{expectedGenomeSize}){
+  if(my $e=$$settings{estimatedGenomeSize}){
     my $downsampled="$$settings{tempdir}/".fileparse($file).".downsampled.fastq.gz";
     my $targetCoverage=100;
     logmsg "Expected genome size was given as $e. Downsampling to target coverage of $targetCoverage";
@@ -406,7 +406,7 @@ sub usage{
     -R references.mfa to perform a reference assembly 
     -t tempdir to name a specific temporary directory
     -n numcpus to specify a number of threads, instead of all possible threads
-    -e for an expected genome size, in bp (for 4MB genome, use -e 4000000)
+    -e for an estimated genome size, in bp (for 4MB genome, use -e 4000000)
       This is used for downsampling and could be used for displaying more accurate assembly metrics
     Use these flags to specify exact chemistry types
       --illumina file.fastq, --454 file.sff
