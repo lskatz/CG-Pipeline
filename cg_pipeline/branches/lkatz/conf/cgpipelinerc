@@ -1,17 +1,19 @@
-pipeline_version = "0.4.1.0"
+pipeline_version = "0.4.2.0"
 pipeline_reference = "Andrey O. Kislyuk, Lee S. Katz, Sonia Agrawal, Matthew S. Hagen, Andrew B. Conley, Pushkala Jayaraman, Viswateja Nelakuditi, Jay C. Humphrey, Scott A. Sammons, Dhwani Govil, Raydel D. Mair, Kathleen M. Tatti, Maria L. Tondella, Brian H. Harcourt, Leonard W. Mayer, and I. King Jordan.|A computational genomics pipeline for prokaryotic sequencing projects.|Bioinformatics Advance Access published on June 2, 2010, DOI 10.1093/bioinformatics/btq284.|20519285"
 
 classification = "Vibrio cholerae Vibrio Vibrionaceae Vibrionales Gammaproteobacteria Proteobacteria Bacteria"
 
 assembly_min_contig_length=500
 
-prediction_blast_db = "/media/data/.trash/home/lkatz/bin/cg_pipeline/data/uniprot_sprot"
+# prediction_blast_db = "/media/data/.trash/home/lkatz/bin/cg_pipeline/data/uniprot_sprot"
+prediction_blast_db = /home/lkatz/bin/cg_pipeline/data/uniprot_sprot.filtered.fasta
 prediction_transl_table = 11
 prediction_use_genemark = 1
 prediction_use_prodigal = 1
 prediction_crt_jar="/opt/CRT1.2/CRT1.2-CLI.jar"
+prediction_min_predictors_to_call_orf = 2
 
-annotation_blast_db = "/home/lkatz/bin/cg_pipeline/data/uniprot_sprot_trembl"
+annotation_blast_db = "/home/lkatz/bin/cg_pipeline/data/uniprot_sprot_trembl.filtered.fasta"
 annotation_uniprot_db3 = "/home/lkatz/bin/cg_pipeline/data/cgpipeline.db3"
 annotation_uniprot_evidence_db3 = "/home/lkatz/bin/cg_pipeline/data/cgpipeline.evidence.db3"
 
@@ -20,9 +22,10 @@ cogs_blast_db = "/home/lkatz/bin/cg_pipeline/data/cogs"
 cogs_whog = "/home/lkatz/bin/cg_pipeline/data/whog"
 prot2cogid = "/home/lkatz/bin/cg_pipeline/data/prot2cogid.tsv"
 vfdb_blast_db = "/home/lkatz/bin/cg_pipeline/data/vfdb_VFs_aa"
-pdb_blast_db = "/media/data/genomicDatabases/pdbaa"
+pdb_blast_db = "/home/lkatz/bin/cg_pipeline/data/pdbaa"
 is_blast_db = "/home/lkatz/bin/cg_pipeline/data/is.faa"
-card_blast_db="/home/lkatz/bin/cg_pipeline/data/CARD.faa"
+#card_blast_db="/home/lkatz/bin/cg_pipeline/data/CARD.faa"
+card_blast_db="/home/lkatz/bin/cg_pipeline/data/arg-annot"
 
 reporting_email = "lskatz+cgpipeline@gmail.com"
 
