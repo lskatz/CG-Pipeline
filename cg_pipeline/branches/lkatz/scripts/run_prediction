@@ -51,10 +51,11 @@ sub main() {
 
   die("Usage: $usage\n") if @ARGV < 1;
 
-  my @cmd_options = ('tempdir=s','ChangeDir=s', 'Reference=s@', 'keep', 'blast_db=s', 'outfile=s', 'strain_name=s', 'tag_prefix=s', 'classification=s', 'crisprPrediction');
+  my @cmd_options = ('tempdir=s','ChangeDir=s', 'Reference=s@', 'keep', 'blast_db=s', 'outfile=s', 'strain_name=s', 'tag_prefix=s', 'classification=s', 'crisprPrediction', 'numcpus=i');
   GetOptions($settings, @cmd_options) or die;
   die("Argument strain_name is required. Usage: $usage\n") unless defined $$settings{strain_name};
   die("Argument classification is required. Usage: $usage\n") unless defined $$settings{classification};
+  $$settings{numcpus}||=1;
   
   $$settings{outfile} ||= "$0.out.gb";
   $$settings{assembly_linker} ||= ""; #"NNNNNCACACACTTAATTAATTAAGTGTGTGNNNNN";
@@ -134,6 +135,7 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 #goto RNA;
 #logmsg "DEBUG";goto CRISPR;
   # Obtain ab initio predictions
+  die Dumper $settings;
   my ($genemark_predictions,$prodigal_predictions);
   if ($$settings{prediction_use_genemark}) {
     $genemark_predictions = AKUtils::getGenemarkPredictions($input_seqs, $settings);
