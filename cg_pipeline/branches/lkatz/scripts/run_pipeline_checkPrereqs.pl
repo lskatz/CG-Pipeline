@@ -39,7 +39,7 @@ my $prereqs={
   executables=>{
     pipeline=>{cat=>1,cp=>1,gzip=>1, gunzip=>1, ln=>1,mkdir=>1,rm=>1, touch=>1, },
     assembly=>{'spades.py'=>"SPAdes assembler",'gam-create'=>"NGS-GAM assembly merger",'gam-merge'=>"NGS-GAM assembly merger",addRun=>"Newbler",amos2ace=>"AMOS",AMOScmp=>"AMOS",minimus2=>"AMOS",newAssembly=>"Newbler", newMapping=>"Newbler", runProject=>"Newbler", setRef=>"Newbler", sfffile=>"Newbler", toAmos=>"AMOS", toAmos_new=>"AMOS",bam2fastq=>"Exporting fastq from bam files; found in cg_pipeline/etc",'vcfutils.pl'=>"Samtools",bcftools=>"Samtools",'fastqqc'=>"AMOS", velveth=>"Velvet", velvetg=>"Velvet", 'VelvetOptimiser.pl'=>"Velvet"},
-    prediction=>{tmhmm=>"TMHMM transmembrane helix predictor",signalp=>"Signal Peptides",'tRNAscan-SE'=>"tRNA prediction", 'gmsn.pl'=>"GeneMark", 'long-orfs'=>"Glimmer3", extract=>"Glimmer3", 'build-icm'=>"Glimmer3", 'glimmer3'=>"Glimmer3", rnammer=>"RNA prediction", 'legacy_blast.pl'=>"BLAST+", blastp=>"BLAST+"},
+    prediction=>{tmhmm=>"TMHMM transmembrane helix predictor",signalp=>"Signal Peptides",'tRNAscan-SE'=>"tRNA prediction", 'gmsn.pl'=>"GeneMark", 'long-orfs'=>"Glimmer3", extract=>"Glimmer3", 'build-icm'=>"Glimmer3", 'glimmer3'=>"Glimmer3", rnammer=>"RNA prediction", prodigal=>"Prodigal CDS prediction", 'legacy_blast.pl'=>"BLAST+", blastp=>"BLAST+"},
     annotation=>{hmmsearch=>1, iprscan=>"InterProScan", 'legacy_blast.pl'=>"BLAST+", blastp=>"BLAST+"},
   },
   environmentalVariables=>{
