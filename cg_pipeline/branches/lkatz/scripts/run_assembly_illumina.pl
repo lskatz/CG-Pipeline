@@ -73,12 +73,14 @@ sub main() {
 	my ($combined_filename,$final_seqs);
 
 	if (@ref_files) {
+    $combined_filename="$$settings{tempdir}/referenceCombined.fasta";
+
     my $smalt=AKUtils::fullPathToExec("smalt");
     my $samtools=AKUtils::fullPathToExec("samtools");
     my $bcfutils=AKUtils::fullPathToExec("bcftools");
     my $vcfutils=AKUtils::fullPathToExec("vcfutils.pl");
 
-    logmsg "Concatenating the reference sequence(s) into one file and building a database";
+    logmsg "Concatenating the reference sequence(s) into one file and building a smalt index";
     my $concatenatedReferences="$$settings{tempdir}/ref_seqs.fna";
     my $concatenatedReads="$$settings{tempdir}/reads.fastq";
     system("cat ".join(" ",@ref_files)." >$concatenatedReferences") if(!-e $concatenatedReferences); die "Could not concatenate references because $!" if $?;
@@ -123,25 +125,54 @@ sub main() {
     my $referenceAsm="$$settings{tempdir}/reference.$$.fasta";
     system("run_assembly_samToFasta.pl -b $combinedBam -a $concatenatedReferences -t $$settings{tempdir}/samToFasta -o $referenceAsm -q"); die if $?;
 
+    # find the size of the final assembly
+    my $mappingAsmSize;
+    my $refAsmSeqs=AKUtils::readMfa($referenceAsm);
+    for(values(%$refAsmSeqs)){
+      $mappingAsmSize+=length($_) if(length($_) > $$settings{assembly_min_contig_length});
+    }
+
     # assemble unmapped reads
     # run de novo assembly, keeping unused reads
     logmsg "Recovering leftover unmapped reads";
-    my $unmappedFastq="$$settings{tempdir}/unmapped";
+    my $unmappedDenovo="$$settings{tempdir}/unmappedReadsDenovo.fasta";
+    my $unmappedFastq="$$settings{tempdir}/unmapped"; # bam2fastq prefix
     my ($uMate1,$uMate2)=($unmappedFastq."_1.fastq",$unmappedFastq."_2.fastq");
     system("bam2fastq -o '$unmappedFastq#.fastq' --no-aligned --unaligned --force $combinedBam"); die if $?;
-    my $uShuffled=shuffleFastq([$uMate1,$uMate2],$settings);
-    my $velvet_basename=runVelvetAssembly([$uShuffled],$settings);
-    my $velvetAsm="$velvet_basename/contigs.fa";
+    my $uShuffled="$$settings{tempdir}/unmapped.shuffled.fastq.gz";
+    system("run_assembly_shuffleReads.pl $unmappedFastq"."_1.fastq $unmappedFastq"."_2.fastq | gzip -c > $uShuffled");
+    die "ERROR: could not shuffle fastq files into $uShuffled" if $?;
 
-    # mix in those de novo contigs
-    $combined_filename="$$settings{tempdir}/referenceCombined.fasta";
-    system("run_assembly_combine.pl -a $referenceAsm -a $velvetAsm -m 100 -o $combined_filename");
-    # if combining doesn't work, just use the ref assembly
+    my $estimatedGenomeSize=$$settings{estimatedGenomeSize} - $mappingAsmSize;
+    # If estimated size is negative, then estimate that a 10th of the genome is still missing.
+    # The reference genome should be something like 90% or greater in identity.
+    $estimatedGenomeSize=$$settings{estimatedGenomeSize}/10 if($estimatedGenomeSize < 1);
+    my $unmappedDenovoCommand="$0 $uShuffled -e $estimatedGenomeSize --tempdir $$settings{tempdir}/unmapped -o $unmappedDenovo --numcpus 32";
+    system($unmappedDenovoCommand);
+    die "Error with performing de novo assembly on unmapped reads. Command was\n  $unmappedDenovoCommand" if $?;
+
+    my $combined_assembly="$$settings{tempdir}/combine/combined_out.fasta";
+    mkdir "$$settings{tempdir}/combine";
+    mkdir "$$settings{tempdir}/combine/assembly";
+    mkdir "$$settings{tempdir}/combine/reads";
+    mkdir "$$settings{tempdir}/combine/ngsgam";
+    symlink $_,"$$settings{tempdir}/combine/assembly/".fileparse($_) for($unmappedDenovo,$referenceAsm);
+    symlink $_, "$$settings{tempdir}/combine/reads/".fileparse($_) for(@$fastqfiles);
+    my $ngsgamCommand="run_assembly_combine_ngsgam.pl -asm $$settings{tempdir}/combine/assembly -reads $$settings{tempdir}/combine/reads -t $$settings{tempdir}/combine/ngsgam -e $$settings{estimatedGenomeSize} --numcpus $$settings{numcpus} > '$combined_assembly'";
+    system($ngsgamCommand);
     if($?){
-      logmsg "WARNING: Combining assemblies didn't work. Just using your reference assembly instead.";
-      system("cp -v $referenceAsm $combined_filename");
+      logmsg "WARNING: either a problem with ngs-gam or it is not installed. Assemblies will not be merged.  Command was:\n  $ngsgamCommand" if $?;
+      system("touch $combined_assembly"); die if $?;
     }
-	} else {
+
+    # Even though the assemblies have been combined, find the best assembly.
+    # Maybe the combined one isn't the best.
+    system("run_assembly_chooseBest.pl -e $$settings{estimatedGenomeSize} $referenceAsm $unmappedDenovo $combined_assembly -o $combined_filename");
+    die "ERROR: run_assembly_chooseBest.pl failed" if $?;
+  }
+  ##################
+  # DENOVO assembly
+	else {
     my($velvet_basename,$velvet_assembly,$spades_basename,$spades_assembly);
     $combined_filename="$$settings{tempdir}/denovoCombined.fasta";
     
@@ -487,6 +518,7 @@ sub fastqToFasta{
 }
 
 sub shuffleFastq{
+  ...;
   my($fastqs,$settings)=@_;
   my $fastq="$$settings{tempdir}/shuffled.$$.fastq";
   my($mate1,$mate2)=@$fastqs;
