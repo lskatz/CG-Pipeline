@@ -135,7 +135,6 @@ $$settings{gm_trainer_xopts} .= " --motif=0";
 #goto RNA;
 #logmsg "DEBUG";goto CRISPR;
   # Obtain ab initio predictions
-  die Dumper $settings;
   my ($genemark_predictions,$prodigal_predictions);
   if ($$settings{prediction_use_genemark}) {
     $genemark_predictions = AKUtils::getGenemarkPredictions($input_seqs, $settings);
