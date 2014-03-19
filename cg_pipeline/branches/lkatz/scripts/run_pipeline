@@ -147,7 +147,7 @@ sub main(){
       $mfaArg.="$_ ";
     }
     $mfaArg=$mfaArg||"$home/$project/assembly.fasta";
-    $invoke_string="time run_prediction $mfaArg -crispr --tempdir=$home/$project/build/prediction --keep -o $home/$project/prediction.gb --strain_name=$project 2>&1 ";
+    $invoke_string="time run_prediction $mfaArg --numcpus $$settings{numcpus} -crispr --tempdir=$home/$project/build/prediction --keep -o $home/$project/prediction.gb --strain_name=$project 2>&1 ";
     if($verbose>1){
       $invoke_string.="|tee --append $logfile";
     }
