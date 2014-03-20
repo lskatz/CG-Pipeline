@@ -1522,7 +1522,7 @@ sub loadGlimmer3Predictions($;$$) {
 	while (<PRED>) {
 		if (/^\>\s*(.+?)\s*$/) {
 			$cur_seq = $1;
-			$cur_seq = $$seqname_remap{$cur_seq} if(defined $seqname_remap);
+			$cur_seq = $$seqname_remap{$cur_seq} if(defined $seqname_remap && defined($$seqname_remap{$cur_seq}));
 		} else {
 			my @line = split /\s+/;
 			my ($gene_id, $start, $end, $frame, $raw_score) = @line;
@@ -1709,7 +1709,7 @@ sub loadGMHMMPredictions($;$$) {
 	while (<PRED>) {
 		if (/^\>\s*(.+?)\s*$/) {
 			$cur_seq = $1;
-			$cur_seq = $$seqname_remap{$cur_seq} if defined $seqname_remap;
+			$cur_seq = $$seqname_remap{$cur_seq} if(defined $seqname_remap && defined($$seqname_remap{$cur_seq}));
 		} else {
 			my @line = split /\s+/;
 			shift(@line) if $line[0] eq '';
@@ -1958,7 +1958,7 @@ sub parseBlastGenePredictions{
   my @blast_hits=();
   for(@thread){
     my $tmp=$_->join;
-    warn "Warning: no blast hits were found in thread ".$_->tid if(!@$tmp);
+    #warn "Warning: no blast hits were found in thread ".$_->tid if(!@$tmp);
     push(@blast_hits,@$tmp);
   }
   warn "WARNING: no blast hits were returned at all (internal error?)" if(!@blast_hits);
