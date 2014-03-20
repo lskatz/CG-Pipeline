@@ -161,6 +161,7 @@ sub getGenePredictions($$$$$) {
         $unified_predictions{$seq}->{$strand}->{$stop} = \%prediction;
 
         my $nt_seq = substr($$input_seqs{$seq}, min($best_start, $stop)-1, abs($best_start - $stop)+1);
+        next if(!$nt_seq); # weird bug I guess, but I'd like to investigate it later
         if ($contrib_predictions->[0]->{strand} eq '-') {
           $nt_seq = reverse($nt_seq); $nt_seq =~ tr/ATGC/TACG/;
         }
@@ -171,10 +172,15 @@ sub getGenePredictions($$$$$) {
         $$settings{prediction_minLength}||=30;
         $$settings{prediction_maxLength}||=2000;
         if (length($aa_seq) < $$settings{prediction_minLength} or length($aa_seq) > $$settings{prediction_maxLength} or $aa_seq !~ /M.+\*$/) {
-          warn("WARNING: abnormal translated sequence (either too long, too short, or doesn't have a possible M start site): \n\t$nt_seq\n\t$aa_seq\n");
+          if (length($aa_seq) < $$settings{prediction_minLength}){
+            logmsg "WARNING: translated sequence length is too short: \n\t$nt_seq\n\t$aa_seq";
+          } elsif(length($aa_seq) > $$settings{prediction_maxLength}){
+            logmsg "WARNING: translated sequence length is too long: \n\t$nt_seq\n\t$aa_seq";
+          } elsif($aa_seq !~ /M.+\*$/){
+            logmsg "WARNING: this gene does not have a possible M start site: \n\t$nt_seq\n\t$aa_seq";
+          }
           $numAbnormalTranslations++;
         }
-
       }
     }
   }
