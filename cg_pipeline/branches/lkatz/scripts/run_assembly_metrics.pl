@@ -93,6 +93,7 @@ sub assemblyMetricsWorker{
   my %metrics;
   while(defined(my $file=$Q->dequeue)){
     my $metrics=assemblyMetrics($file,$settings);
+    next if(keys(%$metrics) < 1);
     $metrics{$file}=$metrics;
   }
   return \%metrics;
@@ -108,6 +109,10 @@ sub assemblyMetrics($$){
   }
 
   $seqs=filterSeqs($seqs,$settings);
+  if(keys(%$seqs) < 1){
+    logmsg "WARNING: Could not find any sequences in $file. Skipping";
+    return {};
+  }
 
   # put the assembly score last because it depends on everything else
   my @statsToProcess=sort({
@@ -183,6 +188,9 @@ sub printContigLengths{
   my($file,$settings)=@_;
   for my $f(@$file){
     my $seqs=AKUtils::readMfa($f);
+    if(keys(%$seqs) < 1){
+      next;
+    }
     while(my($id,$seq)=each(%$seqs)){
       print join("\t",$f,$id,length($seq))."\n";
     }
