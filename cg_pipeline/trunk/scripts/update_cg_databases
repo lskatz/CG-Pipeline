@@ -3,8 +3,8 @@
 # (optional) fsfind database
 
 # isFinder database
-update_is -o is
-if [ $? -gt 0 ]; then exit $?; fi
+#update_is -o is
+#if [ $? -gt 0 ]; then exit $?; fi
 
 # annotation stage - VFDB
 update_vfdb

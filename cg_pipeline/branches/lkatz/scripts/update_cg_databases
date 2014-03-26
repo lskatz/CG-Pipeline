@@ -7,8 +7,8 @@ update_vfdb
 if [ $? -gt 0 ]; then exit $?; fi
 
 # isFinder database
-update_is -o is
-if [ $? -gt 0 ]; then exit $?; fi
+#update_is -o is
+#if [ $? -gt 0 ]; then exit $?; fi
 
 # annotation stage - COGS
 update_cogs
