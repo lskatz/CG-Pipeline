@@ -165,7 +165,7 @@ sub gamCreate{
   }
   close SLAVE;
 
-  system("gam-create --master-bam $masterGam --slave-bam $slaveGam  --min-block-size 5 --output $gamDir/out");
+  system("gam-create --master-bam $masterGam --slave-bam $slaveGam  --min-block-size 5 --output $gamDir/out 1>&2");
   die "ERROR: Problem with gam-create" if $?;
   return $gamDir;
 }
