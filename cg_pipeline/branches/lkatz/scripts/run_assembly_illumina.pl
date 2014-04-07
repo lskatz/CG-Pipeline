@@ -320,6 +320,7 @@ sub runSpadesAssembly($$){
   my $spadesxopts=$$settings{spadesxopts}||"";
   my $fastqArg;
   my $carefulArg=""; # is set only if there are PE reads
+  my $kArg="";       # Which kmers to try.  Default is auto.
   logmsg "WARNING: only using the first five input files for SPAdes" if(@$fastqfiles > 5);
   my @fastqfiles=("blurg",@$fastqfiles[0..4]); # unshift a bogus 0th element since we're in 1-based
      @fastqfiles=grep defined, @fastqfiles;    # remove extra elements if I grabbed too much
@@ -331,8 +332,9 @@ sub runSpadesAssembly($$){
       $fastqArg.="-s $fastqfiles[$i] ";
     }
   }
+  $kArg="-k 33,99" if($$settings{fast});
 
-  my $command="spades.py --tmp-dir $run_name/tmp -t $$settings{numcpus} -o $run_name/asm $fastqArg $carefulArg $continueArg";
+  my $command="spades.py --tmp-dir $run_name/tmp -t $$settings{numcpus} -o $run_name/asm $fastqArg $carefulArg $continueArg $kArg";
   command($command);
 
   return $run_name;
