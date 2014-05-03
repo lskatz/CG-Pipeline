@@ -49,9 +49,18 @@ sub printNewFasta{
   my $genusRegex=join("|",@$genus);
   my $i=0;
   while(my $seq=$in->next_seq){
-    logmsg $i if(++$i % 1000 == 0);
+    logmsg $i." entries read." if(++$i % 10000 == 0);
     my $id=$seq->id." ".$seq->desc;
     if($id=~/$genusRegex/){
+      my($seqid,$product,$gene)=("","","");
+      if($id=~/^\s*(\S+)\s+(.*?)\s*\w+=/){
+        ($seqid,$product)=($1,$2);
+      }
+      if($id=~/GN=(\S+)/){
+        $gene=$1;
+      }
+      $seq->id($seqid);
+      $seq->desc("~~~$gene~~~$product");
       $out->write_seq($seq);
     }
   }
