@@ -4,9 +4,12 @@ use warnings;
 use Getopt::Long;
 use Bio::Perl;
 use Data::Dumper;
+use File::Basename;
 use LWP::Simple;
-use threads;
-use Thread::Queue;
+use FindBin;
+use lib "$FindBin::RealBin/../lib";
+$ENV{PATH} = "$FindBin::RealBin:".$ENV{PATH};
+use AKUtils;
 # TODO multithread SeqIO/in
 # TODO buffer the output
 # TODO download the correct genus files
@@ -14,14 +17,16 @@ sub logmsg{print STDERR "@_\n";}
 exit main();
 sub main{
   my $settings={};
-  GetOptions($settings,qw(help tempdir=s)) or die;
+  GetOptions($settings,qw(help tempdir=s numcpus=i)) or die;
   die usage() if($$settings{help});
   die "ERROR: need fasta files\n".usage() if(!@ARGV);
+  $$settings{tempdir}||=AKUtils::mktempdir();
+  $$settings{numcpus}||=1;
   my @fasta=@ARGV;
   my @genera=getGenera($settings);
-  for my $fasta(@fasta){
-    printNewFasta($fasta,\@genera,$settings);
-  }
+  my $filtered=filterByGenusAndReformatDefline(\@fasta,\@genera,$settings);
+  my $clustered=clusterSequences($filtered,$settings);
+  system("cat '$clustered'"); die if $?;
   return 0;
 }
 sub getGenera{
@@ -41,33 +46,54 @@ sub getGenera{
   }
   return @genus;
 }
-sub printNewFasta{
-  my($fastain,$genus,$settings)=@_;
-  logmsg "Reading $fastain and writing to stdout";
-  my $out=Bio::SeqIO->new(-format=>"fasta");
-  my $in=Bio::SeqIO->new(-file=>$fastain);
+sub filterByGenusAndReformatDefline{
+  my($fastaArr,$genus,$settings)=@_;
+  my $outfile="$$settings{tempdir}/filtered.renamed.fasta";
+  my $tmpfile="$outfile.tmp";
+  my $out=Bio::SeqIO->new(-format=>"fasta",-file=>">$tmpfile");
   my $genusRegex=join("|",@$genus);
-  my $i=0;
-  while(my $seq=$in->next_seq){
-    logmsg $i." entries read." if(++$i % 10000 == 0);
-    my $id=$seq->id." ".$seq->desc;
-    if($id=~/$genusRegex/){
+  for my $fastain(@$fastaArr){
+    logmsg "Reading $fastain and writing to temporary file $tmpfile";
+    my $in=Bio::SeqIO->new(-file=>$fastain);
+    my $i=0;
+    my $writtenCounter=0;
+    while(my $seq=$in->next_seq){
+      if(++$i % 100000 == 0){
+        my $percent=sprintf("%0.2f",$writtenCounter/$i*100);
+        logmsg "$percent% written: ". $i." entries read. $writtenCounter entries written.";
+      }
+      my $id=$seq->id." ".$seq->desc;
+      next if($id !~ /$genusRegex/);
       my($seqid,$product,$gene)=("","","");
       if($id=~/^\s*(\S+)\s+(.*?)\s*\w+=/){
         ($seqid,$product)=($1,$2);
       }
-      if($id=~/GN=(\S+)/){
-        $gene=$1;
-      }
+      next if($id !~ /GN=(\S+)/);
+      $gene=$1;
       $seq->id($seqid);
       $seq->desc("~~~$gene~~~$product");
       $out->write_seq($seq);
+      $writtenCounter++;
     }
   }
+  system ("mv -v '$tmpfile' '$outfile' 1>&2"); die if $?;
+  return $outfile;
 }
+sub clusterSequences{
+  my($filtered,$settings)=@_;
+  my $clusterfile="$$settings{tempdir}/clustered.fasta";
+  logmsg "Clustering using cd-hit. Temporary file: $clusterfile";
+  system("cd-hit -i '$filtered' -o '$clusterfile' -T $$settings{numcpus} -M 0 -g 1 -s 0.8 -c 0.9 1>&2");
+  die if $?;
+  return $clusterfile;
+}
+
 sub usage{
+  local $0=fileparse $0;
   "Filters a fasta file with the genera in the bacterial kingdom
   Usage: $0 uniprot.fasta > filtered.fasta
+  -n 1 number of cpus
+  -t tempdir/
   "
 }
 
