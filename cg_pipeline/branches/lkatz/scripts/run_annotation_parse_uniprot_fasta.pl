@@ -101,7 +101,7 @@ sub clusterSequences{
 
 sub usage{
   local $0=fileparse $0;
-  "Filters a fasta file with the genera in the bacterial kingdom
+  "Filters a uniprot-style fasta file with the genera in the bacterial kingdom. Entries with no gene name or no product name are also filtered out. Then, filtered genes are clustered with cd-hit to reduce the size of the database.
   Usage: $0 uniprot.fasta[.gz] [uniprot2.fasta[.gz] ...] > filtered.fasta
   -n 1 number of cpus
   -t tempdir/
