@@ -1,46 +1,48 @@
-#!/bin/sh
+#!/bin/bash
 
 echo `basename $0`": BEGIN Updating uniprot. This could take a while."
 
 # Get the fasta databases
-if [ ! -f "uniprot_sprot.fasta" ]; then
-  wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz
-  gunzip -c uniprot_sprot.fasta.gz > uniprot_sprot.fasta
+if [ ! -f "uniprot_sprot.fasta.gz" ]; then
+  echo `basename $0`": Downloading uniprot_sprot";
+  wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz -O uniprot_sprot.fasta.gz.tmp && mv uniprot_sprot.fasta.gz.tmp uniprot_sprot.fasta.gz -v
+  #gunzip -c uniprot_sprot.fasta.gz > uniprot_sprot.fasta
   if [ $? -gt 0 ]; then exit $?; fi
 fi;
 
-if [ ! -f "uniprot_trembl.fasta" ]; then
-  wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_trembl.fasta.gz
-  gunzip -c uniprot_trembl.fasta.gz > uniprot_trembl.fasta
+if [[ ! -f "uniprot_trembl.fasta.gz" ]]; then
+  echo `basename $0`": Downloading uniprot_trembl";
+  wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_trembl.fasta.gz -O uniprot_trembl.fasta.gz.tmp && mv -v uniprot_trembl.fasta.gz.tmp uniprot_trembl.fasta.gz
   if [ $? -gt 0 ]; then exit $?; fi
 fi;
 
-# We don't really need trembl by itself. Concat it with Swiss-prot
-echo "Concatenating the trembl database with uniprot database to make a comprehensive database"
-cat uniprot_sprot.fasta uniprot_trembl.fasta > uniprot_sprot_trembl.fasta
-if [ $? -gt 0 ]; then 
-  rm -v uniprot_sprot_trembl.fasta; 
-  exit $?; 
+if [[ ! -f "uniprot_sprot.fasta" ]]; then
+  echo `basename $0`": Formatting the sprot database to make a gene prediction database; the output is also going to be filtered and made nonredundant."
+  run_annotation_parse_uniprot_fasta.pl uniprot_sprot.fasta.gz > uniprot_sprot.fasta.tmp && mv -v uniprot_sprot.fasta.tmp uniprot_sprot.fasta
+  if [ $? -gt 0 ]; then exit $?; fi
 fi
 
-echo "Filtering the sprot and uniprot databases for just bacterial genera";
-run_annotation_parse_uniprot_fasta.pl uniprot_sprot.fasta > uniprot_sprot.fasta.filtered && mv -v uniprot_sprot.fasta.filtered uniprot_sprot.fasta
+# We don't really need trembl by itself. Concat it with Swiss-prot
+if [[ ! -f "uniprot_sprot_trembl.fasta" ]]; then
+  echo `basename $0`": Concatenating the trembl database with uniprot database to make a comprehensive database; the output is also going to be filtered and made nonredundant."
+  run_annotation_parse_uniprot_fasta.pl uniprot_sprot.fasta.gz uniprot_trembl.fasta.gz > uniprot_sprot_trembl.fasta.tmp && mv uniprot_sprot_trembl.fasta.tmp uniprot_sprot_trembl.fasta -v;
+  if [ $? -gt 0 ]; then exit $?; fi;
+fi;
+
+echo `basename $0`": Formatting the sprot and uniprot fasta files as databases for blast"
+makeblastdb -dbtype prot -in uniprot_sprot.fasta
 if [ $? -gt 0 ]; then exit $?; fi
-run_annotation_parse_uniprot_fasta.pl uniprot_sprot_trembl.fasta > uniprot_sprot_trembl.fasta.filtered && mv -v uniprot_sprot_trembl.fasta.filtered uniprot_sprot_trembl.fasta
+makeblastdb -dbtype prot -in uniprot_sprot_trembl.fasta
 if [ $? -gt 0 ]; then exit $?; fi
 
-echo "Formatting the sprot and uniprot databases"
-legacy_blast.pl formatdb -p T -t uniprot_sprot_trembl -n uniprot_sprot_trembl -i uniprot_sprot_trembl.fasta
-legacy_blast.pl formatdb -p T -t uniprot_sprot -n uniprot_sprot -i uniprot_sprot.fasta
-
-echo "Getting XML descriptions of sprot and uniprot"
+echo `basename $0`": Getting XML descriptions of sprot and uniprot"
 wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.xml.gz
 gunzip uniprot_sprot.xml.gz uniprot_sprot.xml
 
 wget --continue ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_trembl.xml.gz
 gunzip uniprot_trembl.xml.gz uniprot_trembl.xml
 
-echo "Parsing XML descriptions of sprot and uniprot"
+echo `basename $0`": Parsing XML descriptions of sprot and uniprot"
 run_annotation_parse_uniprot_xml.pl uniprot_sprot.xml uniprot_trembl.xml
 rm -v uniprot_sprot.xml uniprot_trembl.xml
 echo `basename $0`": FINISHED Updating uniprot."
