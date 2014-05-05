@@ -22,6 +22,7 @@ sub main{
   die "ERROR: need fasta files\n".usage() if(!@ARGV);
   $$settings{tempdir}||=AKUtils::mktempdir();
   $$settings{numcpus}||=1;
+  $$settings{maxmem}||=int(AKUtils::getFreeMem() * 0.75+ 1); # 75% of free memory plus one byte to avoid zero
   my @fasta=@ARGV;
   my @genera=getGenera($settings);
   my $filtered=filterByGenusAndReformatDefline(\@fasta,\@genera,$settings);
@@ -54,7 +55,15 @@ sub filterByGenusAndReformatDefline{
   my $genusRegex=join("|",@$genus);
   for my $fastain(@$fastaArr){
     logmsg "Reading $fastain and writing to temporary file $tmpfile";
-    my $in=Bio::SeqIO->new(-file=>$fastain);
+    
+    # decide if this is a gunzipped file
+    my $in;
+    my($name,$path,$suffix)=fileparse($fastain,qw(.gz));
+    if($suffix eq '.gz'){
+      $in=Bio::SeqIO->new(-format=>"fasta",-file=>"gunzip -c '$fastain' | ");
+    }else{
+      $in=Bio::SeqIO->new(-file=>$fastain);
+    }
     my $i=0;
     my $writtenCounter=0;
     while(my $seq=$in->next_seq){
@@ -82,8 +91,10 @@ sub filterByGenusAndReformatDefline{
 sub clusterSequences{
   my($filtered,$settings)=@_;
   my $clusterfile="$$settings{tempdir}/clustered.fasta";
-  logmsg "Clustering using cd-hit. Temporary file: $clusterfile";
-  system("cd-hit -i '$filtered' -o '$clusterfile' -T $$settings{numcpus} -M 0 -g 1 -s 0.8 -c 0.9 1>&2");
+  my $freeMb=int($$settings{maxmem}/1024/1024) + 1; # add one to avoid zero
+  my $command="cd-hit -i '$filtered' -o '$clusterfile' -T $$settings{numcpus} -M $freeMb -g 1 -s 0.8 -c 0.9";
+  logmsg "Clustering using cd-hit, maximum memory: $freeMb MB. Temporary file: $clusterfile\n  $command";
+  system("$command 1>&2");
   die if $?;
   return $clusterfile;
 }
@@ -91,7 +102,7 @@ sub clusterSequences{
 sub usage{
   local $0=fileparse $0;
   "Filters a fasta file with the genera in the bacterial kingdom
-  Usage: $0 uniprot.fasta > filtered.fasta
+  Usage: $0 uniprot.fasta[.gz] [uniprot2.fasta[.gz] ...] > filtered.fasta
   -n 1 number of cpus
   -t tempdir/
   "
