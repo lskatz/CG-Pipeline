@@ -56,6 +56,7 @@ sub filterByGenusAndReformatDefline{
   my $tmpfile="$outfile.tmp";
   my $out=Bio::SeqIO->new(-format=>"fasta",-file=>">$tmpfile");
   my $genusRegex=join("|",@$genus);
+  my @seqBuffer;
   for my $fastain(@$fastaArr){
     logmsg "Reading $fastain and writing to temporary file $tmpfile";
     
@@ -71,6 +72,10 @@ sub filterByGenusAndReformatDefline{
     my $writtenCounter=0;
     while(my $seq=$in->next_seq){
       if(++$i % 100000 == 0){
+        $out->write_seq(@seq);
+        $writtenCounter+=@seq;
+        @seq=();
+
         my $percent=sprintf("%0.2f",$writtenCounter/$i*100);
         logmsg "$percent% written: ". $i." entries read. $writtenCounter entries written.";
       }
@@ -94,9 +99,12 @@ sub filterByGenusAndReformatDefline{
       }
       $seq->id($seqid);
       $seq->desc("$EC~~~$gene~~~$product");
-      $out->write_seq($seq);
-      $writtenCounter++;
+      push(@seqBuffer,$seq);
     }
+    # finish writing the rest to file
+    $out->write_seq(@seq);
+    $writtenCounter+=@seq;
+    @seq=();
   }
   system ("mv -v '$tmpfile' '$outfile' 1>&2"); die if $?;
   return $outfile;
