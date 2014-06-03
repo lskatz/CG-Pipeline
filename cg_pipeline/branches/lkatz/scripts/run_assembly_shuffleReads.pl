@@ -6,6 +6,10 @@ use strict;
 use warnings;
 use Getopt::Long;
 use File::Basename;
+use IO::Compress::Gzip qw(gzip)
+
+# TODO gzip output
+# TODO If only one file to shuffle, just output the first SE file to stdout
 
 
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
@@ -93,10 +97,13 @@ sub shuffleSeqs{
 sub usage{
   local $0=fileparse($0);
   "Shuffle or deshuffle sequences
-  Usage: $0 -d shuffled.fastq > file_1.fastq 2> file_2.fastq
-  $0 file_1.fastq file_2.fastq > shuffled.fastq
-  $0 file_[12].fastq > shuffled.fastq
+  Usage:           $0 file_1.fastq file_2.fastq > shuffled.fastq
+  Alternate Usage: $0 -d shuffled.fastq > file_1.fastq 2> file_2.fastq
     -d for deshuffle
+    -gz for gzipped output
+  EXAMPLES
+  $0 file_[12].fastq > shuffled.fastq
+  $0 -d file.shuffled.fastq[.gz] 1> forward.fastq 2> reverse.fastq
   Due to the double redirection, error messages are hidden. A user should check the exit code to see if the program executed correctly.
   "
 }
