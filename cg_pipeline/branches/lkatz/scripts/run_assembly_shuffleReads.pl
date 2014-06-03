@@ -8,19 +8,17 @@ use Getopt::Long;
 use File::Basename;
 use IO::Compress::Gzip qw(gzip);
 
-# TODO gzip output
 # TODO If only one file to shuffle, just output the first SE file to stdout
 
 
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
-#my $compressOut = new IO::Compress::Gzip '-';
-#my $compressErr = new IO::Compress::Gzip '/dev/stderr';
 exit(main());
 
 sub main{
+  local $0=fileparse $0;
   my $settings={};
   GetOptions($settings,qw(deshuffle help gzip));
-  die usage() if($$settings{help});
+  die usage($settings) if($$settings{help});
 
   for(@ARGV){
     die "ERROR: Could not find file $_" if(! -f $_);
@@ -51,6 +49,15 @@ sub is_gzipped{
 
 sub deshuffleSeqs{
   my($seqFile,$settings)=@_;
+
+  # set up the output filehandles if the user wants gzipped output
+  my $stdout = *STDOUT;
+  my $stderr = *STDERR;
+  if($$settings{gzip}){
+    $stdout = new IO::Compress::Gzip '-';
+    $stderr = new IO::Compress::Gzip '/dev/stderr';
+  }
+
   if(is_gzipped($seqFile,$settings)){
     open(SHUFFLED,"gunzip -c '$seqFile' |") or die "Could not open/gunzip shuffled fastq file $seqFile: $!";
   } else {
@@ -59,8 +66,13 @@ sub deshuffleSeqs{
   my $i=0;
   while(<SHUFFLED>){
     my $mod=$i%8;
-    print STDOUT $_ if($mod<4);
-    print STDERR $_ if($mod>=4);
+    if($mod<4){
+      print $stdout $_;
+    } elsif($mod>=4) {
+      print $stderr $_;
+    } else {
+      die "Internal error";
+    }
     
     $i++;
   }
@@ -72,6 +84,8 @@ sub deshuffleSeqs{
 sub shuffleSeqs{
   my($seqFile,$settings)=@_;
   my $i=0;
+  my $fp = *STDOUT;
+     $fp=new IO::Compress::Gzip '-' if($$settings{gzip});
   for(my $j=0;$j<@$seqFile;$j+=2){
     my($file1,$file2)=($$seqFile[$j],$$seqFile[$j+1]);
     if(is_gzipped($file1,$settings)){
@@ -87,11 +101,7 @@ sub shuffleSeqs{
     while(my $out=<MATE1>){
       $out.=<MATE1> for(1..3);
       $out.=<MATE2> for(1..4);
-      if($$settings{gzip}){
-        #print $compressOut $out;
-      } else {
-        print STDOUT $out;
-      }
+      print $fp $out;
       $i++;
     }
     close MATE1; close MATE2;
@@ -101,15 +111,22 @@ sub shuffleSeqs{
 }
 
 sub usage{
+  my ($settings)=@_;
   local $0=fileparse($0);
-  "Shuffle or deshuffle sequences
+  my $help="Shuffle or deshuffle sequences
   Usage:           $0 file_1.fastq file_2.fastq > shuffled.fastq
   Alternate Usage: $0 -d shuffled.fastq > file_1.fastq 2> file_2.fastq
+  NOTE: Due to the double redirection, error messages are hidden when deshuffling. A user should check the exit code to see if the program executed correctly.
     -d for deshuffle
-    -gz for gzipped output
+    -gz for gzipped output (including stderr)
+    -h for additional help";
+  return $help if(!$$settings{help});
+  $help.="
   EXAMPLES
   $0 file_[12].fastq > shuffled.fastq
+  $0 file_[12].fastq -gz > shuffled.fastq.gz
+  $0 file_[12].fastq > gzip -c > shuffled.fastq.gz
   $0 -d file.shuffled.fastq[.gz] 1> forward.fastq 2> reverse.fastq
-  Due to the double redirection, error messages are hidden. A user should check the exit code to see if the program executed correctly.
+  $0 -d file.shuffled.fastq[.gz] -gz 1> forward.fastq.gz 2> reverse.fastq.gz
   "
 }
