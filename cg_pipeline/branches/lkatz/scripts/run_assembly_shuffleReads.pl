@@ -6,18 +6,20 @@ use strict;
 use warnings;
 use Getopt::Long;
 use File::Basename;
-use IO::Compress::Gzip qw(gzip)
+use IO::Compress::Gzip qw(gzip);
 
 # TODO gzip output
 # TODO If only one file to shuffle, just output the first SE file to stdout
 
 
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
+#my $compressOut = new IO::Compress::Gzip '-';
+#my $compressErr = new IO::Compress::Gzip '/dev/stderr';
 exit(main());
 
 sub main{
   my $settings={};
-  GetOptions($settings,qw(deshuffle help));
+  GetOptions($settings,qw(deshuffle help gzip));
   die usage() if($$settings{help});
 
   for(@ARGV){
@@ -85,7 +87,11 @@ sub shuffleSeqs{
     while(my $out=<MATE1>){
       $out.=<MATE1> for(1..3);
       $out.=<MATE2> for(1..4);
-      print STDOUT $out;
+      if($$settings{gzip}){
+        #print $compressOut $out;
+      } else {
+        print STDOUT $out;
+      }
       $i++;
     }
     close MATE1; close MATE2;
