@@ -106,7 +106,14 @@ sub signalPWorker{
     printSeqsToFile({$seqid => $sequence}, $signalpInfile) or die "Could not print seqs to file $signalpInfile";
     my $invoke_string = "$$settings{signalp_exec} $signalp_opts < $signalpInfile > $signalpOutfile";
     system($invoke_string);
-    die("Error running signalp: $!") if $?;
+    # try one more time just in case
+    if($?){
+      logmsg "SignalP ERROR: $!";
+      logmsg "Trying one more time.";
+      sleep 1; # pause just in case something is conflicting with an input temporary file or whatever
+      system($invoke_string);
+      die("Error running signalp: $!") if $?;
+    }
 
     my $result = loadSignalPPredictions($signalpOutfile);
     $predictions = {%$predictions, %$result};
