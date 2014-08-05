@@ -384,7 +384,7 @@ sub fullPathToExec($;$) {
 	}
   if(! -x $fullpath){
 	  my $errStr="Error finding full path to executable ($executable)";
-    warn $errStr if($$settings{warn_on_error});
+    logmsg $errStr if($$settings{warn_on_error});
     die $errStr if(!$$settings{warn_on_error});
   }
 	return $fullpath;
@@ -1086,7 +1086,12 @@ sub gettRNAscanSEPredictions($;$) {
 	AKUtils::printSeqsToFile(\%renamed_seqs, $input_file_full);
 
 	logmsg "Running tRNAscanSE on $input_file_full...";
-	$$settings{tse_exec} = AKUtils::fullPathToExec($$settings{tse_exec} or 'tRNAscan-SE');
+	$$settings{tse_exec}||='tRNAscan-SE';
+	$$settings{tse_exec} = AKUtils::fullPathToExec($$settings{tse_exec},{warn_on_error=>1});
+	if(!$$settings{tse_exec}){
+		logmsg "WARNING: could not locate tRNAscan-SE and so I will not run it. In the future, you can set the option tse_exec to point to the full path of tRNAscan-SE.";
+		return {};
+	}
 
 	my $tse_opts = "-q";
 	$tse_opts .= "" if $$settings{trnascan_modeltype} eq 'eukaryotic';
