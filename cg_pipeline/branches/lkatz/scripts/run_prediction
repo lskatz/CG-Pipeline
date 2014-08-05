@@ -311,6 +311,9 @@ sub getCrisprPredictions{
       push(@{$$predictions{$$f{seqname}}},$f);
     } elsif ($$f{type}=~/direct_repeat/i){
       # maybe TODO find which crispr this belongs to and add it
+    } elsif (!$$f{type}){
+      next if(!$$f{ID});
+      logmsg "Warning: there is not a CRISPR type given for $$f{ID}";
     } else{
       die "Could not interpret type $$f{type} in $gff";
     }
