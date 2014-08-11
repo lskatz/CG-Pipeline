@@ -45,7 +45,7 @@ sub main() {
   $settings = AKUtils::loadConfig($settings);
 
   die usage() if(@ARGV<1);
-  my @cmd_options = qw(outfile=s blastfile=s db=s parametersForBlast=s min_aa_coverage=i min_aa_identity=i min_aa_similarity=i tempdir=s keep help checkEvery=i);
+  my @cmd_options = qw(outfile=s blastfile=s db=s parametersForBlast=s min_aa_coverage=i min_aa_identity=i min_aa_similarity=i tempdir=s keep help checkEvery=i numcpus=i);
   GetOptions($settings, @cmd_options) or die;
   die usage() if($$settings{help});
 
@@ -53,6 +53,7 @@ sub main() {
   $$settings{blast_db}||=File::Spec->rel2abs($$settings{db});
   die("ERROR: cannot find a blast database at $$settings{blast_db}. Set it using blast_db in the config file (cgpipelinerc) or by using the -d setting for this script. If being run from run_annotation, it is possible that the database has not been set for this specific task.\n".usage()) if(!-e "$$settings{blast_db}.pin" && !-e "$$settings{blast_db}.pal" && !-e "$$settings{blast_db}.pal");
   $$settings{checkEvery}=60 if(!$$settings{checkEvery} || $$settings{checkEvery}<1);
+  $$settings{numcpus}||=1;
 
   die("ERROR: ARGV!=1: ".join(" ",@ARGV)."\n".usage()) if @ARGV != 1;
   $$settings{min_aa_coverage}||=1;
@@ -67,7 +68,7 @@ sub main() {
 
   $$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
   logmsg "Temporary directory is $$settings{tempdir}";
-  my $numcpus=AKUtils::getNumCPUs();
+  my $numcpus=$$settings{numcpus};
   #$numcpus=1; logmsg "DEBUGGING NUMBER OF CPUS";
 
   # don't blast if a blastfile has been given
@@ -78,7 +79,7 @@ sub main() {
     my $progressThread=threads->new(\&blastProgressUpdater,$progressQ,$settings);
 
     $ENV{BLASTDB} = (fileparse($$settings{blast_db}))[1];
-    my $command="legacy_blast.pl blastall -p blastp -a $numcpus -d $$settings{blast_db} -i $$settings{query_mfa} $$settings{parametersForBlast} -m 0 | sed 's/\xFF/*/g' > $$settings{tempdir}/$0.$$.blast_out"; # sed to fix a bug in blast < 2.2.27+ where * is printed as hex \xFF.
+    my $command="perl `which legacy_blast.pl` blastall -p blastp -a $numcpus -d $$settings{blast_db} -i $$settings{query_mfa} $$settings{parametersForBlast} -m 0 | sed 's/\xFF/*/g' > $$settings{tempdir}/$0.$$.blast_out"; # sed to fix a bug in blast < 2.2.27+ where * is printed as hex \xFF.
     logmsg "Running BLAST on $$settings{query_mfa} vs. $$settings{blast_db}...\n  $command";
     system($command);
     die "Problem with blast" if $?;
@@ -273,6 +274,7 @@ sub usage{
     There is no sanity check for this parameter.
   -o outfile.sql
     pipe delimited output file
+  --numcpus 1 The number of processors to use
 
   -b blast results file
     Optionally to skip blast and use your own blast file. In human-readable form (-m 0)
