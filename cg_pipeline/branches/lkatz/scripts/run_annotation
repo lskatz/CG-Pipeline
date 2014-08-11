@@ -48,9 +48,10 @@ sub main() {
   $$settings{uniprot_evidence_db3} = $$settings{annotation_uniprot_evidence_db3};
   $$settings{blast_db} = $$settings{annotation_blast_db};
 
-  my @cmd_options = qw(ChangeDir=s keep blast_db=s outdir=s tempdir=s uniprot_db3=s uniprot_evidence_db3=s reporting_email=s goto=s just=s help no-db-check skip=s@ name=s);
+  my @cmd_options = qw(ChangeDir=s keep blast_db=s outdir=s tempdir=s uniprot_db3=s uniprot_evidence_db3=s reporting_email=s goto=s just=s help no-db-check skip=s@ name=s numcpus=i);
   GetOptions($settings, @cmd_options) or die;
   die usage($settings) if $$settings{help};
+  $$settings{numcpus}||=1;
   die("Option blast_db is required") unless $$settings{blast_db}; # TODO: more error checks
   die("Option uniprot_db3 is required") unless $$settings{uniprot_db3}; # TODO: more error checks
   die("Option uniprot_evidence_db3 is required") unless $$settings{uniprot_evidence_db3}; # TODO: more error checks
@@ -119,7 +120,7 @@ sub main() {
   # Antibiotic resistance genes
   ABX:
   if(!$skip{ABX}){
-    my $abx_command="run_annotation_blast.pl $aa_file -d $$settings{card_blast_db} -o $aa_file.argannot_hits.sql -p '-F F -e 1e-10 -b 1 -v 1' -tempdir='$$settings{tempdir}' --min_aa_coverage 60 --min_aa_identity 90 2>&1";
+    my $abx_command="run_annotation_blast.pl $aa_file -d $$settings{card_blast_db} -o $aa_file.argannot_hits.sql -p '-F F -e 1e-10 -b 1 -v 1' -tempdir='$$settings{tempdir}' --min_aa_coverage 60 --min_aa_identity 90 --numcpus $$settings{numcpus} 2>&1";
     logmsg "Finding antimicrobial resistance genes with command\n  $abx_command";
     system($abx_command); die "Problem with antimicrobial resistance gene blasting" if $?;
     flushSql($settings);
@@ -130,7 +131,7 @@ sub main() {
   # Credit to some parameters goes to ISsaga http://genomebiology.com/2011/12/3/R30
   IS:
   if(!$skip{IS}){
-    my $is_command="run_annotation_blast.pl $aa_file -d $$settings{is_blast_db} -o $aa_file.is_hits.sql --min_aa_coverage 30 --min_aa_identity 20 --min_aa_similarity 30 -p '-W 2 -F F -e 1E-5 -b 1 -v 1' -tempdir='$$settings{tempdir}' 2>&1";
+    my $is_command="run_annotation_blast.pl $aa_file -d $$settings{is_blast_db} -o $aa_file.is_hits.sql --min_aa_coverage 30 --min_aa_identity 20 --min_aa_similarity 30 -p '-W 2 -F F -e 1E-5 -b 1 -v 1' -tempdir='$$settings{tempdir}' --numcpus $$settings{numcpus} 2>&1";
     logmsg "Finding IS elements with command\n  $is_command";
     system($is_command); 
     warn "Problem with IS element blasting. Could be that you do not have an IS element database, which was removed from CGP due to a takedown notice." if $?;
@@ -158,7 +159,7 @@ sub main() {
   PDB:
   if(!$skip{PDB}){
     logmsg "Checking for proteins with structural similarities in the Protein Databank";
-    system("run_annotation_blast.pl $aa_file -d $$settings{pdb_blast_db} -o $aa_file.pdb_hits.sql --min_aa_coverage 40 --min_aa_identity 40 --min_aa_similarity 40 -p '-b 10 -v 10' -tempdir='$$settings{tempdir}' 2>&1"); 
+    system("run_annotation_blast.pl $aa_file -d $$settings{pdb_blast_db} -o $aa_file.pdb_hits.sql --min_aa_coverage 40 --min_aa_identity 40 --min_aa_similarity 40 -p '-b 10 -v 10' -tempdir='$$settings{tempdir}' --numcpus $$settings{numcpus} 2>&1"); 
     warn "Problem with Protein Databank blasting" if $?;
     flushSql($settings);
     goto DONE if($$settings{just});
@@ -168,7 +169,7 @@ sub main() {
   VFDB:
   if(!$skip{VFDB}){
     logmsg "Finding virulence factors";
-    system("run_annotation_blast.pl $aa_file -d $$settings{vfdb_blast_db} -o $aa_file.vfdb_hits.sql --min_aa_coverage 40 --min_aa_identity 40 --min_aa_similarity 40 -p '-b 1 -v 1' -tempdir='$$settings{tempdir}' 2>&1"); 
+    system("run_annotation_blast.pl $aa_file -d $$settings{vfdb_blast_db} -o $aa_file.vfdb_hits.sql --min_aa_coverage 40 --min_aa_identity 40 --min_aa_similarity 40 -p '-b 1 -v 1' -tempdir='$$settings{tempdir}' --numcpus $$settings{numcpus} 2>&1"); 
     warn "Problem with vfdb" if $?;
     flushSql($settings);
     goto DONE if($$settings{just});
@@ -178,7 +179,7 @@ sub main() {
   COGS:
   if(!$skip{COGS}){
     logmsg "Finding COGs";
-    system("run_annotation_blast.pl $aa_file -d $$settings{cogs_blast_db} -o $aa_file.cogs_hits.sql --min_aa_coverage 80 --min_aa_identity 40 --min_aa_similarity 70 -p '-b 10 -v 10' -tempdir='$$settings{tempdir}'"); 
+    system("run_annotation_blast.pl $aa_file -d $$settings{cogs_blast_db} -o $aa_file.cogs_hits.sql --min_aa_coverage 80 --min_aa_identity 40 --min_aa_similarity 70 -p '-b 10 -v 10' -tempdir='$$settings{tempdir}' --numcpus $$settings{numcpus} 2>&1 "); 
     warn "Problem with blast against COGs" if $?;
     flushSql($settings);
     goto DONE if($$settings{just});
@@ -188,7 +189,7 @@ sub main() {
   UNIPROT:
   if(!$skip{UNIPROT}){
     logmsg "BLASTp vs Uniprot (this might take a while)";
-    my $invoke_string = "run_annotation_blast.pl $aa_file -db=$$settings{blast_db}";
+    my $invoke_string = "run_annotation_blast.pl $aa_file -db=$$settings{blast_db} --numcpus $$settings{numcpus}";
     $invoke_string .= " -outfile='$$settings{tempdir}/blast.sql'";
     $invoke_string .= " -keep" if $$settings{keep};
     $invoke_string .= " -tempdir='$$settings{tempdir}'";
@@ -260,6 +261,7 @@ sub usage{
   --skip=STEP skip this step
   --just=STEP only run this step
   --goto=STEP Skips steps until this annotation step is reached.
+  --numcpus 1 The number of processors to use
   ";
   return $usage;
 }
