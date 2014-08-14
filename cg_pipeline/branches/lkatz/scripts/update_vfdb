@@ -6,9 +6,48 @@ wget --continue http://www.mgc.ac.cn/VFs/Down/VFs.xls.gz http://www.mgc.ac.cn/VF
 
 echo "Extracting..."
 
-for i in `ls VFs*.gz CP_VFs*.gz`; do file=`basename $i .gz`;  gunzip --stdout $i >$file; done
+for i in `ls VFs*.gz CP_VFs*.gz`; do 
+  file=`basename $i .gz`;  
+  gunzip --stdout $i >$file; 
+  if [ $? -gt 0 ]; then exit 1; fi;
+done
+
+# defline looks like 
+#    >R012405 (gi:30260710) BA0552 - internalin, putative [Bacillus anthracis str. Ames (pXO1- pXO2-)]
+faa="CP_VFs.faa CP_VFs.ffn VFs.faa VFs.ffn";
+for i in $faa; do
+  echo "Reformatting headers for $i";
+  perl -lane '
+    if(/>(\S+)/){
+      my($xref,$gene,$product,$EC)=("","","","");
+      $xref=$1;
+      # get more information
+      # if a gene name is there
+      if    (/>\S+\s*\(gi:\d+\) (\w+) \(\S+\) - (.+)/){
+        $gene=$1;
+        $product=$2;
+      } 
+      elsif (/>\S+\s*\(gi:\d+\) \S+ - (.+)/){
+        $product=$1;
+      }
+      # EC
+      if(/(\d+(\.\d+){3})/){
+        $EC=$1;
+      }
+      $_=">".join("~~~",$xref,$EC,$gene,$product);
+    }
+    print;
+  ' < $i > tmp.fasta
+  if [ $? -gt 0 ]; then exit 1; fi;
+
+  mv -v tmp.fasta $i
+done;
 
 legacy_blast.pl formatdb -p T -t vfdb_CP_VFs_aa -n vfdb_CP_VFs_aa -i CP_VFs.faa -o T
+if [ $? -gt 0 ]; then exit 1; fi;
 legacy_blast.pl formatdb -p F -t vfdb_CP_VFs_nt -n vfdb_CP_VFs_nt -i CP_VFs.ffn -o T
+if [ $? -gt 0 ]; then exit 1; fi;
 legacy_blast.pl formatdb -p T -t vfdb_VFs_aa -n vfdb_VFs_aa -i VFs.faa -o T
+if [ $? -gt 0 ]; then exit 1; fi;
 legacy_blast.pl formatdb -p F -t vfdb_VFs_nt -n vfdb_VFs_nt -i VFs.ffn -o T
+if [ $? -gt 0 ]; then exit 1; fi;
