@@ -288,6 +288,19 @@ sub readSqlFile{
       my %f;
       @f{@map}=readSqlLine($_);
       $f{evalue}=~s/,// if($f{evalue}); # get rid of those commas at the end (where do they come from??)
+
+      # pick up some additional information in the field names where there are tildes
+      # (not really sure which field it will show up in right now.  Maybe I can be more exact later)
+      for my $fieldName(qw(locus_tag target_id hit_accession hit_name)){
+        if($f{$fieldName}=~/~~~/){
+          # The whitespace in the product name causes only the first word to
+          # appear in the identifer.  Therefore the description has to be concatenated with the
+          # identifier.  Then, the description is redefined as the product with 
+          # whitespace and all.
+          @f{qw(xref EC gene product)}=split(/~~~/,"$f{$fieldName} $f{description}");
+          $f{description}=$f{product};
+        }
+      }
       push(@{ $annotation{$f{locus_tag}}{$mapKey} },\%f);
     }
     close SQL;
@@ -295,7 +308,7 @@ sub readSqlFile{
   return \%annotation;
 }
 
-# TODO use uniprot and uniprot_evidence to add more useful information
+# TODO switch over to tilde formatted database
 sub interpretUniprot{
   my($geneFeat,$cdsFeat,$locusAnnotation,$settings)=@_;
   # take the best blast hit: highest score, lowest evalue
@@ -329,7 +342,7 @@ sub interpretUniprot{
     my $note=($cdsFeat->get_tag_values('note'))[0];
     $cdsFeat->remove_tag('note');
     $note=~s/[\.;]?\s*$/. /;
-    $note.="Product Predictor: Uniprot hit against $$uniprotAnnotation{hit_name}";
+    $note.="Uniprot:$$uniprotAnnotation{hit_name}";
     $cdsFeat->add_tag_value('note',$note);
   
     # add the uniprot scores
@@ -508,8 +521,9 @@ sub interpretVf{
   
   my $feat=blastSqlToFeat($cdsFeat,$vf,"VF database",{});
   if($feat->has_tag('product')){
-    $cdsFeat->add_tag_value('product',"VFDB:".($feat->get_tag_values('product'))[0]);
-    $cdsFeat->add_tag_value('note',"VFDB:".($feat->get_tag_values('description'))[0]);
+    $cdsFeat->add_tag_value('product',($feat->get_tag_values('description'))[0]);
+    # xref really belongs under note, now that xref is in the VFDB formatted database
+    $cdsFeat->add_tag_value('note',"VFDB:$$vf[0]{xref}");
   }
   return $feat;
 }
