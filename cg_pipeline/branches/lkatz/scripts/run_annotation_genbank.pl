@@ -17,6 +17,7 @@ use File::Basename;
 use Data::Dumper;
 use Getopt::Long;
 use Bio::Species;
+use Clone 'clone';
 
 exit(&main());
 
@@ -110,7 +111,7 @@ sub combinePredictionAndAnnotation{
       }
       
       my @geneFeat; # the following subroutines should internally sort this correctly
-      my $geneFeat=$$predfeatures{$seqid}{'gene'}{$locus_tag}->clone;
+      my $geneFeat=clone($$predfeatures{$seqid}{'gene'}{$locus_tag});
       if($$predfeatures{$seqid}{'CDS'}{$locus_tag}){
         @geneFeat=interpretCdsFeat($geneFeat,$$predfeatures{$seqid}{'CDS'}{$locus_tag},$locusAnnotation,$extraAnnotationInfo,$settings);
       } elsif($$predfeatures{$seqid}{'rRNA'}{$locus_tag}){
@@ -149,7 +150,7 @@ sub interpretCdsFeat{
   my($geneFeat,$cdsFeatOrig,$locusAnnotation,$extraAnnotationInfo,$settings)=@_;
   my @feat;
   my(@miscFeat,@otherFeat);
-  my $cdsFeat=$cdsFeatOrig->clone;
+  my $cdsFeat=clone($cdsFeatOrig);
   # modify the gene and cds features by reference
   interpretUniprot($geneFeat,$cdsFeat,$locusAnnotation,$settings);
   
