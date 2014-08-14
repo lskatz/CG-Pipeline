@@ -293,7 +293,7 @@ sub readSqlFile{
       # pick up some additional information in the field names where there are tildes
       # (not really sure which field it will show up in right now.  Maybe I can be more exact later)
       for my $fieldName(qw(locus_tag target_id hit_accession hit_name)){
-        if($f{$fieldName}=~/~~~/){
+        if(defined($f{$fieldName}) && $f{$fieldName}=~/~~~/){
           # The whitespace in the product name causes only the first word to
           # appear in the identifer.  Therefore the description has to be concatenated with the
           # identifier.  Then, the description is redefined as the product with 
