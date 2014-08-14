@@ -175,7 +175,7 @@ sub main(){
     my $gotoArg=($$settings{goto})?"--goto=$$settings{goto}":"";
        $gotoArg=($$settings{just})?"--just=$$settings{just}":"";
     my $skipArg=($$settings{skip})?"--skip=".join(" --skip=",@{$$settings{skip}})."":"";
-    $invoke_string="run_annotation $gbArg $skipArg -tempdir=$home/$project/build/annotation --keep --outdir=$home/$project/annotation $gotoArg  2>&1 ";
+    $invoke_string="time run_annotation $gbArg $skipArg -tempdir=$home/$project/build/annotation --keep --outdir=$home/$project/annotation --numcpus $$settings{numcpus} $gotoArg  2>&1 ";
     if($verbose>1){
       $invoke_string.="|tee --append $logfile";
     }
