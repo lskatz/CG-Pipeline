@@ -29,13 +29,6 @@ sub main{
   return 0;
 }
 
-sub usage{
-  "$0: checks to see if a reads file is paired-end or not. Outputs 1 for yes or 0 for no.
-  Usage: $0 file.fastq[.gz]
-  --checkFirst [20]  How many deflines to check to make sure it is PE
-  --wantformat       Request the defline format
-  "
-}
 
 # See whether a fastq file is paired end or not. It must be in a velvet-style shuffled format.
 # In other words, the left and right sides of a pair follow each other in the file.
@@ -153,5 +146,13 @@ sub _is_fastqPECasava17{
   }
 
   return 1;
+}
+
+sub usage{
+  "$0: checks to see if a reads file is paired-end or not. Outputs 1 for yes or 0 for no.
+  Usage: $0 file.fastq[.gz]
+  --checkFirst [20]  How many deflines to check to make sure it is PE
+  --wantformat       Print which defline format the file is
+  "
 }
 

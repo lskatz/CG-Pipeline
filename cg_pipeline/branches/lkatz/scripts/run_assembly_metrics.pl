@@ -63,7 +63,7 @@ sub main() {
   }
 
   if($$settings{outputType} eq 'lengths'){
-    printContigLengths(\@input_file,$settings);
+    printContigDetails(\@input_file,$settings);
   } else {
     # start off the threads
     my $Q=Thread::Queue->new;
@@ -184,15 +184,17 @@ sub filterSeqs{
   return $newSeqs;
 }
 
-sub printContigLengths{
+sub printContigDetails{
   my($file,$settings)=@_;
+  print join("\t",qw(file contig length GC kmer21))."\n";
   for my $f(@$file){
     my $seqs=AKUtils::readMfa($f);
     if(keys(%$seqs) < 1){
       next;
     }
     while(my($id,$seq)=each(%$seqs)){
-      print join("\t",$f,$id,length($seq))."\n";
+      my $sc={$id=>$seq}; # Single Contig
+      print join("\t",$f,$id,length($seq),GC($sc),kmer21($sc))."\n";
     }
   }
   return 1;
@@ -358,7 +360,7 @@ sub usage{
   return $text if(!$$settings{help});
   $text.="\n  ADDITIONAL HELP
     -o outputType Make different output type.  Output type can be one of the following
-      lengths  - shows lengths of contigs
+      details - metrics on individual contigs
       default - no change
     NOTES
     The assembly score is calculated as a log of (N50/numContigs * percentOfGenomeCovered)
@@ -371,7 +373,7 @@ sub usage{
     $0 *.fasta | sed 's|.*/||'         # remove directories from filenames
     N50=`$0 file.fasta -number -s N50` # set a bash variable equal to an assembly's N50
     # histogram of contig lengths
-    $0 file.fasta -o lengths | perl -lane 'print(int(\$F[2]/100000)*100000)'|sort -n|uniq -c
+    $0 file.fasta -o details | perl -lane 'print(int(\$F[2]/100000)*100000)'|sort -n|uniq -c
   ";
   return $text;
 }
