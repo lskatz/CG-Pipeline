@@ -27,6 +27,7 @@ sub main{
     my $where=$ff->fetch() or die $ff->error; # download to $PWD
   }
 
+  logmsg "Downloaded prophage_virus.db and am now reformatting the deflines for CGP format.";
   my $in=Bio::SeqIO->new(-file=>"prophage_virus.db",-format=>"fasta");
   open (OUT,">",$$settings{outfile}) or die "ERROR in opening $$settings{outfile}: $!";
   my $seqCounter=0;
@@ -37,7 +38,7 @@ sub main{
     my ($id,$gid,undef,$NP)=split /\|/,$seq->id;
 
     # CGP format is $xref, $EC, ncbi GI, $product separated by tildes
-    $seq->id(join("~~~",$NP,'',$gid,$seq->desc));
+    $seq->id(join("~~~",$id,'',$gid,$seq->desc));
     $seq->desc(" ");
     print OUT as_fasta($seq);
 
@@ -69,13 +70,3 @@ sub usage{
   ";
 }
 
-
-__END__;
-#legacy_blast.pl formatdb -p T -t vfdb_CP_VFs_aa -n vfdb_CP_VFs_aa -i CP_VFs.faa -o T
-#if [ $? -gt 0 ]; then exit 1; fi;
-#legacy_blast.pl formatdb -p F -t vfdb_CP_VFs_nt -n vfdb_CP_VFs_nt -i CP_VFs.ffn -o T
-#if [ $? -gt 0 ]; then exit 1; fi;
-#legacy_blast.pl formatdb -p T -t vfdb_VFs_aa -n vfdb_VFs_aa -i VFs.faa -o T
-#if [ $? -gt 0 ]; then exit 1; fi;
-#legacy_blast.pl formatdb -p F -t vfdb_VFs_nt -n vfdb_VFs_nt -i VFs.ffn -o T
-#if [ $? -gt 0 ]; then exit 1; fi;
