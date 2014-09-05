@@ -7,7 +7,7 @@ use Bio::Perl;
 use File::Basename qw/basename/;
 
 $0=basename $0;
-sub logmsg{print STDERR "@_\n"; }
+sub logmsg{print STDERR "$0: @_\n"; }
 exit main();
 
 sub main{
@@ -23,6 +23,7 @@ sub main{
   if(-e "prophage_virus.db"){
     logmsg "Already downloaded prophage_virus.db.  Will not download again.";
   } else {
+    logmsg "Downloading prophage_virus.db using File::Fetch";
     my $ff=File::Fetch->new(uri => "http://phast.wishartlab.com/phage_finder/DB/prophage_virus.db");
     my $where=$ff->fetch() or die $ff->error; # download to $PWD
   }
@@ -38,8 +39,8 @@ sub main{
     my ($id,$gid,undef,$NP)=split /\|/,$seq->id;
 
     # CGP format is $xref, $EC, ncbi GI, $product separated by tildes
-    $seq->id(join("~~~",$id,'',$gid,$seq->desc));
-    $seq->desc(" ");
+    $seq->id($id);
+    $seq->desc(join("~~~",'',$gid,$seq->desc));
     print OUT as_fasta($seq);
 
     if(++$seqCounter % 10000 == 0){
