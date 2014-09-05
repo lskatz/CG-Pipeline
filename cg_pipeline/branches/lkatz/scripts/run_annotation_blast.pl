@@ -63,7 +63,7 @@ sub main() {
     die("Argument $_ must be supplied") unless $$settings{$_};
   }
   $$settings{query_mfa} = $ARGV[0];
-  die("File $$settings{query_mfa} does not exist") unless -f $$settings{query_mfa};
+  die("File $$settings{query_mfa} does not exist") unless -e $$settings{query_mfa};
   $$settings{outfile} ||= "$$settings{query_mfa}.unspecifiedhits.sql";
 
   $$settings{tempdir} ||= tempdir(File::Spec->tmpdir()."/$0.$$.XXXXX", CLEANUP => !($$settings{keep}));
@@ -170,7 +170,9 @@ sub readBlastOutputWorker{
           # coverage filter
           my $queryHsp=$r{hspQueryString};
           $queryHsp=~s/\-|\s//g;
-          my $l2=length($$query_seqs{$r{query_id}}); die("Internal error - something wrong with the query seq") unless $l2;
+          my $l2=length($$query_seqs{$r{query_id}}); 
+          die("Internal error - something wrong with the query seq $r{query_id}") unless $l2;
+
           $r{query_coverage}=length($queryHsp)/$l2*100;
           $r{query_coverage}=sprintf("%.2f", $r{query_coverage});
           next if($r{query_coverage} < $$settings{min_aa_coverage});
