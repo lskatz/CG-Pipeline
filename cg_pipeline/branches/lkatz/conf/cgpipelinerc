@@ -5,29 +5,32 @@ classification = "Vibrio cholerae Vibrio Vibrionaceae Vibrionales Gammaproteobac
 
 assembly_min_contig_length=500
 
-# prediction_blast_db = "/media/data/.trash/home/lkatz/bin/cg_pipeline/data/uniprot_sprot"
-prediction_blast_db = /home/lkatz/bin/cg_pipeline/data/uniprot_sprot.filtered.fasta
+prediction_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/uniprot_sprot.filtered.fasta"
 prediction_transl_table = 11
 prediction_use_genemark = 1
-prediction_use_prodigal = 0
-prediction_crt_jar="/opt/CRT1.2/CRT1.2-CLI.jar"
-prediction_min_predictors_to_call_orf = 2
+prediction_use_prodigal = 1
+prediction_crt_jar="/scicomp/home/gzu2/CRT1.2/CRT1.2-CLI.jar"
 
-annotation_blast_db = "/home/lkatz/bin/cg_pipeline/data/uniprot_sprot_trembl.filtered.cd-hit.fasta"
-annotation_uniprot_db3 = "/home/lkatz/bin/cg_pipeline/data/cgpipeline.db3"
-annotation_uniprot_evidence_db3 = "/home/lkatz/bin/cg_pipeline/data/cgpipeline.evidence.db3"
+annotation_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/uniprot_sprot_trembl.filtered.fasta"
+annotation_uniprot_db3 = "/scicomp/home/gzu2/bin/cg_pipeline/data/cgpipeline.db3"
+annotation_uniprot_evidence_db3 = "/scicomp/home/gzu2/bin/cg_pipeline/data/cgpipeline.evidence.db3"
 
-gms_datadir = "/home/lkatz/bin/genemark_suite_linux_64/"
-cogs_blast_db = "/home/lkatz/bin/cg_pipeline/data/cogs"
-cogs_whog = "/home/lkatz/bin/cg_pipeline/data/whog"
-prot2cogid = "/home/lkatz/bin/cg_pipeline/data/prot2cogid.tsv"
-vfdb_blast_db = "/home/lkatz/bin/cg_pipeline/data/vfdbtest/vfdb_CP_VFs_aa"
-pdb_blast_db = "/mnt/spacestation4/genomeDatabases/NCBI/pdbaa"
-is_blast_db = "/home/lkatz/bin/cg_pipeline/data/is.faa"
-#card_blast_db="/home/lkatz/bin/cg_pipeline/data/CARD.faa"
-card_blast_db="/mnt/spacestation4/genomeDatabases/CGP/arg-annot"
+gms_datadir = "/scicomp/home/gzu2/bin/genemark_suite_linux_64/"
+cogs_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/cogs"
+cogs_whog = "/scicomp/home/gzu2/bin/cg_pipeline/data/whog"
+prot2cogid = "/scicomp/home/gzu2/bin/cg_pipeline/data/prot2cogid.tsv"
+card_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/arg-annot"
+is_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/is.faa"
+pdb_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/pdbaa"
+phast_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/phast.fasta"
 
 reporting_email = "lskatz+cgpipeline@gmail.com"
+
+vfdb_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/vfdb_VFs_aa"
+min_vfdb_aa_coverage = 0.8
+min_vfdb_aa_identity = 0.40
+min_vfdb_aa_similarity= 0.70
+
 
 author1="Lee Katz|L.S.|Centers for Disease Control and Prevention|Listeria, Yersinia, Vibrio and Enterobacteriaceae Reference Laboratory|lkatz@cdc.gov|Atlanta|GA|United States|1600 Clifton Rd NE|1-404-639-3875|30333
 author2="Tarr|C|Centers for Disease Control and Prevention|Listeria, Yersinia, Vibrio and Enterobacteriaceae Reference Laboratory|ctarr@cdc.gov|Atlanta|GA|United States|1600 Clifton Rd NE|1-404-639-2011|30333
