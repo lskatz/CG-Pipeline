@@ -121,14 +121,17 @@ sub printReadMetricsFromFile{
   my $isPE=(AKUtils::is_fastqPE($file))?"yes":"no";
   my $medianFragLen='.';
   if(grep(/$ext/,@samExt)){
-    # bam files are PE if they have at least some fragment sizes
+    # Bam files are PE if they have at least some fragment sizes.
+    # See if tlen is present so that it can be calculated.
     $isPE=(@{$count{tlen}} > 10)?"yes":"no"; 
-    my $tlenStats=Statistics::Descriptive::Full->new;
-    $tlenStats->add_data(@{$count{tlen}});
-    my $tlen25=$tlenStats->percentile(25);
-    my $tlen50=$tlenStats->percentile(50);
-    my $tlen75=$tlenStats->percentile(75);
-    $medianFragLen="$tlen50\[$tlen25,$tlen75]";
+    if($isPE eq 'yes'){
+      my $tlenStats=Statistics::Descriptive::Full->new;
+      $tlenStats->add_data(@{$count{tlen}});
+      my $tlen25=$tlenStats->percentile(25);
+      my $tlen50=$tlenStats->percentile(50);
+      my $tlen75=$tlenStats->percentile(75);
+      $medianFragLen="$tlen50\[$tlen25,$tlen75]";
+    }
   }
   # coverage is bases divided by the genome size
   my $coverage=($$settings{expectedGenomeSize})?round($count{extrapolatedNumBases}/$$settings{expectedGenomeSize}):'.';
