@@ -76,7 +76,6 @@ sub readFastq{
   my($infile,$settings)=@_;
   my $linker="~" x 4; # tildes are probably not in the sequence, so it's safe for putting into the hash ID
   my $linkerFirstChar=substr($linker,0,1);
-  my $l=$$settings{length}||0;
 
   my ($basename,$dir,$inSuffix) = fileparse($infile,@IOextensions);
 
@@ -100,20 +99,12 @@ sub readFastq{
     my $discard=<FQ>;
     my $qual=<FQ>;
     my $read="$id$sequence\n+\n$qual";
-    my $hashId=$sequence;
     for(my $j=1;$j<$poly;$j++){
       my $id2=<FQ>;
       my $sequence2=<FQ>; chomp($sequence2);
       my $discard2=<FQ>;
       my $qual2=<FQ>;
       $read.="$id2$sequence2\n+\n$qual2";
-      $hashId.="$linker$sequence2";
-    }
-
-    # if desired, only look at the first X nucleotides when considering a duplicate
-    if($l){
-      $hashId=~s/^(.{$l,$l}).*$linker(.+)/$1$linker$2/; # accept only X nucleotides from the front
-      $hashId=~s/($linker.{$l,$l}).*($|$linker)/$1$2/g if($poly>1);
     }
 
     push(@reads,$read);
@@ -127,7 +118,6 @@ sub readFastqStdin{
   my($settings)=@_;
   my $linker="~" x 4; # tildes are probably not in the sequence, so it's safe for putting into the hash ID
   my $linkerFirstChar=substr($linker,0,1);
-  my $l=$$settings{length}||0;
 
   my $poly=2; # TODO customize this
   $$settings{poly}=$poly;
@@ -144,20 +134,12 @@ sub readFastqStdin{
     my $discard=<FQ>;
     my $qual=<FQ>;
     my $read="$id$sequence\n+\n$qual";
-    my $hashId=$sequence;
     for(my $j=1;$j<$poly;$j++){
       my $id2=<FQ>;
       my $sequence2=<FQ>; chomp($sequence2);
       my $discard2=<FQ>;
       my $qual2=<FQ>;
       $read.="$id2$sequence2\n+\n$qual2";
-      $hashId.="$linker$sequence2";
-    }
-
-    # if desired, only look at the first X nucleotides when considering a duplicate
-    if($l){
-      $hashId=~s/^(.{$l,$l}).*$linker(.+)/$1$linker$2/; # accept only X nucleotides from the front
-      $hashId=~s/($linker.{$l,$l}).*($|$linker)/$1$2/g if($poly>1);
     }
 
     push(@reads,$read);
@@ -167,34 +149,72 @@ sub readFastqStdin{
   return \@reads;
 }
 
+# So that the best quality is in the zeroth position in the array
+sub sortReads{
+  my($reads,$settings)=@_;
+
+  my $numReads=scalar(@$reads);
+  return $numReads if($numReads<2);
+  #logmsg "Sorting $numReads reads";
+  @$reads=sort {
+    my(undef,undef,undef,$qual1a,undef,undef,undef,$qual2a)=split(/\n/,$a);
+    my(undef,undef,undef,$qual1b,undef,undef,undef,$qual2b)=split(/\n/,$b);
+    $qual2a||="";
+    $qual2b||="";
+
+    # calculate total quality. 
+    # Avg doesn't matter because we only care about reads that are the same sequence with differing qualities.
+    # Different but adjacent sequences will not matter.
+    # Qual offset doesn't matter because all reads will have the same offset.
+    my $sumA=sum(map(ord($_),split(//,"$qual1a$qual2a")));
+    my $sumB=sum(map(ord($_),split(//,"$qual1b$qual2b")));
+    return $sumB <=> $sumA;
+  } @$reads;
+  #logmsg "Done sorting reads";
+  return $numReads;
+}
+
 sub removeDuplicateReads{
   my($reads,$settings)=@_;
   my $linker="~" x 4; # tildes are probably not in the sequence, so it's safe for putting into the hash ID
   my $linkerFirstChar=substr($linker,0,1);
   my $l=$$settings{length}||0;
+  my $poly=$$settings{poly};
 
   # change the downsample parameter if settings{sizeTo} is set
   if($$settings{sizeTo}){
     $$settings{downsample}=findDownsamplingFromSizeto($reads,$$settings{sizeTo},$settings);
   }
 
-  # remove duplicate reads
-  my $poly=$$settings{poly};
-  my %uniq;
+  # sort reads by quality first so that the best quality is retained.
+  #sortReads($reads,$settings);
+  #die Dumper [$$reads[0],$$reads[100]];
+
+  # Compare sameness reads but with differing qualities: bin the reads
+  # Downsample within this loop so that abundance can factor in.
+  my %binnedRead;
   my $numReads=@$reads; # or readPairs
   for (my $i=0;$i<$numReads;$i++){
     my($id1,$seq1,undef,$qual1,$id2,$seq2,undef,$qual2)=split(/\n/,$$reads[$i]);
     $seq2||="";
     my $hashId="$seq1$linker$seq2";
+    if($l){
+      $hashId=~s/^(.{$l,$l}).*$linker(.+)/$1$linker$2/; # accept only X nucleotides from the front
+      $hashId=~s/($linker.{$l,$l}).*($|$linker)/$1$2/g if($poly>1);
+    }
+    # downsample here
     next if(rand() > $$settings{downsample});
-    $uniq{$hashId}=$$reads[$i];
+    push(@{ $binnedRead{$hashId} }, $$reads[$i]);
+  }
+  undef($reads); # free up some space
+
+  # Print one sequence read per duplicate set
+  for my $readArr(values(%binnedRead)){
+    sortReads($readArr,$settings);
+    print $$readArr[0];
   }
 
-  logmsg "Writing unique reads";
-  while(my($hashId,$read)=each(%uniq)){
-    print $read;
-  }
-
+  return scalar(keys(%binnedRead));
 }
 
 sub findDownsamplingFromSizeto{
