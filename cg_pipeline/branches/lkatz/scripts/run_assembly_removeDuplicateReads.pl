@@ -149,16 +149,19 @@ sub readFastqStdin{
   return \@reads;
 }
 
-# So that the best quality is in the zeroth position in the array
-sub sortReads{
+# Return the best read in an array of reads
+# TODO maybe make a consensus quality score instead of just getting the best representative
+sub bestReadOld{
   my($reads,$settings)=@_;
 
+
   my $numReads=scalar(@$reads);
-  return $numReads if($numReads<2);
-  #logmsg "Sorting $numReads reads";
+  return $$reads[0] if($numReads<2);
   @$reads=sort {
     my(undef,undef,undef,$qual1a,undef,undef,undef,$qual2a)=split(/\n/,$a);
     my(undef,undef,undef,$qual1b,undef,undef,undef,$qual2b)=split(/\n/,$b);
+    $qual1a||="";
+    $qual1b||="";
     $qual2a||="";
     $qual2b||="";
 
@@ -170,8 +173,28 @@ sub sortReads{
     my $sumB=sum(map(ord($_),split(//,"$qual1b$qual2b")));
     return $sumB <=> $sumA;
   } @$reads;
-  #logmsg "Done sorting reads";
-  return $numReads;
+  return $$reads[0];
+}
+
+sub bestRead{
+  my($reads,$settings)=@_;
+
+  my $numReads=scalar(@$reads);
+  # the first read will work if there's only one read
+  return $$reads[0] if($numReads<2);
+
+  # assume certain characteristics of the combined read from the first read
+  my($id1,$seq1,undef,undef,$id2,$seq2,undef,undef)=split(/\n/,$$reads[0]);
+  my ($length1,$length2)=(length($seq1),length($seq2));
+  
+  # assume that since two reads agree, then their quality is top-notch
+  my $qual1=chr(40+33) x $length1;
+  my $qual2=chr(40+33) x $length2;
+
+  # return the actual read
+  #die "\n".join("",@$reads)."\n$id1\n$seq1\n+\n$qual1\n$id2\n$seq2\n+\n$qual2\n";
+  return "$id1\n$seq1\n+\n$qual1\n$id2\n$seq2\n+\n$qual2\n" if($seq2);
+  return "$id1\n$seq1\n+\n$qual1\n";
 }
 
 sub removeDuplicateReads{
@@ -192,6 +215,8 @@ sub removeDuplicateReads{
 
   # Compare sameness reads but with differing qualities: bin the reads
   # Downsample within this loop so that abundance can factor in.
+  logmsg "Binning reads";
+  my $i=0;
   my %binnedRead;
   my $numReads=@$reads; # or readPairs
   for (my $i=0;$i<$numReads;$i++){
@@ -205,14 +230,19 @@ sub removeDuplicateReads{
     # downsample here
     next if(rand() > $$settings{downsample});
     push(@{ $binnedRead{$hashId} }, $$reads[$i]);
+    print STDERR "." if(++$i % 10000 == 0);
   }
+  print STDERR "\n";
   undef($reads); # free up some space
 
   # Print one sequence read per duplicate set
+  logmsg "Choosing best read per bin";
+  $i=0;
   for my $readArr(values(%binnedRead)){
-    sortReads($readArr,$settings);
-    print $$readArr[0];
+    print bestRead($readArr,$settings);
+    print STDERR "." if(++$i % 100000 == 0);
   }
+  print STDERR "\n";
 
   return scalar(keys(%binnedRead));
 }
