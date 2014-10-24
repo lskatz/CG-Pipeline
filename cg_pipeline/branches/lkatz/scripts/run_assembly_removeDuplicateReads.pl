@@ -176,6 +176,9 @@ sub bestReadOld{
   return $$reads[0];
 }
 
+# Return the only read or if there are duplicates,
+# calculate a new quality score based on consensus.
+# The read ID will be the same as the first read in the array.
 sub bestRead{
   my($reads,$settings)=@_;
 
@@ -184,13 +187,43 @@ sub bestRead{
   return $$reads[0] if($numReads<2);
 
   # assume certain characteristics of the combined read from the first read
-  my($id1,$seq1,undef,undef,$id2,$seq2,undef,undef)=split(/\n/,$$reads[0]);
+  my($id1,$seq1,undef,$firstQual1,$id2,$seq2,undef,$firstQual2)=split(/\n/,$$reads[0]);
   my ($length1,$length2)=(length($seq1),length($seq2));
-  
-  # assume that since two reads agree, then their quality is top-notch
-  my $qual1=chr(40+33) x $length1;
-  my $qual2=chr(40+33) x $length2;
 
+  my @p1=map(10**(-1*(ord($_)-33)/10),split(//,$firstQual1));
+  my @p2=map(10**(-1*(ord($_)-33)/10),split(//,$firstQual2));
+
+  # Calculate a new error probability for each base in the duplicated read.
+  # Start with the second read because the first read was used to initialize @p1,@p2
+  for(my $i=1;$i<$numReads;$i++){
+    my(undef,undef,undef,$q1,undef,undef,undef,$q2)=split(/\n/,$$reads[$i]);
+    # F/R quality scores are put into probabilities for this read
+    my @pForward=map(10**(-1*$_/10),split(//,$q1));
+    my @pReverse=map(10**(-1*$_/10),split(//,$q2));
+
+    # probability of error = p1 * p2 * ...
+    for(my $j=0;$i<$length1;$i++){
+      $p1[$j]*=$pForward[$j];
+    }
+    for(my $j=0;$i<$length2;$i++){
+      $p2[$j]*=$pReverse[$j];
+    }
+    
+  }
+  my $highestScore=40+33;
+  my $highestChr = chr($highestScore);
+  # back to base-33 scores but not chr-ed yet
+  my @qual1=map(int(-10*log($_)/log(10)+33),@p1);
+  my @qual2=map(int(-10*log($_)/log(10)+33),@p2);
+  # don't let anything go past the highest score
+  for(@qual1,@qual2){
+    $_=$highestScore if($_ > $highestScore); # compare vs highest possible score
+    $_=chr($_); # can now chr now that the comparison has been done
+  }
+  # Back to a string
+  my $qual1=join("",@qual1);
+  my $qual2=join("",@qual2);
+  
   # return the actual read
   #die "\n".join("",@$reads)."\n$id1\n$seq1\n+\n$qual1\n$id2\n$seq2\n+\n$qual2\n";
   return "$id1\n$seq1\n+\n$qual1\n$id2\n$seq2\n+\n$qual2\n" if($seq2);
