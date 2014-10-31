@@ -189,7 +189,8 @@ sub bestRead{
   # assume certain characteristics of the combined read from the first read
   my($id1,$seq1,undef,$firstQual1,$id2,$seq2,undef,$firstQual2)=split(/\n/,$$reads[0]);
   my ($length1,$length2)=(length($seq1),length($seq2));
-
+  # @p1, @p2 contain the prob(error) for each base along the read.
+  # Later it will get multiplied against the other probs found in the other reads
   my @p1=map(10**(-1*(ord($_)-33)/10),split(//,$firstQual1));
   my @p2=map(10**(-1*(ord($_)-33)/10),split(//,$firstQual2));
 
@@ -198,14 +199,14 @@ sub bestRead{
   for(my $i=1;$i<$numReads;$i++){
     my(undef,undef,undef,$q1,undef,undef,undef,$q2)=split(/\n/,$$reads[$i]);
     # F/R quality scores are put into probabilities for this read
-    my @pForward=map(10**(-1*$_/10),split(//,$q1));
-    my @pReverse=map(10**(-1*$_/10),split(//,$q2));
+    my @pForward=map(10**(-1*(ord($_)-33)/10),split(//,$q1));
+    my @pReverse=map(10**(-1*(ord($_)-33)/10),split(//,$q2));
 
     # probability of error = p1 * p2 * ...
-    for(my $j=0;$i<$length1;$i++){
+    for(my $j=0;$j<$length1;$j++){
       $p1[$j]*=$pForward[$j];
     }
-    for(my $j=0;$i<$length2;$i++){
+    for(my $j=0;$j<$length2;$j++){
       $p2[$j]*=$pReverse[$j];
     }
     
@@ -262,16 +263,19 @@ sub removeDuplicateReads{
     }
     # downsample here
     next if(rand() > $$settings{downsample});
+    # bin the reads
     push(@{ $binnedRead{$hashId} }, $$reads[$i]);
-    print STDERR "." if(++$i % 10000 == 0);
+    print STDERR "." if($i % 100000 == 0 && $i>0);
   }
   print STDERR "\n";
+  logmsg "Found ".scalar(keys(%binnedRead))." unique read or read pairs out of ".scalar(@$reads);
   undef($reads); # free up some space
 
   # Print one sequence read per duplicate set
   logmsg "Choosing best read per bin";
   $i=0;
-  for my $readArr(values(%binnedRead)){
+  while(my($hashId,$readArr)=each(%binnedRead)){
+    # print the best read out of the duplicates
     print bestRead($readArr,$settings);
     print STDERR "." if(++$i % 100000 == 0);
   }
