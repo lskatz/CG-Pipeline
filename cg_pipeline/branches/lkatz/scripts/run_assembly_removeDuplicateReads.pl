@@ -43,7 +43,7 @@ sub main{
   # get settings from cg_pipeline/conf/cgpipelinerc and ./cgpipelinerc
   $settings=AKUtils::loadConfig($settings);
   # get CLI flags into $settings with Getopt::Long
-  GetOptions($settings,qw(help tempdir=s downsample=s length=i sizeTo=s stdin stdin-compressed));
+  GetOptions($settings,qw(help tempdir=s downsample=s length=i sizeTo=s stdin stdin-compressed)) or die $!;
   die usage() if($$settings{help});
   # additional settings using ||= operator
   $$settings{poly}||=1; # SE by default
@@ -302,7 +302,8 @@ sub usage{
    Usage: $0 read.fastq[.gz] > read.fastq
      --downsample 0.1    # only keep 10% of the reads
      -size 1000000       # downsample to 1Mb. Internally, a new --downsample parameter is calculated and will be reported in stderr
-     --length 100        # only consider up to 100bp when deciding if a read is a duplicate. Default: no limit
+     --length 100        # only consider up to 100bp when deciding if a read is a duplicate. Default: 0 (no limit)
+                         # Warning: you might lose some sequence information when reads are binned if you use --length
      --stdin             # read a file as stdin (uncompressed)
      --stdin-compressed  # read a file as stdin (compressed)
   EXAMPLES
