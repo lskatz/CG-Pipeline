@@ -60,6 +60,11 @@ sub main() {
   $$settings{outfile} ||= "$0.out.gb";
   $$settings{assembly_linker} ||= ""; #"NNNNNCACACACTTAATTAATTAAGTGTGTGNNNNN";
 
+  # any oddities in the tag_prefix?
+  if($$settings{tag_prefix}=~/([^a-zA-Z0-9\.\-\+])/){
+    logmsg "Warning: found odd character in the tag_prefix: $1\n  This could have unintended consequences down the line.";
+  }
+
   # How many gene predictors are needed to call an orf?
   if(!$$settings{prediction_min_predictors_to_call_orf}){
     $$settings{prediction_min_predictors_to_call_orf}=1; 
