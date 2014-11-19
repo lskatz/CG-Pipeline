@@ -27,11 +27,16 @@ sub new {
 	die("field strain_name is required") unless $$self{strain_name};
 	die("field factory_type is required") unless $$self{factory_type};
 
-	die("Unknown factory type $$self{factory_type}. Implemented factory types: draft_orf_tagger")
+	die("Unknown factory_type $$self{factory_type}. Implemented factory types: draft_orf_tagger")
 		if $$self{factory_type} ne "draft_orf_tagger";
 
 	$$self{tag_prefix} ||= $$self{strain_name}."_";
 	$$self{idx_counter} = 0;
+
+  #LK found a bug in SeqIO where locus tags > 40 characters have a newline. The tag itself is four characters + an underscore
+  if(length($$self{tag_prefix}) > 35){
+    die "ERROR: tag_prefix needs to be 35 characters or less, due to a idiosyncracy in Bio::RichSeq::Genbank. The given tag_prefix was $$self{tag_prefix}";
+  }
 
     bless $self, $class;
     return $self;
