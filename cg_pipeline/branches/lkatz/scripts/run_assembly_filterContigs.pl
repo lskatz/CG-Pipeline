@@ -49,7 +49,8 @@ sub main() {
 
   while(my($id,$sequence)=each(%seq)){
     $sequence=~s/(.{80})/$1\n/g;
-    print ">$id\n$sequence\n";
+    $sequence=~s/^\s+|\s+//g;     # trim the sequence's whitespace
+    print ">$id\n$sequence\n";    # but put a newline after the sequence
   }
 
   return 0;
