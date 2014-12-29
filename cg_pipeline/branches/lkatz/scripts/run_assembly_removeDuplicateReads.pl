@@ -43,15 +43,17 @@ sub main{
   # get settings from cg_pipeline/conf/cgpipelinerc and ./cgpipelinerc
   $settings=AKUtils::loadConfig($settings);
   # get CLI flags into $settings with Getopt::Long
-  GetOptions($settings,qw(help tempdir=s downsample=s length=i sizeTo=s stdin stdin-compressed)) or die $!;
+  GetOptions($settings,qw(help tempdir=s downsample=s length=i sizeTo=s stdin stdin-compressed highest=i)) or die $!;
   die usage() if($$settings{help});
   # additional settings using ||= operator
   $$settings{poly}||=1; # SE by default
   $$settings{tempdir}||=AKUtils::mktempdir(); # any temp file you make should go under the tempdir
   $$settings{downsample}||=1;
+  $$settings{highest}||=40+33; # I is the 9th letter... don't want to go past Z
   die "ERROR: downsample should be a number and less than 1. User requested $$settings{downsample}.\n".usage() if($$settings{downsample}=~/[A-Za-z]/ || $$settings{downsample}>1);
 
   my $infile=[@ARGV];
+
   
   my @readArr;
   if(@ARGV && !$$settings{stdin} && !$$settings{'stdin-compressed'}){
@@ -211,9 +213,10 @@ sub bestRead{
     }
     
   }
-  my $highestScore=40+33;
+  my $highestScore=$$settings{highest};
   my $highestChr = chr($highestScore);
   # back to base-33 scores but not chr-ed yet
+  for(@p1,@p2){$_=0.00000001 if($_<=0); }
   my @qual1=map(int(-10*log($_)/log(10)+33),@p1);
   my @qual2=map(int(-10*log($_)/log(10)+33),@p2);
   # don't let anything go past the highest score
@@ -261,8 +264,6 @@ sub removeDuplicateReads{
       $hashId=~s/^(.{$l,$l}).*$linker(.+)/$1$linker$2/; # accept only X nucleotides from the front
       $hashId=~s/($linker.{$l,$l}).*($|$linker)/$1$2/g if($poly>1);
     }
-    # downsample here
-    next if(rand() > $$settings{downsample});
     # bin the reads
     push(@{ $binnedRead{$hashId} }, $$reads[$i]);
     print STDERR "." if($i % 100000 == 0 && $i>0);
@@ -275,6 +276,8 @@ sub removeDuplicateReads{
   logmsg "Choosing best read per bin";
   $i=0;
   while(my($hashId,$readArr)=each(%binnedRead)){
+    # downsample here
+    next if(rand() > $$settings{downsample});
     # print the best read out of the duplicates
     print bestRead($readArr,$settings);
     print STDERR "." if(++$i % 100000 == 0);
@@ -302,7 +305,9 @@ sub findDownsamplingFromSizeto{
 
 
 sub usage{
-  "Removes duplicate reads from a raw read set
+  "Removes duplicate reads from a raw read set.
+  Quality scores are combined as a result of -log(p * p) 
+    where p is the probability of getting an error and is fraction representation of the phred score.
    Usage: $0 read.fastq[.gz] > read.fastq
      --downsample 0.1    # only keep 10% of the reads
      -size 1000000       # downsample to 1Mb. Internally, a new --downsample parameter is calculated and will be reported in stderr
@@ -310,9 +315,12 @@ sub usage{
                          # Warning: you might lose some sequence information when reads are binned if you use --length
      --stdin             # read a file as stdin (uncompressed)
      --stdin-compressed  # read a file as stdin (compressed)
+     --highest           # The highest allowed quality score after combining reads. Default: 73
+                         # The highest Illumina score is normally 73 (40+33, which is an 'I')
+                         #   However if you want 'Z', it is ".(40+33+(26-9+1))."
   EXAMPLES
     $0 read.fastq[.gz] | gzip -c > read.fastq.gz
-    cat read.fastq.gz | $0 --stdin-compressed | gzip -c > noDupes.fastq.gz
+    $0 --stdin-compressed < read.fastq.gz | gzip -c > noDupes.fastq.gz
   ";
 }
 
