@@ -1,9 +1,0 @@
-Version 0.3.0 Changes
->doc/INSTALL: moved to top directory
->doc/README: moved to top directory
->scripts/reconfigure.pl: new script for rewriting conf/cgpipelinerc
->scripts/update_vfdb: modified wget and gunzip calls
->scripts/update_cg_databases: removed update_swissprot and update_greengenes
->scripts/update_uniprot: modified wget and gunzip calls
->scripts/make_revise.pl: new script for updating an installed Makefile
->Makefile: run reconfigure.pl and make_revise.pl when appropriate
