@@ -47,7 +47,7 @@ sub main() {
   $settings = AKUtils::loadConfig($settings);
   die(usage($settings)) if @ARGV<1;
 
-  my @cmd_options=qw(help fast qual_offset=i minLength=i numcpus=i expectedGenomeSize=s histogram);
+  my @cmd_options=qw(help fast qual_offset=i minLength=i numcpus=i expectedGenomeSize=s histogram tempdir=s);
   GetOptions($settings, @cmd_options) or die;
   die usage() if($$settings{help});
   die "ERROR: need reads file\n".usage() if(@ARGV<1);

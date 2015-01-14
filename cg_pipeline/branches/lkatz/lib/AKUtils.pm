@@ -1085,7 +1085,7 @@ sub gettRNAscanSEPredictions($;$) {
 	my $input_file_full = "$$settings{tempdir}/trnascan-se.in.fasta";
 	AKUtils::printSeqsToFile(\%renamed_seqs, $input_file_full);
 
-	logmsg "Running tRNAscanSE on $input_file_full...";
+	$$settings{trnascan_modeltype}||='bacteria';
 	$$settings{tse_exec}||='tRNAscan-SE';
 	$$settings{tse_exec} = AKUtils::fullPathToExec($$settings{tse_exec},{warn_on_error=>1});
 	if(!$$settings{tse_exec}){
@@ -1093,15 +1093,17 @@ sub gettRNAscanSEPredictions($;$) {
 		return {};
 	}
 
-	my $tse_opts = "-q";
+  my $tse_opts="";
+	$tse_opts .= "-q" if($$settings{quiet});
 	$tse_opts .= "" if $$settings{trnascan_modeltype} eq 'eukaryotic';
 	$tse_opts .= " -G" if $$settings{trnascan_modeltype} eq 'general';
 	$tse_opts .= " -O" if $$settings{trnascan_modeltype} eq 'organellar';
 	$tse_opts .= " -B" if $$settings{trnascan_modeltype} eq 'bacteria';
 	$tse_opts .= " -A" if $$settings{trnascan_modeltype} eq 'archaea';
-  $tse_opts .= " -Q"; # overwright, to make it more automatic
+  $tse_opts .= " -Q"; # overwrite, to make it more automatic
 
         my $command="$$settings{tse_exec} $tse_opts -o '$$settings{tempdir}/trnascan-se.out' '$input_file_full'";
+	logmsg "Running tRNAscanSE on $input_file_full with command\n  $command";
 	system($command);
 	die("Error running $$settings{tse_exec} with command $command: $!") if $?;
 

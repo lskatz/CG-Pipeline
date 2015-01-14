@@ -149,37 +149,31 @@ sub qualityTrimFastqPoly($;$){
     else{
       die "Could not determine the file type for reading based on your extension $$settings{inSuffix}";
     }
-    while(1){
-      # get a whole array of entries before enqueuing because it is a slow step
-      my @entry;
-      for(1..ceil($reportEvery/10)){
-        $entryCount++;
-        my $entry;
-        $entry .=<FQ> for(1..$linesPerGroup); # e.g. 8 lines total for paired end entry
-        last if(!$entry);
-        push(@entry,$entry);
-      }
-      last if(!@entry);
-        
-      $Q->enqueue(@entry);
 
-      # pause if/while there's too much in memory
-      while($Q->pending > $reportEvery*$$settings{numcpus}){
-        sleep 2;
-      }
+    my @entry; # buffer for the queue
+    while(my $entry=<FQ>){
+      $entry.=<FQ> for(2..$linesPerGroup); # e.g. 8 lines total for paired end entry
+      push(@entry,$entry);
+      $entryCount++;
 
-      if($entryCount%$reportEvery==0 && $verbose){
-        my $numGood=sum(values(%threadStatus));
-        my $freq_isClean=$numGood/($entryCount-$Q->pending);
-        $freq_isClean=nearest(0.01,$freq_isClean);
-        logmsg "Finished loading $entryCount pairs or singletons ($freq_isClean pass rate).";
-        if($$settings{debug}){
-          logmsg "DEBUG";
-          last;
+      if($entryCount % $reportEvery == 0){
+        $Q->enqueue(@entry);
+        @entry=();
+        if($verbose){
+          my $numGood=sum(values(%threadStatus));
+          my $freq_isClean=$numGood/($entryCount-$Q->pending);
+          $freq_isClean=nearest(0.01,$freq_isClean);
+          logmsg "Finished loading $entryCount pairs or singletons ($freq_isClean pass rate).";
+          if($$settings{debug}){
+            logmsg "DEBUG";
+            last;
+          }
         }
       }
     }
     close FQ;
+    $Q->enqueue(@entry); # get the last pieces of it entered
+
   }
   logmsg "Done loading: $entryCount entries loaded.";
   

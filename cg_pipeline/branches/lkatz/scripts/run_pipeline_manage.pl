@@ -120,6 +120,15 @@ sub cleanAnnotation{
       die Dumper $err;
     }
   }
+  File::Path->remove_tree($dir,{keep_root=>1,error=>\my $err});
+  if(@$err){
+    logmsg "At least one error was returned when cleaning. Attempting one more time.";
+    File::Path->remove_tree($dir,{keep_root=>1,error=>$err});
+    if(@$err){
+      logmsg "I still encountered at least one error.";
+      die Dumper $err;
+    }
+  }
   return 1;
 }
   
