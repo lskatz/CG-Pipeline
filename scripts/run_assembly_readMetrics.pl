@@ -169,7 +169,7 @@ sub readMetrics{
   my @tlen; # fragment length
   while(defined(my $tmp=$Q->dequeue)){
     my($seq,$qual,$tlen)=@$tmp;
-    # trim
+    # trim and chomp
     $seq =~s/^\s+|\s+$//g;
     $qual=~s/^\s+|\s+$//g;
     my $readLength=length($seq);
@@ -211,9 +211,12 @@ sub readFastq{
   } else {
     open($fp,$file) or die "Could not open fastq $file:$!";
   }
-  my @queueBuffer;
-  my $numEntries=0;
+
+  # read the first one so that there is definitely going to be at least one read in the results
   my $bufferSize=$$settings{bufferSize};
+  <$fp>; my $firstSeq=<$fp>; <$fp>; my $firstQual=<$fp>;
+  my @queueBuffer=([$firstSeq,$firstQual]);
+  my $numEntries=1;
   while(<$fp>){
     $numEntries++;
     my $seq=<$fp>;
@@ -329,9 +332,12 @@ sub readSam{
   } else {
     die "ERROR: I do not know how to read the $ext extension in $file";
   }
-  my @queueBuffer;
-  my $numEntries=0;
+
   my $bufferSize=$$settings{bufferSize};
+  my $firstLine=<SAM>;
+  my(undef,undef,undef,undef,undef,undef,undef,undef,$firstTlen,$firstSeq,$firstQual)=split /\t/,$firstLine;
+  my @queueBuffer=([$firstSeq,$firstQual,$firstTlen]);
+  my $numEntries=1;
   while(<SAM>){
     next if(/^@/);
     chomp;
