@@ -252,8 +252,10 @@ sub readSff{
   open(FNA,"sffinfo -s $file | ") or die "Could not open $file:$!";
   open(QUAL,"sffinfo -q $file | ") or die "Could not open $file:$!";
   my @queueBuffer;
-  my $numEntries=0;
   my $bufferSize=$$settings{bufferSize};
+  <FNA>; my $firstSeq=<FNA>; <QUAL>; my $firstQual=<QUAL>;
+  my @queueBuffer=([$firstSeq,$firstQual]);
+  my $numEntries=1;
   while(my $defline=<FNA>){
     $numEntries++;
     <QUAL>; # burn the qual defline because it is the same as the fna
