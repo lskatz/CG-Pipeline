@@ -203,6 +203,12 @@ sub bestRead{
   
   # return the actual read
   #die "\n".join("",@$reads)."\n$id1\n$seq1\n+\n$qual1\n$id2\n$seq2\n+\n$qual2\n";
+
+  # Tack on how many reads were combined
+  if($numReads>1){
+    $id1.=" CGP:combinedReads=$numReads";
+    $id2.=" CGP:combinedReads=$numReads";
+  }
   return "$id1\n$seq1\n+\n$qual1\n$id2\n$seq2\n+\n$qual2\n" if($seq2);
   return "$id1\n$seq1\n+\n$qual1\n";
 }
