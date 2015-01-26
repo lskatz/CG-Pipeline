@@ -273,7 +273,7 @@ sub removeDuplicateReads{
   undef($reads); # free up some space
 
   # Print one sequence read per duplicate set
-  logmsg "Choosing best read per bin";
+  logmsg "Combining identical reads per bin and recalculating quality scores";
   $i=0;
   while(my($hashId,$readArr)=each(%binnedRead)){
     # downsample here
