@@ -151,33 +151,6 @@ sub readFastqStdin{
   return \@reads;
 }
 
-# Return the best read in an array of reads
-# TODO maybe make a consensus quality score instead of just getting the best representative
-sub bestReadOld{
-  my($reads,$settings)=@_;
-
-
-  my $numReads=scalar(@$reads);
-  return $$reads[0] if($numReads<2);
-  @$reads=sort {
-    my(undef,undef,undef,$qual1a,undef,undef,undef,$qual2a)=split(/\n/,$a);
-    my(undef,undef,undef,$qual1b,undef,undef,undef,$qual2b)=split(/\n/,$b);
-    $qual1a||="";
-    $qual1b||="";
-    $qual2a||="";
-    $qual2b||="";
-
-    # calculate total quality. 
-    # Avg doesn't matter because we only care about reads that are the same sequence with differing qualities.
-    # Different but adjacent sequences will not matter.
-    # Qual offset doesn't matter because all reads will have the same offset.
-    my $sumA=sum(map(ord($_),split(//,"$qual1a$qual2a")));
-    my $sumB=sum(map(ord($_),split(//,"$qual1b$qual2b")));
-    return $sumB <=> $sumA;
-  } @$reads;
-  return $$reads[0];
-}
-
 # Return the only read or if there are duplicates,
 # calculate a new quality score based on consensus.
 # The read ID will be the same as the first read in the array.
