@@ -8,14 +8,17 @@ use strict;
 use warnings;
 use Data::Dumper;
 use Getopt::Long;
+use File::Basename;
 
+sub logmsg{local $0=fileparse $0; print STDERR "$0: @_\n";}
 exit(main());
 
 sub main{
   my $settings={};
-  GetOptions($settings,qw(infile=s outfile=s minLength=i));
-  my $in=$$settings{infile} or die usage();
-  my $out=$$settings{outfile} or die usage();
+  GetOptions($settings,qw(infile=s outfile=s minLength=i help));
+  die usage() if($$settings{help});
+  my $in=$$settings{infile} or logmsg "No infile. Reading from stdin";
+  my $out=$$settings{outfile} or logmsg "No outfile. Printing to stdout";
 
   convert($in,$out,$settings);
 
@@ -24,19 +27,34 @@ sub main{
 
 sub convert{
   my($in,$out,$settings)=@_;
-  open(IN,$in) or die "Could not open $in: $!";
-  open(OUT,">$out") or die "Could not open $out for writing: $!";
-  while(my $id=<IN>){
+
+  # Where to get input from?
+  my $infp;
+  if($in){
+    open($infp,$in) or die "Could not open $in: $!";
+  } else {
+    $infp=*STDIN;
+  }
+
+  # Where to print to?
+  my $outfp;
+  if($out){
+    open($outfp,">$out") or die "Could not open $out for writing: $!";
+  } else {
+    $outfp=*STDOUT;
+  }
+
+  while(my $id=<$infp>){
     my($qual,$sequence);
     chomp($id);
     $id=~s/^@//;
-    while(my $tmp=<IN>){
+    while(my $tmp=<$infp>){
       last if($tmp=~/^\+(\Q$id\E)?/);
       $sequence.=$tmp;
     }
     my $seqLength=length($sequence);
 
-    read(IN,$qual,$seqLength) or die "Problem reading $seqLength characters from $in because $!";
+    read($infp,$qual,$seqLength) or die "Problem reading $seqLength characters from $in because $!";
     die "For sequence $id, I got a qual that is a different length than intended\n$qual" if(length($qual)!=$seqLength);
     #for(1..$seqLength){
     #  $qual.=getc(IN);
@@ -46,10 +64,10 @@ sub convert{
 
     next if($$settings{minLength} && length($sequence)<$$settings{minLength});
 
-    print OUT "\@$id\n$sequence\n+\n$qual\n";
+    print $outfp "\@$id\n$sequence\n+\n$qual\n";
   }
-  close OUT;
-  close IN;
+  close $outfp;
+  close $infp;
 
   return 1;
 }
