@@ -17,9 +17,9 @@ sub main{
   die usage() if($$settings{help} || !@ARGV);
 
   # if checkFirst is undef or 0, this will cause it to check at least the first 20 entries.
-  # 20 reads is probably enough to make sure that it's shuffled (1/2^100 chance I'm wrong)
+  # 200 reads is probably enough to make sure that it's shuffled (1/2^100 chance I'm wrong)
   $$settings{checkFirst}||=200;
-  $$settings{checkFirst}=20 if($$settings{checkFirst}<2);
+  $$settings{checkFirst}=200 if($$settings{checkFirst}<2);
 
   my $file=shift @ARGV;
 
@@ -152,7 +152,7 @@ sub usage{
   "$0: checks to see if a reads file is paired-end or not. Outputs 1 for yes or 0 for no.
   Usage: $0 file.fastq[.gz]
   --checkFirst [200]  How many deflines to check to make sure it is PE
-  --wantformat       Print which defline format the file is
+  --wantformat        Use this flag to also print which defline format the file is
   "
 }
 
