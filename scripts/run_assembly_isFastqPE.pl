@@ -108,8 +108,13 @@ sub _is_fastqPECasava18{
     $yandmember2="" if(!defined($yandmember2));
     my($y2,$member2)=split(/\s+/,$yandmember2);
 
+    # If there isn't even a member, then this is not the correct format.
+    return 0 if(!$member && !$member2);
+
     # Instrument, etc must be the same.
     # The member should be different, usually "1" and "2"
+    $_||="" for($instrument,$inst2,$runid,$runid2,$flowcellid,$fcid2,$tile,$tile2);
+    $_||=-1 for($member,$member2);
     if($instrument ne $inst2 || $runid ne $runid2 || $flowcellid ne $fcid2 || $tile ne $tile2 || $member>=$member2){
       return 0;
     }
