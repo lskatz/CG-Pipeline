@@ -38,12 +38,13 @@ exit(main());
 sub main{
   my $settings = {
       appname => 'cgpipeline',
+      bin     => 1,
   };
 
   # get settings from cg_pipeline/conf/cgpipelinerc and ./cgpipelinerc
   $settings=AKUtils::loadConfig($settings);
   # get CLI flags into $settings with Getopt::Long
-  GetOptions($settings,qw(help tempdir=s downsample=s length=i sizeTo=s stdin stdin-compressed highest=i)) or die $!;
+  GetOptions($settings,qw(help tempdir=s downsample=s length=i sizeTo=s stdin stdin-compressed highest=i bin!)) or die $!;
   die usage() if($$settings{help});
   # additional settings using ||= operator
   $$settings{poly}||=1; # SE by default
@@ -243,6 +244,8 @@ sub removeDuplicateReads{
       $hashId=~s/^(.{$l,$l}).*$linker(.+)/$1$linker$2/; # accept only X nucleotides from the front
       $hashId=~s/($linker.{$l,$l}).*($|$linker)/$1$2/g if($poly>1);
     }
+    # If we're not binning/deduplicating, then just have a unique ID
+    $hashId="nobinning$i" if(!$$settings{bin});
     # bin the reads
     push(@{ $binnedRead{$hashId} }, $$reads[$i]);
     print STDERR "." if($i % 100000 == 0 && $i>0);
@@ -289,6 +292,7 @@ sub usage{
     where p is the probability of getting an error and is fraction representation of the phred score.
    Usage: $0 read.fastq[.gz] > read.fastq
      --downsample 0.1    # only keep 10% of the reads
+     --nobin             # Don't deduplicate; use other functions of this script like downsampling.
      -size 1000000       # downsample to 1Mb. Internally, a new --downsample parameter is calculated and will be reported in stderr
      --length 100        # only consider up to 100bp when deciding if a read is a duplicate. Default: 0 (no limit)
                          # Warning: you might lose some sequence information when reads are binned if you use --length
