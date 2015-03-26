@@ -49,7 +49,7 @@ sub main() {
   logmsg "Determining best assembly from ".join(", ",@input_files).".";
   foreach my $file (@input_files) {
 	  $file = File::Spec->rel2abs($file);
-	  die("Input or reference file $file not found") unless -f $file;
+	  logmsg ("WARNING: Input or reference file $file not found") unless -e $file;
   }
   my $final_seqs=bestAssemblySeqs(\@input_files,$settings);
   
