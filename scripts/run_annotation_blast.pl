@@ -1,8 +1,8 @@
 #!/usr/bin/env perl
 
-# run-assembly: Perform standard assembly protocol operations on 454 pyrosequenced flowgram file(s)
-# Author: Andrey Kislyuk (kislyuk@gatech.edu)
+# run-assembly-blast: run blastp in a standardized way
 # Author: Lee Katz <lkatz@cdc.gov>
+# Thank you for multithreading advice: Dhwani Govil Batra
 
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
