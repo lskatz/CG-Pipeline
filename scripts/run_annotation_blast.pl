@@ -91,6 +91,7 @@ sub main() {
   $thr[$_]=threads->new(\&readBlastOutputWorker,$Q,$printQueue,\%query_seqs,$settings) for(0..$numcpus-1);
   my $printWorkerThread=threads->new(\&printWorker,$printQueue,$settings); # prints the sequences to file
 
+  # Split the blast output into multiple files for reading.
   my $resultCounter=0;
   local $/="\nQuery=";
   open(BLASTOUT,$$settings{blastfile}) or die "Could not open the blast output file for reading: $!";
