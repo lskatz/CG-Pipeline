@@ -5,28 +5,28 @@ classification = "Vibrio cholerae Vibrio Vibrionaceae Vibrionales Gammaproteobac
 
 assembly_min_contig_length=500
 
-prediction_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/uniprot_sprot.filtered.fasta"
+prediction_blast_db = "/opt/cg_pipeline/data/uniprot_sprot.filtered.fasta"
 prediction_transl_table = 11
 prediction_use_genemark = 1
 prediction_use_prodigal = 1
 prediction_crt_jar="/scicomp/home/gzu2/CRT1.2/CRT1.2-CLI.jar"
 
-annotation_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/uniprot_sprot_trembl.filtered.fasta"
-annotation_uniprot_db3 = "/scicomp/home/gzu2/bin/cg_pipeline/data/cgpipeline.db3"
-annotation_uniprot_evidence_db3 = "/scicomp/home/gzu2/bin/cg_pipeline/data/cgpipeline.evidence.db3"
+annotation_blast_db = "/opt/cg_pipeline/data/uniprot_sprot_trembl.filtered.fasta"
+annotation_uniprot_db3 = "/opt/cg_pipeline/data/cgpipeline.db3"
+annotation_uniprot_evidence_db3 = "/opt/cg_pipeline/data/cgpipeline.evidence.db3"
 
 gms_datadir = "/scicomp/home/gzu2/bin/genemark_suite_linux_64/"
-cogs_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/cogs"
-cogs_whog = "/scicomp/home/gzu2/bin/cg_pipeline/data/whog"
-prot2cogid = "/scicomp/home/gzu2/bin/cg_pipeline/data/prot2cogid.tsv"
-card_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/arg-annot"
-is_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/is.faa"
-pdb_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/pdbaa"
-phast_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/phast.fasta"
+cogs_blast_db = "/opt/cg_pipeline/data/cogs"
+cogs_whog = "/opt/cg_pipeline/data/whog"
+prot2cogid = "/opt/cg_pipeline/data/prot2cogid.tsv"
+card_blast_db = "/opt/cg_pipeline/data/arg-annot"
+is_blast_db = "/opt/cg_pipeline/data/is.faa"
+pdb_blast_db = "/opt/cg_pipeline/data/pdbaa"
+phast_blast_db = "/opt/cg_pipeline/data/phast.fasta"
 
 reporting_email = "lskatz+cgpipeline@gmail.com"
 
-vfdb_blast_db = "/scicomp/home/gzu2/bin/cg_pipeline/data/vfdb_VFs_aa"
+vfdb_blast_db = "/opt/cg_pipeline/data/vfdb_VFs_aa"
 min_vfdb_aa_coverage = 0.8
 min_vfdb_aa_identity = 0.40
 min_vfdb_aa_similarity= 0.70
