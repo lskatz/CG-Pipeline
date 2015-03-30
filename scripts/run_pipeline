@@ -172,8 +172,8 @@ sub main(){
       $gbArg.="$_ ";
     }
     $gbArg=$gbArg||"$home/$project/prediction.gb";
-    my $gotoArg=($$settings{goto})?"--goto=$$settings{goto}":"";
-       $gotoArg=($$settings{just})?"--just=$$settings{just}":"";
+    my $gotoArg=($$settings{goto})?"--goto=$$settings{goto} ":"";
+       $gotoArg.=($$settings{just})?"--just=$$settings{just} ":"";
     my $skipArg=($$settings{skip})?"--skip=".join(" --skip=",@{$$settings{skip}})."":"";
     $invoke_string="time run_annotation $gbArg $skipArg -tempdir=$home/$project/build/annotation --keep --outdir=$home/$project/annotation --numcpus $$settings{numcpus} $gotoArg  2>&1 ";
     if($verbose>1){
