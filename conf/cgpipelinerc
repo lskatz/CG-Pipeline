@@ -15,7 +15,7 @@ annotation_blast_db = "/opt/cg_pipeline/data/uniprot_sprot_trembl.filtered.fasta
 annotation_uniprot_db3 = "/opt/cg_pipeline/data/cgpipeline.db3"
 annotation_uniprot_evidence_db3 = "/opt/cg_pipeline/data/cgpipeline.evidence.db3"
 
-gms_datadir = "/scicomp/home/gzu2/bin/genemark_suite_linux_64/"
+gms_datadir = "/home/lkatz/bin/genemark_suite_linux_64/"
 cogs_blast_db = "/opt/cg_pipeline/data/cogs"
 cogs_whog = "/opt/cg_pipeline/data/whog"
 prot2cogid = "/opt/cg_pipeline/data/prot2cogid.tsv"

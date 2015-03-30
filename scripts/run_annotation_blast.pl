@@ -32,7 +32,7 @@ use Data::Dumper;
 use Bio::Perl;
 use Bio::SearchIO::Writer::TextResultWriter;
 use Bio::SearchIO::Writer::HTMLResultWriter;
-use File::Slurp qw/read_file write_file/;
+use POSIX qw/ceil/;
 
 use threads;
 use threads::shared;
@@ -153,8 +153,17 @@ sub blastall{
     while(my $seq=$seqin->next_seq){
       push(@seq,">".$seq->id."\n".$seq->seq);
     }
+    my $numseqs=scalar(@seq);
+    # TODO: concat some of the sequence strings, so that blast can have multiple inputs at once and so that dequeuing doesn't take as long.
+    my @multiSeq;
+    my $numPerCpu=ceil($numseqs/$$settings{numcpus});
+    for(my $i=0;$i<$$settings{numcpus};$i++){
+      $multiSeq[$i]=splice(@seq,0,$numPerCpu)
+    }
+    undef(@seq); # definitively remove @seq
+
     # Enqueue all genes, and then enqueue terminator signals
-    my $geneQ=Thread::Queue->new(@seq);
+    my $geneQ=Thread::Queue->new(@multiSeq);
     $geneQ->enqueue(undef) for(1..$$settings{numcpus});
 
     # Start blasting away
@@ -163,11 +172,16 @@ sub blastall{
     # Wait on the threads. Compile the larger file.
     $$settings{blastfile}="$$settings{tempdir}/$0.$$.blast_out";
     unlink($$settings{blastfile}) if(-e $$settings{blastfile});
+    open(BLSOUT,">",$$settings{blastfile}) or die "ERROR: could not open $$settings{blastfile} for writing!: $!";
     for(@thread){
       my $tmpfile=$_->join;
-      write_file($$settings{blastfile},{append=>1,err_mode=>"croak"},read_file($tmpfile));
-      unlink $tmpfile;
+      open(BLSIN,$tmpfile) or die "ERROR: Could not open tmp file $tmpfile: $!";
+      print BLSOUT $_ while(<BLSIN>);
+      close BLSIN;
+      # cleanup
+      unlink $_ for($tmpfile, "$tmpfile.err");
     }
+    close BLSOUT;
 
     # signal to the progress queue that we are done with the progress indicator
     $progressQ->enqueue(undef); # send term signal to progress thread
@@ -181,12 +195,17 @@ sub blastall{
 sub blastworker{
   my($Q,$progressQ,$settings)=@_;
   my $threadid=threads->tid;
-  my $outfile="$$settings{tempdir}/$0.$$.$threadid.blast_out";
+  my $outfile="$$settings{tempdir}/$0.p$$.TID$threadid.blast_out";
+
+  # 1. Remove the tmp file if it exists.
+  # 2. Make a zero-byte file as a placeholder and so definitely exists later on.
   unlink $outfile if(-e $outfile);
+  system("touch $outfile");
   while(defined(my $query=$Q->dequeue)){
     # Use sed to fix a bug in blast < 2.2.27+ where * is printed as hex \xFF.
-    # Use one cpu because there will be one whole blast command per cpu
-    my $command="echo '$query' | perl `which legacy_blast.pl` blastall -p blastp -a 1 -d $$settings{blast_db} -m 0 2>$outfile.err | sed 's/\xFF/*/g' > $outfile";
+    # Use one cpu because there will be one whole blast command per cpu.
+    # Do the append (>>) so that the previous iteration doesn't erase results.
+    my $command="echo '$query' | perl `which legacy_blast.pl` blastall -p blastp -a 1 -d $$settings{blast_db} -m 0 2>$outfile.err | sed 's/\xFF/*/g' >> $outfile";
     system($command);
     die "Problem with blast. See $outfile.err for details. Command was\n  $command" if $?;
     $progressQ->enqueue([$threadid,$query]);
