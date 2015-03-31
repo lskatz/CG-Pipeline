@@ -1,8 +1,8 @@
 #!/usr/bin/env perl
 
-# run-assembly: Perform standard assembly protocol operations on 454 pyrosequenced flowgram file(s)
-# Author: Andrey Kislyuk (kislyuk@gatech.edu)
+# run-assembly-blast: run blastp in a standardized way
 # Author: Lee Katz <lkatz@cdc.gov>
+# Thank you for multithreading advice: Dhwani Govil Batra
 
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
@@ -29,8 +29,10 @@ use List::Util qw(min max sum shuffle);
 use CGPipelineUtils;
 use Bio::SearchIO;
 use Data::Dumper;
+use Bio::Perl;
 use Bio::SearchIO::Writer::TextResultWriter;
 use Bio::SearchIO::Writer::HTMLResultWriter;
+use POSIX qw/ceil/;
 
 use threads;
 use threads::shared;
@@ -71,26 +73,8 @@ sub main() {
   my $numcpus=$$settings{numcpus};
   #$numcpus=1; logmsg "DEBUGGING NUMBER OF CPUS";
 
-  # don't blast if a blastfile has been given
-  my $report;
-  if(!$$settings{blastfile}){
-    # Progress report for the blast that will happen
-    my $progressQ=Thread::Queue->new;
-    my $progressThread=threads->new(\&blastProgressUpdater,$progressQ,$settings);
-
-    $ENV{BLASTDB} = (fileparse($$settings{blast_db}))[1];
-    my $command="perl `which legacy_blast.pl` blastall -p blastp -a $numcpus -d $$settings{blast_db} -i $$settings{query_mfa} $$settings{parametersForBlast} -m 0 | sed 's/\xFF/*/g' > $$settings{tempdir}/$0.$$.blast_out"; # sed to fix a bug in blast < 2.2.27+ where * is printed as hex \xFF.
-    logmsg "Running BLAST on $$settings{query_mfa} vs. $$settings{blast_db}...\n  $command";
-    system($command);
-    die "Problem with blast" if $?;
-    $progressQ->enqueue(undef); # send term signal to progress thread
-    $progressThread->join;
-
-    $report=new Bio::SearchIO(-format=>'blast',-file=>"$$settings{tempdir}/$0.$$.blast_out");
-    $$settings{blastfile}="$$settings{tempdir}/$0.$$.blast_out";
-  } else {
-    $report=new Bio::SearchIO(-format=>'blast',-file=>$$settings{blastfile});
-  }
+  # Perform the blast
+  my $report=blastall($$settings{query_mfa},$settings);
 
   logmsg "Reading $$settings{query_mfa} and parsing blast result, using $numcpus threads";
   my %query_seqs;
@@ -107,6 +91,7 @@ sub main() {
   $thr[$_]=threads->new(\&readBlastOutputWorker,$Q,$printQueue,\%query_seqs,$settings) for(0..$numcpus-1);
   my $printWorkerThread=threads->new(\&printWorker,$printQueue,$settings); # prints the sequences to file
 
+  # Split the blast output into multiple files for reading.
   my $resultCounter=0;
   local $/="\nQuery=";
   open(BLASTOUT,$$settings{blastfile}) or die "Could not open the blast output file for reading: $!";
@@ -140,12 +125,109 @@ sub main() {
   logmsg "Joining print worker thread";
   $printWorkerThread->join;
 
+#TODO delete temporary blast output file
   logmsg "Report is in $$settings{outfile}";
   return 0;
 }
 
 #############
 #############
+sub blastall{
+  my($mfa,$settings)=@_;
+  my $report;  # SearchIO object
+  my @thread;
+
+  # If the blastfile is given, then don't blast again
+  if(!$$settings{blastfile}){
+    # ENV variable for ncbi blast -- not sure if it's needed anymore
+    $ENV{BLASTDB} = (fileparse($$settings{blast_db}))[1];
+
+    # Progress report for the blast that will happen.
+    # The progress updater will be printing, so no other 
+    # printing should happen until it finishes unless 
+    # it's a die statement.
+    my $progressQ=Thread::Queue->new;
+    my $progressThread=threads->new(\&geneBlastProgressUpdater,$progressQ,$settings);
+
+    # retrieve all genes in the input file and put them into a queue
+    my $seqin=Bio::SeqIO->new(-file=>$mfa);
+    my @seq;
+    while(my $seq=$seqin->next_seq){
+      push(@seq,">".$seq->id."\n".$seq->seq);
+    }
+    my $numseqs=scalar(@seq);
+    # TODO: concat some of the sequence strings, so that blast can have multiple inputs at once and so that dequeuing doesn't take as long.
+    my @multiSeq;
+    my $numPerCpu=ceil($numseqs/$$settings{numcpus});
+    #for(my $i=0;$i<$$settings{numcpus};$i++){
+      #$multiSeq[$i]=join("\n",splice(@seq,0,$numPerCpu));
+    while(@seq){
+      push(@multiSeq,join("\n",splice(@seq,0,$numPerCpu)));
+    }
+    undef(@seq); # definitively remove @seq
+
+    # Enqueue all genes, and then enqueue terminator signals
+    my $geneQ=Thread::Queue->new(@multiSeq);
+    $geneQ->enqueue(undef) for(1..$$settings{numcpus});
+
+    # Start blasting away
+    $thread[$_]=threads->new(\&blastworker,$geneQ,$progressQ,$settings) for(0..$$settings{numcpus}-1);
+
+    # Wait on the threads. Compile the larger file.
+    $$settings{blastfile}="$$settings{tempdir}/$0.$$.blast_out";
+    unlink($$settings{blastfile}) if(-e $$settings{blastfile});
+    open(BLSOUT,">",$$settings{blastfile}) or die "ERROR: could not open $$settings{blastfile} for writing!: $!";
+    for(@thread){
+      my $tmpfile=$_->join;
+      open(BLSIN,$tmpfile) or die "ERROR: Could not open tmp file $tmpfile: $!";
+      print BLSOUT $_ while(<BLSIN>);
+      close BLSIN;
+      # cleanup
+      unlink $_ for($tmpfile, "$tmpfile.err");
+    }
+    close BLSOUT;
+
+    # signal to the progress queue that we are done with the progress indicator
+    $progressQ->enqueue(undef); # send term signal to progress thread
+    $progressThread->join;
+  }
+
+  $report=new Bio::SearchIO(-format=>'blast',-file=>$$settings{blastfile});
+  return $report;
+}
+
+sub blastworker{
+  my($Q,$progressQ,$settings)=@_;
+  my $threadid=threads->tid;
+
+  # Temporary input file for blast in this thread
+  my $fastain="$$settings{tempdir}/$0.p$$.TID$threadid.query.faa";
+
+  # 1. Remove the tmp output file if it exists.
+  # 2. Make a zero-byte file as a placeholder and so definitely exists later on.
+  my $outfile="$$settings{tempdir}/$0.p$$.TID$threadid.blast_out";
+  unlink $outfile if(-e $outfile);
+  system("touch $outfile");
+  while(defined(my $query=$Q->dequeue)){
+    # Write the query to the file so that it doesn't
+    # break something in bash/echo.
+    my $threadfp;
+    open($threadfp,">",$fastain) or die "ERROR: could not open $fastain: $!";
+    print $threadfp $query;
+    close $threadfp;
+
+    # Use sed to fix a bug in blast < 2.2.27+ where * is printed as hex \xFF.
+    # Use one cpu because there will be one whole blast command per cpu.
+    # Do the append (>>) so that the previous iteration doesn't erase results.
+    my $command="perl `which legacy_blast.pl` blastall -p blastp -a 1 -d $$settings{blast_db} -i $fastain -m 0 2>$outfile.err | sed 's/\xFF/*/g' >> $outfile";
+    system($command);
+    die "Problem with blast. See $outfile.err for details. Command was\n  $command" if $?;
+    $progressQ->enqueue([$threadid,$query]);
+  }
+  unlink($fastain); #cleanup
+  return $outfile;
+}
+
 sub readBlastOutputWorker{
   my($Q,$printQueue,$query_seqs,$settings)=@_;
   while(defined(my $resultFile=$Q->dequeue)){ 
@@ -246,26 +328,24 @@ sub printWorker{
   return 1;
 }
 
-sub blastProgressUpdater{
+sub geneBlastProgressUpdater{
   my($Q,$settings)=@_;
-  my $outfile="$$settings{tempdir}/$0.$$.blast_out";
-  # wait until a file is there before updating
-  sleep 5 while(!-e $outfile);
-  #sleep 5;
-  logmsg "Checking the progress of BLAST every $$settings{checkEvery} seconds";
-  while($Q->pending==0){ # the queue will have one item in it to signal for it to be done
-    my $numFinished=`grep -c "Query=" '$outfile'`+0;
-    logmsg "Finished with $numFinished queries";
-    # give it a chance to break out of this subroutine if it has been given the term signal
-    # Hold for 1 minute before updating
-    for(1..$$settings{checkEvery}){
-      last if($Q->pending>0);
-      sleep 1;
+  my $i=0;
+  print STDOUT "Progress indicator is one gene per 100 dots:\n";
+  while(defined(my $tmp=$Q->dequeue)){
+    my($threadid,$query)=@$tmp;
+    # number of seqs == number of times it can be split + 1
+    my $numseqs=($query=~s/\n>//g) + 1;
+    # Look at one int at a time to see if it is when the progress
+    # meter should report.
+    for(1..$numseqs){
+      $|++; # let the progress indicator do its thing
+      print STDOUT "." if(++$i % 100 == 0);
+      $|--;
     }
   }
-  logmsg "Finished with BLAST";
+  print STDOUT "\nDone blasting $i queries!\n";
 }
-
 
 sub usage{
   "Usage: $0 input.mfa

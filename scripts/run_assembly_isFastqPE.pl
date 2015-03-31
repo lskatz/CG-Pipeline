@@ -17,9 +17,9 @@ sub main{
   die usage() if($$settings{help} || !@ARGV);
 
   # if checkFirst is undef or 0, this will cause it to check at least the first 20 entries.
-  # 20 reads is probably enough to make sure that it's shuffled (1/2^10 chance I'm wrong)
-  $$settings{checkFirst}||=20;
-  $$settings{checkFirst}=20 if($$settings{checkFirst}<2);
+  # 200 reads is probably enough to make sure that it's shuffled (1/2^100 chance I'm wrong)
+  $$settings{checkFirst}||=200;
+  $$settings{checkFirst}=200 if($$settings{checkFirst}<2);
 
   my $file=shift @ARGV;
 
@@ -108,8 +108,13 @@ sub _is_fastqPECasava18{
     $yandmember2="" if(!defined($yandmember2));
     my($y2,$member2)=split(/\s+/,$yandmember2);
 
+    # If there isn't even a member, then this is not the correct format.
+    return 0 if(!$member && !$member2);
+
     # Instrument, etc must be the same.
     # The member should be different, usually "1" and "2"
+    $_||="" for($instrument,$inst2,$runid,$runid2,$flowcellid,$fcid2,$tile,$tile2);
+    $_||=-1 for($member,$member2);
     if($instrument ne $inst2 || $runid ne $runid2 || $flowcellid ne $fcid2 || $tile ne $tile2 || $member>=$member2){
       return 0;
     }
@@ -151,8 +156,8 @@ sub _is_fastqPECasava17{
 sub usage{
   "$0: checks to see if a reads file is paired-end or not. Outputs 1 for yes or 0 for no.
   Usage: $0 file.fastq[.gz]
-  --checkFirst [20]  How many deflines to check to make sure it is PE
-  --wantformat       Print which defline format the file is
+  --checkFirst [200]  How many deflines to check to make sure it is PE
+  --wantformat        Use this flag to also print which defline format the file is
   "
 }
 
