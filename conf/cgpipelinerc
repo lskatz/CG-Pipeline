@@ -26,7 +26,7 @@ phast_blast_db = "/opt/cg_pipeline/data/phast.fasta"
 
 reporting_email = "lskatz+cgpipeline@gmail.com"
 
-vfdb_blast_db = "/opt/cg_pipeline/data/vfdb_VFs_aa"
+vfdb_blast_db = "/opt/cg_pipeline/data/vfdb_CP_VFs_aa"
 min_vfdb_aa_coverage = 0.8
 min_vfdb_aa_identity = 0.40
 min_vfdb_aa_similarity= 0.70

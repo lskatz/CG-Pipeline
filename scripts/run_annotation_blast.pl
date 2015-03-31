@@ -125,6 +125,7 @@ sub main() {
   logmsg "Joining print worker thread";
   $printWorkerThread->join;
 
+#TODO delete temporary blast output file
   logmsg "Report is in $$settings{outfile}";
   return 0;
 }
