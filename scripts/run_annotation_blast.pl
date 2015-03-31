@@ -334,7 +334,8 @@ sub geneBlastProgressUpdater{
   print STDOUT "Progress indicator is one gene per 100 dots:\n";
   while(defined(my $tmp=$Q->dequeue)){
     my($threadid,$query)=@$tmp;
-    my $numseqs=($query=~s/\n>//g);
+    # number of seqs == number of times it can be split + 1
+    my $numseqs=($query=~s/\n>//g) + 1;
     # Look at one int at a time to see if it is when the progress
     # meter should report.
     for(1..$numseqs){
