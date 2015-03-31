@@ -158,8 +158,10 @@ sub blastall{
     # TODO: concat some of the sequence strings, so that blast can have multiple inputs at once and so that dequeuing doesn't take as long.
     my @multiSeq;
     my $numPerCpu=ceil($numseqs/$$settings{numcpus});
-    for(my $i=0;$i<$$settings{numcpus};$i++){
-      $multiSeq[$i]=splice(@seq,0,$numPerCpu)
+    #for(my $i=0;$i<$$settings{numcpus};$i++){
+      #$multiSeq[$i]=join("\n",splice(@seq,0,$numPerCpu));
+    while(@seq){
+      push(@multiSeq,join("\n",splice(@seq,0,$numPerCpu)));
     }
     undef(@seq); # definitively remove @seq
 
@@ -196,21 +198,32 @@ sub blastall{
 sub blastworker{
   my($Q,$progressQ,$settings)=@_;
   my $threadid=threads->tid;
-  my $outfile="$$settings{tempdir}/$0.p$$.TID$threadid.blast_out";
 
-  # 1. Remove the tmp file if it exists.
+  # Temporary input file for blast in this thread
+  my $fastain="$$settings{tempdir}/$0.p$$.TID$threadid.query.faa";
+
+  # 1. Remove the tmp output file if it exists.
   # 2. Make a zero-byte file as a placeholder and so definitely exists later on.
+  my $outfile="$$settings{tempdir}/$0.p$$.TID$threadid.blast_out";
   unlink $outfile if(-e $outfile);
   system("touch $outfile");
   while(defined(my $query=$Q->dequeue)){
+    # Write the query to the file so that it doesn't
+    # break something in bash/echo.
+    my $threadfp;
+    open($threadfp,">",$fastain) or die "ERROR: could not open $fastain: $!";
+    print $threadfp $query;
+    close $threadfp;
+
     # Use sed to fix a bug in blast < 2.2.27+ where * is printed as hex \xFF.
     # Use one cpu because there will be one whole blast command per cpu.
     # Do the append (>>) so that the previous iteration doesn't erase results.
-    my $command="echo '$query' | perl `which legacy_blast.pl` blastall -p blastp -a 1 -d $$settings{blast_db} -m 0 2>$outfile.err | sed 's/\xFF/*/g' >> $outfile";
+    my $command="perl `which legacy_blast.pl` blastall -p blastp -a 1 -d $$settings{blast_db} -i $fastain -m 0 2>$outfile.err | sed 's/\xFF/*/g' >> $outfile";
     system($command);
     die "Problem with blast. See $outfile.err for details. Command was\n  $command" if $?;
     $progressQ->enqueue([$threadid,$query]);
   }
+  unlink($fastain); #cleanup
   return $outfile;
 }
 
@@ -317,14 +330,19 @@ sub printWorker{
 sub geneBlastProgressUpdater{
   my($Q,$settings)=@_;
   my $i=0;
-  $|++; # let the progress indicator do its thing
   print STDOUT "Progress indicator is one gene per 100 dots:\n";
   while(defined(my $tmp=$Q->dequeue)){
     my($threadid,$query)=@$tmp;
-    print STDOUT "." if(++$i % 100 == 0);
+    my $numseqs=($query=~s/\n>//g);
+    # Look at one int at a time to see if it is when the progress
+    # meter should report.
+    for(1..$numseqs){
+      $|++; # let the progress indicator do its thing
+      print STDOUT "." if(++$i % 100 == 0);
+      $|--;
+    }
   }
-  print STDOUT "\nDone blasting!\n";
-  $|--;
+  print STDOUT "\nDone blasting $i queries!\n";
 }
 
 sub usage{
