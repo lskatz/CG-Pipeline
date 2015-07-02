@@ -17,5 +17,6 @@ test:
 	./scripts/run_pipeline_checkPrereqs.pl
 
 config:
+	cp -nv conf/cgpipelinerc.bak conf/cgpipelinerc
 	./scripts/reconfigure.pl
 
