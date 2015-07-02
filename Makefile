@@ -9,6 +9,7 @@ TEST_SETFILE = amdx.fasta
 
 install: config
 	-echo "Run 'make test' to check your prerequesites. Run 'make data' to install all databases (takes a long time!)"
+	-echo "Set your path to include ${DESTDIR}/scripts to finish the installation"
 
 data:
 	(mkdir -p "${DESTDIR}/data"; cd "${DESTDIR}/data"; PATH="${DESTDIR}/scripts:$${PATH}"; update_cg_databases)
