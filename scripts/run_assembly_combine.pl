@@ -140,7 +140,7 @@ sub combine2Assemblies{
   $seqout->write_seq(@seq);
 
   logmsg "Running Minimus2 with reference genome $refGenome and query genome $queryGenome";
-  system("toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
+  system("perl `which toAmos` -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'");
   die "Problem with toAmos with command\n  toAmos -s '$combined_fasta_file' -o '$$settings{tempdir}/minimus.combined.afg'" if $?;
   my $command="minimus2 -D OVERLAP=200 -D MINID=90 -D REFCOUNT=$numContigs '$$settings{tempdir}/minimus.combined' 2>&1";
   logmsg "Executing command\n  $command";
