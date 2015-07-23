@@ -100,10 +100,23 @@ sub shuffleSeqs{
     }
     while(my $out=<MATE1>){
       $out.=<MATE1> for(1..3);
-      $out.=<MATE2> for(1..4);
-      print $fp $out;
+      my $out2=<MATE2>;
+      $out2.=<MATE2> for(1..3);
+
+      if(!$out2){
+        print STDERR "WARNING: there are more lines in $file1 than in $file2! I will not continue reading $file1\n";
+        last;
+      }
+
+      print $fp "$out$out2";
       $i++;
     }
+    # Check for a longer read2 file
+    my $more_mate2=<MATE2>;
+    if($more_mate2){
+      print STDERR "WARNING: there are more lines in $file2 than in $file1! I will not continue reading $file2\n";
+    }
+
     close MATE1; close MATE2;
   }
   my $numReads=$i/4;
