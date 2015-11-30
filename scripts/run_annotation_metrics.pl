@@ -47,11 +47,16 @@ sub main() {
   die("Annotation file $project not found") unless -e $project;
 
   my $metrics=annotationMetrics($project,$settings);
+  my $header="Project"."\t";
+  my $headerValues=$project."\t";
   # TODO print metrics in an understandable and parsable way
-  print join("\t","Project",$project)."\n";
-  foreach my $metric (keys %$metrics){
-    print join("\t",$metric,$$metrics{$metric})."\n";
+  #print join("\t","Project",$project)."\n";
+  foreach my $metric (sort keys %$metrics){
+    $headerValues.= $$metrics{$metric}."\t";
+    $header.= $metric."\t";
   }
+  print $header."\n";
+  print $headerValues."\n";
   return 0;
 }
 
@@ -94,12 +99,16 @@ sub annotationMetrics($$){
           }
           # CDS stats
           if($feat->primary_tag eq 'CDS'){
+            # how many have a gene name assigned within CDS; TG Edit
+            if($tag eq 'gene' && $value ne ''){
+              $$metrics{CDS_gene}++;
+            }
             # how many are "putative" or "hypothetical"
             if($tag eq 'product' && $value=~/(putative|hypothetical)/){
-              $$metrics{putativeCDS}++ if($1 eq 'putative');
-              $$metrics{hypotheticalCDS}++ if($1 eq 'hypothetical');
+              $$metrics{CDS_putative}++ if($1 eq 'putative');
+              $$metrics{CDS_hypothetical}++ if($1 eq 'hypothetical');
               next FEATURE;
-            }
+            } 
           }
         }
       }
@@ -115,7 +124,8 @@ sub annotationMetrics($$){
       if($feat->primary_tag eq 'gene'){
         $totalGenes++;
         $foundAProteinProduct=0;
-      }
+      } 
+
       for my $tag ($feat->get_all_tags){
         if(!$foundAProteinProduct && $tag eq 'product'){
           $genesAnnotated++;
