@@ -300,7 +300,7 @@ sub usage{
      --stdin-compressed  # read a file as stdin (compressed)
      --highest           # The highest allowed quality score after combining reads. Default: 73
                          # The highest Illumina score is normally 73 (40+33, which is an 'I')
-                         #   However if you want 'Z', it is ".(40+33+(26-9+1))."
+                         #   However if you want 'Z', it is ".(40+33+(26-9))."
   EXAMPLES
     $0 read.fastq[.gz] | gzip -c > read.fastq.gz
     $0 --stdin-compressed < read.fastq.gz | gzip -c > noDupes.fastq.gz
