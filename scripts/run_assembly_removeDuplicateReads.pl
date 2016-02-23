@@ -3,7 +3,6 @@
 # run_assembly_trimClean: trim and clean a set of raw reads
 # Author: Lee Katz <lkatz@cdc.gov>
 
-package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 
 use strict;
@@ -27,7 +26,7 @@ use Thread::Queue;
 use threads::shared;
 
 $0 = fileparse($0);
-local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
+local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; my $caller=(caller(1))[3]; $caller=~s/::main//; die("$0: $caller: ".$e); };
 sub logmsg {print STDERR "$0: ".(caller(1))[3].": @_\n";}
 
 my %threadStatus:shared;
@@ -44,7 +43,7 @@ sub main{
   # get settings from cg_pipeline/conf/cgpipelinerc and ./cgpipelinerc
   $settings=AKUtils::loadConfig($settings);
   # get CLI flags into $settings with Getopt::Long
-  GetOptions($settings,qw(help tempdir=s downsample=s length=i sizeTo=s stdin stdin-compressed highest=i bin!)) or die $!;
+  GetOptions($settings,qw(help tempdir=s downsample=s length=i sizeTo|size=s stdin stdin-compressed highest=i bin!)) or die $!;
   die usage() if($$settings{help});
   # additional settings using ||= operator
   $$settings{poly}||=1; # SE by default
@@ -275,7 +274,7 @@ sub findDownsamplingFromSizeto{
   my $bp=0;
   my $numReads=@$reads;
   for(my $i=0;$i<$numReads;$i++){
-    my(undef,$seq1,undef,undef,$seq2)=split(/\n/,$$reads[$i]);
+    my(undef,$seq1,undef,undef,undef,$seq2)=split(/\n/,$$reads[$i]);
     $seq2||="";
     $bp+=length($seq1)+length($seq2);
   }
@@ -288,19 +287,27 @@ sub findDownsamplingFromSizeto{
 
 sub usage{
   "Removes duplicate reads from a raw read set.
-  Quality scores are combined as a result of -log(p * p) 
-    where p is the probability of getting an error and is fraction representation of the phred score.
+  Any two quality scores are combined as a result of -log(p * p) 
+    where p is the probability of getting an error and is fraction 
+    representation of the phred score.
+
    Usage: $0 read.fastq[.gz] > read.fastq
-     --downsample 0.1    # only keep 10% of the reads
-     --nobin             # Don't deduplicate; use other functions of this script like downsampling.
-     -size 1000000       # downsample to 1Mb. Internally, a new --downsample parameter is calculated and will be reported in stderr
-     --length 100        # only consider up to 100bp when deciding if a read is a duplicate. Default: 0 (no limit)
-                         # Warning: you might lose some sequence information when reads are binned if you use --length
-     --stdin             # read a file as stdin (uncompressed)
-     --stdin-compressed  # read a file as stdin (compressed)
-     --highest           # The highest allowed quality score after combining reads. Default: 73
-                         # The highest Illumina score is normally 73 (40+33, which is an 'I')
-                         #   However if you want 'Z', it is ".(40+33+(26-9))."
+     --downsample        Only keep a percentage of reads [default: 1.0]
+     --nobin             Don't deduplicate; use other functions of 
+                         this script like downsampling.
+     --size              Downsample to N base pairs. Internally, a new 
+                         --downsample parameter is calculated and will 
+                         be reported in stderr
+     --length            Only consider up to X bp when deciding if a read 
+                         is a duplicate. [Default: 0 (no limit)]
+                         Warning: you might lose some sequence information 
+                         when reads are binned if you use --length
+     --stdin             Read a file as stdin (uncompressed)
+     --stdin-compressed  Read a file as stdin (compressed)
+     --highest           The highest allowed quality score after combining 
+                         reads [Default: 73] The highest Illumina score is 
+                         normally 73 (40+33, which is an 'I')
+                         However if you want 'Z', it is ".(40+33+(26-9))."
   EXAMPLES
     $0 read.fastq[.gz] | gzip -c > read.fastq.gz
     $0 --stdin-compressed < read.fastq.gz | gzip -c > noDupes.fastq.gz
