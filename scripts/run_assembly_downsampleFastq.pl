@@ -55,6 +55,6 @@ sub main{
 
 sub usage{
   "$0: Downsamples a paired end fastq.gz file
-  Usage: $0 --downsample 0.1 in.fastq.gz
+  Usage: $0 --downsample 0.1 in.fastq.gz > out.fastq
   "
 }
