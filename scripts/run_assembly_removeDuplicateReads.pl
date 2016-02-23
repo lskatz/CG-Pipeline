@@ -37,22 +37,28 @@ exit(main());
 sub main{
   my $settings = {
       appname => 'cgpipeline',
-      bin     => 1,
   };
 
   # get settings from cg_pipeline/conf/cgpipelinerc and ./cgpipelinerc
   $settings=AKUtils::loadConfig($settings);
   # get CLI flags into $settings with Getopt::Long
-  GetOptions($settings,qw(help tempdir=s downsample=s length=i sizeTo|size=s stdin stdin-compressed highest=i bin!)) or die $!;
-  die usage() if($$settings{help});
+  GetOptions($settings,qw(help tempdir=s downsample=f length=i sizeTo|size=s stdin stdin-compressed highest=i bin!)) or die $!;
   # additional settings using ||= operator
+  $$settings{bin}//=1;
   $$settings{poly}||=1; # SE by default
   $$settings{tempdir}||=AKUtils::mktempdir(); # any temp file you make should go under the tempdir
   $$settings{downsample}||=1;
   $$settings{highest}||=40+33; # I is the 9th letter... don't want to go past Z
-  die "ERROR: downsample should be a number and less than 1. User requested $$settings{downsample}.\n".usage() if($$settings{downsample}=~/[A-Za-z]/ || $$settings{downsample}>1);
-
   my $infile=[@ARGV];
+
+  die usage($settings) if($$settings{help} || !@$infile);
+  die "ERROR: downsample parameter $$settings{downsample} is not between 0 and 1.\n".usage($settings) if($$settings{downsample}>1 || $$settings{downsample} < 0);
+
+  if($$settings{bin}){
+    logmsg "User supplied --bin; Binning reads.";
+  } else {
+    logmsg "User supplied --nobin; not binning reads.";
+  }
 
   
   my @readArr;
@@ -65,7 +71,7 @@ sub main{
     logmsg "Reading from stdin";
     @readArr=@{ readFastqStdin($settings) };
   } else {
-    die "ERROR: did not detect any file!\n".usage();
+    die "ERROR: did not detect any file!\n".usage($settings);
   }
 
   removeDuplicateReads(\@readArr,$settings);
@@ -286,15 +292,18 @@ sub findDownsamplingFromSizeto{
 
 
 sub usage{
+  my($settings)=@_;
+  
   "Removes duplicate reads from a raw read set.
-  Any two quality scores are combined as a result of -log(p * p) 
-    where p is the probability of getting an error and is fraction 
-    representation of the phred score.
 
    Usage: $0 read.fastq[.gz] > read.fastq
+     --[no]bin           If --bin, Combine identical reads.
+                         Any two quality scores are combined as a result of -log(p * p) 
+                         where p is the probability of getting an error and is fraction 
+                         representation of the phred score.
+                         If --nobin, Don't deduplicate; You are using this
+                         script purely for the downsampling.
      --downsample        Only keep a percentage of reads [default: 1.0]
-     --nobin             Don't deduplicate; use other functions of 
-                         this script like downsampling.
      --size              Downsample to N base pairs. Internally, a new 
                          --downsample parameter is calculated and will 
                          be reported in stderr
@@ -306,8 +315,8 @@ sub usage{
      --stdin-compressed  Read a file as stdin (compressed)
      --highest           The highest allowed quality score after combining 
                          reads [Default: 73] The highest Illumina score is 
-                         normally 73 (40+33, which is an 'I')
-                         However if you want 'Z', it is ".(40+33+(26-9))."
+                         normally 73, which is 'I'. However if you want 'Z',
+                         it is ".(40+33+(26-9)).".
   EXAMPLES
     $0 read.fastq[.gz] | gzip -c > read.fastq.gz
     $0 --stdin-compressed < read.fastq.gz | gzip -c > noDupes.fastq.gz
