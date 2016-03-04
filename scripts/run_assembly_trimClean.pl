@@ -384,7 +384,8 @@ sub queue_status_updater{
   STATUS_UPDATE:
   while(my $p=$Q->pending){
     my $numGood=sum(values(%threadStatus));
-    my $freq_isClean=$numGood/($entryCount-$Q->pending);
+    my $denominator=$entryCount-$Q->pending || 9e10;
+    my $freq_isClean=$numGood/$denominator;
     $freq_isClean=nearest(0.01,$freq_isClean);
     logmsg "$p entries left to process. $freq_isClean pass rate.";
     # shave off some time if the queue empties while we are sleeping
