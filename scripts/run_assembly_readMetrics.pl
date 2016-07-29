@@ -372,8 +372,8 @@ sub round{
 
 sub usage{
   my ($settings)=@_;
-  "Prints useful read statistics
-  Usage: $0 reads.fastq.gz 
+  "Prints useful read statistics on one or more read sets
+  Usage: $0 *.fastq.gz
          $0 reads.fastq.gz | column -t
     A reads file can be fasta, sff, fastq, or fastq.gz
     The quality file for a fasta file reads.fasta is assumed to be reads.fasta.qual
