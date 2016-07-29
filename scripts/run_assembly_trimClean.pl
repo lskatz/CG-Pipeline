@@ -2,8 +2,6 @@
 
 # run_assembly_trimClean: trim and clean a set of raw reads
 # Author: Lee Katz <lkatz@cdc.gov>
-# TODO read .gz files
-# TODO output .gz files
 
 package PipelineRunner;
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
@@ -58,7 +56,6 @@ sub main() {
     removeDots=>1,        # yes remove dots
   };
   
-  # TODO option to not have singletons (annoying!)
   GetOptions($settings,qw(poly=i infile=s@ outfile=s min_quality=i bases_to_trim=i min_avg_quality=i  min_length=i quieter trim! removeDots! debug qualOffset=i numcpus=i singletons! trim-on-average! auto)) or die "Error in command line arguments";
   $$settings{numcpus}||=getNumCPUs();
   $$settings{'zero-quality'}=chr($$settings{qualOffset}); # zero quality
