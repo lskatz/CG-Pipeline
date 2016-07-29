@@ -52,7 +52,7 @@ sub main() {
   die usage() if($$settings{help});
   die "ERROR: need reads file\n".usage() if(@ARGV<1);
   $$settings{qual_offset}||=33;
-  $$settings{numcpus}||=AKUtils::getNumCPUs();
+  $$settings{numcpus}||=1;
   $$settings{tempdir}||=AKUtils::mktempdir();
   $$settings{bufferSize}||=100000;
   $$settings{minLength}||=1;
@@ -372,18 +372,17 @@ sub round{
 
 sub usage{
   my ($settings)=@_;
-  "Prints useful assembly statistics
-  Usage: $0 reads.fasta 
-         $0 reads.fasta | column -t
-    A reads file can be fasta, sff, or fastq
+  "Prints useful read statistics
+  Usage: $0 reads.fastq.gz 
+         $0 reads.fastq.gz | column -t
+    A reads file can be fasta, sff, fastq, or fastq.gz
     The quality file for a fasta file reads.fasta is assumed to be reads.fasta.qual
-  --fast for fast mode: samples 1% of the reads and extrapolates
-  -n 1 to specify the number of cpus (default: all cpus)
-  --qual_offset 33
-    Set the quality score offset (usually it's 33, so the default is 33)
-  --minLength 1
-    Set the minimum read length used for calculations
-  -e 4000000 expected genome size, in bp
-  --hist to generate a histogram of the reads
+  
+  --fast            fast mode: samples 1% of the reads and extrapolates
+  --numcpus     1   Number of cpus
+  --qual_offset 33  Set the quality score offset
+  --minLength   1   Set the minimum read length used for calculations
+  -e        4000000 expected genome size, in bp
+  --hist            Generate a histogram of the reads
   "
 }
