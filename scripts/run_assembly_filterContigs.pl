@@ -33,7 +33,7 @@ exit(main());
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
 
-	my @cmd_options = qw(length=i help numcpus=i);
+	my @cmd_options = qw(length=i help numcpus=i rename);
 	GetOptions($settings, @cmd_options) or die;
 	$$settings{numcpus}||=1;
   $$settings{assembly_min_contig_length}||=500;
@@ -59,7 +59,11 @@ sub main() {
 sub filterSeqs{
   my($seq,$settings)=@_;
   my %seq;
+  my $i=0;
   while(my($id,$sequence)=each(%$seq)){
+    if($$settings{rename}){
+      $id = sprintf("contig%06d",++$i);
+    }
     $seq{$id}=$sequence if(length($sequence) > $$settings{assembly_min_contig_length});
   }
   return \%seq;
@@ -70,5 +74,6 @@ sub usage{
   "Filters sequences from a fasta file that do not meet certain criteria and prints them to stdout
   Usage: $0 file.fasta [file2.fasta...] > out.fasta
   -l $$settings{assembly_min_contig_length} Minimum size of a contig
+  --rename  rename contigs
   "
 }
