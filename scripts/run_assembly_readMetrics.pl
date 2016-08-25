@@ -109,6 +109,9 @@ sub printReadMetricsFromFile{
     push(@{$count{readLength}},@{$$c{readLength}});
   }
 
+  $count{numReads}=1 if($count{numReads} < 1); # avoid divide by zero error
+  $count{numBases}=1 if($count{numBases} < 1); # avoid divide by zero error
+
   # extrapolate the counts to the total number of reads if --fast
   my $fractionReadsRead=$count{numReads}/$numEntries;
   $count{numReads}=$numEntries;
