@@ -26,14 +26,14 @@ use Data::Dumper;
 
 $0 = fileparse($0);
 local $SIG{'__DIE__'} = sub { my $e = $_[0]; $e =~ s/(at [^\s]+? line \d+\.$)/\nStopped $1/; die("$0: ".(caller(1))[3].": ".$e); };
-sub logmsg {my $FH = $FSFind::LOG || *STDERR; print $FH "$0: ".(caller(1))[3].": @_\n";}
+sub logmsg {print STDERR "$0: @_\n";}
 
 exit(main());
 
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
 
-	my @cmd_options = qw(length=i help numcpus=i rename);
+	my @cmd_options = qw(assembly_min_contig_length|length=i help numcpus=i rename);
 	GetOptions($settings, @cmd_options) or die;
 	$$settings{numcpus}||=1;
   $$settings{assembly_min_contig_length}||=500;
@@ -64,7 +64,24 @@ sub filterSeqs{
     if($$settings{rename}){
       $id = sprintf("contig%06d",++$i);
     }
-    $seq{$id}=$sequence if(length($sequence) > $$settings{assembly_min_contig_length});
+    next if(length($sequence) < $$settings{assembly_min_contig_length});
+    
+    # Get rid of uncomplex contigs:
+    #   Contigs of a K-mer repeat
+    my $is_uncomplex=0;
+    for(my $k=1;$k<20;$k++){
+      my $kmer=substr($sequence,0,$k);
+      if($sequence=~/^($kmer)+$/i){
+        $is_uncomplex=1;
+        logmsg "Detected kmer repeat $kmer in contig $id";
+        last;
+      }
+    }
+    if($is_uncomplex){
+      next;
+    }
+
+    $seq{$id}=$sequence;
   }
   return \%seq;
 }
@@ -73,7 +90,8 @@ sub usage{
   my ($settings)=@_;
   "Filters sequences from a fasta file that do not meet certain criteria and prints them to stdout
   Usage: $0 file.fasta [file2.fasta...] > out.fasta
-  -l $$settings{assembly_min_contig_length} Minimum size of a contig
-  --rename  rename contigs
+  --length  $$settings{assembly_min_contig_length}   Minimum size of a contig
+  --rename        rename contigs
   "
 }
+
