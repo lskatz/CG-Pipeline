@@ -47,8 +47,8 @@ sub main() {
   $settings = AKUtils::loadConfig($settings);
   die(usage($settings)) if @ARGV<1;
 
-  my @cmd_options=qw(help fast qual_offset=i minLength=i numcpus=i expectedGenomeSize=s histogram tempdir=s);
-  GetOptions($settings, @cmd_options) or die;
+  my @cmd_options=qw(help fast qual_offset=i minLength=i numcpus=i expectedGenomeSize=s histogram|hist reads-per-qual tempdir=s);
+  GetOptions($settings, @cmd_options) or die $!;
   die usage() if($$settings{help});
   die "ERROR: need reads file\n".usage() if(@ARGV<1);
   $$settings{qual_offset}||=33;
@@ -59,7 +59,15 @@ sub main() {
   # the sample frequency is 100% by default or 1% if "fast"
   $$settings{sampleFrequency} ||= ($$settings{fast})?0.01:1;
 
-  print join("\t",qw(File avgReadLength totalBases minReadLength maxReadLength avgQuality numReads PE? coverage readScore medianFragmentLength))."\n";
+  # get the right headers
+  if($$settings{histogram}){
+    print join("\t",qw(ReadLength Count Freq))."\n";
+  } elsif($$settings{'reads-per-qual'}){
+    print join("\t",qw(Phred Count))."\n";
+  } else {
+    print join("\t",qw(File avgReadLength totalBases minReadLength maxReadLength avgQuality numReads PE? coverage readScore medianFragmentLength))."\n";
+  }
+
   for my $input_file(@ARGV){
     printReadMetricsFromFile($input_file,$settings);
   }
@@ -107,6 +115,7 @@ sub printReadMetricsFromFile{
     $count{minReadLength}=min($$c{minReadLength},$count{minReadLength});
     push(@{$count{tlen}},@{$$c{tlen}});
     push(@{$count{readLength}},@{$$c{readLength}});
+    push(@{$count{readQual}},@{$$c{readQual}});
   }
 
   # extrapolate the counts to the total number of reads if --fast
@@ -136,17 +145,22 @@ sub printReadMetricsFromFile{
   # coverage is bases divided by the genome size
   my $coverage=($$settings{expectedGenomeSize})?round($count{extrapolatedNumBases}/$$settings{expectedGenomeSize}):'.';
 
-  print join("\t",$file,$avgReadLength,$count{extrapolatedNumBases},$count{minReadLength},$count{maxReadLength},$avgQual,$count{numReads},$isPE,$coverage,'.',$medianFragLen)."\n";
-  printHistogram($count{readLength},$fractionReadsRead,$settings) if($$settings{histogram});
+  if($$settings{histogram}){
+    printHistogram($count{readLength},$fractionReadsRead,$settings);
+  } elsif($$settings{'reads-per-qual'}){
+    printHistogram($count{readQual},$fractionReadsRead,$settings);
+  } else {
+    print join("\t",$file,$avgReadLength,$count{extrapolatedNumBases},$count{minReadLength},$count{maxReadLength},$avgQual,$count{numReads},$isPE,$coverage,'.',$medianFragLen)."\n";
+  }
   return \%count;
 }
 
 sub printHistogram{
   my($data,$coefficient,$settings)=@_;
-  my @data=map(int($_/100)*100,@$data);
-  my $numData=@data;
+  my $numData=@$data;
   my %count;
-  for(@data){
+  for(@$data){
+    $_=sprintf("%0.0f",$_);
     $count{$_}++;
   }
   #$sum=int($sum / $coefficient);
@@ -158,6 +172,7 @@ sub printHistogram{
   return \%count;
 }
 
+
 # Reads a Thread::Queue to give metrics but does not derive any metrics, e.g. avg quality
 sub readMetrics{
   my($Q,$settings)=@_;
@@ -166,6 +181,7 @@ sub readMetrics{
   my $minReadLength=1e999;
   my $maxReadLength=0;
   my @length;
+  my @readQual;
   my @tlen; # fragment length
   while(defined(my $tmp=$Q->dequeue)){
     my($seq,$qual,$tlen)=@$tmp;
@@ -194,11 +210,14 @@ sub readMetrics{
       @qual=map(ord($_)-$qual_offset, split(//,$qual));
     }
     $count{qualSum}+=sum(@qual);
+    #push(@readQual, sum(@qual)/scalar(@qual));
+    push(@readQual, sum(@qual));
   }
   $count{minReadLength}=$minReadLength;
   $count{maxReadLength}=$maxReadLength;
   $count{readLength}=\@length;
   $count{tlen}=\@tlen;
+  $count{readQual}=\@readQual;
   return \%count;
 }
 
@@ -383,6 +402,9 @@ sub usage{
   --qual_offset 33  Set the quality score offset
   --minLength   1   Set the minimum read length used for calculations
   -e        4000000 expected genome size, in bp
-  --hist            Generate a histogram of the reads
+  
+  HISTOGRAM
+  --hist            Generate a histogram of the reads per length
+  --reads-per-qual
   "
 }
