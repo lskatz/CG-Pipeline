@@ -2,6 +2,9 @@
 
 # run_assembly_trimClean: trim and clean a set of raw reads
 # Author: Lee Katz <lkatz@cdc.gov>
+# TODO: make a low-memory binning method, combining only 
+# a few reads at a time and perhaps using temporary
+# intermediate files.
 
 my ($VERSION) = ('$Id: $' =~ /,v\s+(\d+\S+)/o);
 
