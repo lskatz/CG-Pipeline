@@ -56,13 +56,13 @@ sub main() {
   for my $file(@ARGV){
     $file=File::Spec->rel2abs($file);
     if(!-f $file){
-      warn("Warning input or reference file $file not found") unless -f $file;
+      warn("Warning input or reference file $file not found") unless -e $file;
       next;
     }
     push(@input_file,$file);
   }
 
-  if($$settings{outputType} eq 'lengths'){
+  if($$settings{outputType} eq 'details'){
     printContigDetails(\@input_file,$settings);
   } else {
     # start off the threads
