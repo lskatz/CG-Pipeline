@@ -33,7 +33,7 @@ exit(main());
 sub main() {
 	$settings = AKUtils::loadConfig($settings);
 
-	my @cmd_options = qw(assembly_min_contig_length|length=i help numcpus=i rename);
+	my @cmd_options = qw(verbose assembly_min_contig_length|length=i help numcpus=i rename);
 	GetOptions($settings, @cmd_options) or die;
 	$$settings{numcpus}||=1;
   $$settings{assembly_min_contig_length}||=500;
@@ -61,24 +61,30 @@ sub filterSeqs{
   my %seq;
   my $i=0;
   while(my($id,$sequence)=each(%$seq)){
-    if($$settings{rename}){
-      $id = sprintf("contig%06d",++$i);
+    if(length($sequence) < $$settings{assembly_min_contig_length}){
+      logmsg "Removing short contig $id" if($$settings{verbose});
+      next;
     }
-    next if(length($sequence) < $$settings{assembly_min_contig_length});
     
     # Get rid of uncomplex contigs:
     #   Contigs of a K-mer repeat
-    my $is_uncomplex=0;
+    my $uncomplexkmer="";
     for(my $k=1;$k<20;$k++){
       my $kmer=substr($sequence,0,$k);
       if($sequence=~/^($kmer)+$/i){
-        $is_uncomplex=1;
-        logmsg "Detected kmer repeat $kmer in contig $id";
+        $uncomplexkmer=$kmer;
         last;
       }
     }
-    if($is_uncomplex){
+    if($uncomplexkmer){
+      logmsg "Removing uncomplex contig $id with kmer $uncomplexkmer";
       next;
+    }
+
+    if($$settings{rename}){
+      my $newid = sprintf("contig%06d",++$i);
+      $id=$newid;
+      logmsg "Renaming $id to $newid" if($$settings{verbose});
     }
 
     $seq{$id}=$sequence;
@@ -92,6 +98,7 @@ sub usage{
   Usage: $0 file.fasta [file2.fasta...] > out.fasta
   --length  $$settings{assembly_min_contig_length}   Minimum size of a contig
   --rename        rename contigs
+  --verbose       
   "
 }
 
